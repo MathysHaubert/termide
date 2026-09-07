@@ -28,7 +28,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc as async_mpsc;
 
 use crate::error::{VfsError, VfsResult};
-use crate::traits::{DiskSpace, VfsProvider};
+use crate::traits::VfsProvider;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, DownloadProgress, UploadProgress,
     VfsDownloadOperation, VfsEntry, VfsFileType, VfsMetadata, VfsOperation, VfsPath, VfsProtocol,
@@ -757,11 +757,6 @@ impl VfsProvider for SftpProvider {
                 .with_port(self.port)
                 .with_username(self.effective_username()),
         )
-    }
-
-    fn disk_space(&self, _path: &VfsPath) -> Option<DiskSpace> {
-        // Could be implemented via SSH exec "df" but not used by termide yet.
-        None
     }
 }
 

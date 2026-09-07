@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{VfsError, VfsResult};
-use crate::traits::{DiskSpace, VfsProvider};
+use crate::traits::VfsProvider;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, VfsEntry, VfsMetadata, VfsOperation, VfsPath,
     VfsProtocol,
@@ -205,10 +205,6 @@ impl VfsProvider for SmbProvider {
     }
 
     fn home_dir(&self) -> Option<VfsPath> {
-        None
-    }
-
-    fn disk_space(&self, _path: &VfsPath) -> Option<DiskSpace> {
         None
     }
 }
@@ -693,10 +689,6 @@ impl VfsProvider for SmbProvider {
     }
 
     fn home_dir(&self) -> Option<VfsPath> {
-        None
-    }
-
-    fn disk_space(&self, _path: &VfsPath) -> Option<DiskSpace> {
         None
     }
 }

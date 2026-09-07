@@ -61,7 +61,7 @@ pub mod fuse_mount;
 pub use cache::DirCache;
 pub use error::{VfsError, VfsResult};
 pub use local::LocalFileSystem;
-pub use traits::{DiskSpace, VfsProvider, VfsProviderSync};
+pub use traits::VfsProvider;
 pub use types::{
     AuthMethod, ConnectOptions, ConnectionState, CopyProgress, DownloadProgress, UploadProgress,
     VfsCopyOperation, VfsDownloadOperation, VfsEntry, VfsFileType, VfsMetadata, VfsOperation,
@@ -570,31 +570,6 @@ impl VfsManager {
             |p| p.download(remote, local),
             || VfsOperation::error(VfsError::NotConnected),
         )
-    }
-
-    /// Download a remote file to local temp directory.
-    ///
-    /// Returns the path to the downloaded local file.
-    pub fn download_to_temp(&self, remote: &VfsPath) -> VfsOperation<std::path::PathBuf> {
-        if remote.is_local() {
-            // Already local, just return the path
-            return VfsOperation::ready(Ok(remote.path.clone()));
-        }
-
-        // Create temp file path
-        let temp_dir = std::env::temp_dir().join("termide-vfs");
-        let _ = std::fs::create_dir_all(&temp_dir);
-
-        let filename = remote
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "download".to_string());
-
-        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
-        let temp_path = temp_dir.join(format!("{}_{}", timestamp, filename));
-
-        // Use the download method
-        self.download(remote, &temp_path)
     }
 
     /// Upload a local file to remote path.
