@@ -82,6 +82,43 @@ impl FileManager {
             }
         }
 
+        // A remote create finished — reveal the new entry and reload, the work
+        // `create_file` / `create_directory` used to do inline while the UI
+        // thread sat on the round-trip.
+        if let Some(result) = self.vfs.take_completed_create() {
+            match result {
+                Ok((path, is_dir)) => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.navigation.set_newly_created_path(path);
+                    let _ = self.load_directory();
+                    if !self.is_stale {
+                        let t = termide_i18n::t();
+                        let msg = if is_dir {
+                            t.status_dir_created(&name)
+                        } else {
+                            t.status_file_created(&name)
+                        };
+                        events.push(PanelEvent::ShowMessage(msg));
+                        events.push(PanelEvent::NeedsRedraw);
+                    }
+                    return events;
+                }
+                Err(e) => {
+                    log::error!("remote create failed: {}", e);
+                    if !self.is_stale {
+                        let t = termide_i18n::t();
+                        self.show_info_modal(t.connection_error_title(), &format!("{}", e));
+                        events.push(PanelEvent::ClearStatus);
+                        events.push(PanelEvent::NeedsRedraw);
+                        return events;
+                    }
+                }
+            }
+        }
+
         // A remote symlink resolved to a file — open it in the editor.
         if let Some(remote) = self.vfs.take_resolved_file_open() {
             events.push(PanelEvent::ClearStatus);

@@ -7,6 +7,17 @@ use termide_git::GitStatus;
 
 use super::{FileEntry, FileManager};
 
+/// Whether a create request finished or is still on its way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateOutcome {
+    /// The entry exists and the listing has been reloaded.
+    Done,
+    /// A remote round-trip is in flight. `on_tick` reveals the entry and
+    /// reloads the listing when it lands, so the caller must neither reload
+    /// nor report success yet.
+    Pending,
+}
+
 /// How a file should be opened
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum FileOpenMode {
@@ -392,7 +403,7 @@ impl FileManager {
     }
 
     /// Create a new file
-    pub fn create_file(&mut self, name: String) -> Result<()> {
+    pub fn create_file(&mut self, name: String) -> Result<CreateOutcome> {
         validate_entry_name(&name)?;
 
         let (local_target, vfs_target) = self.create_target_dir();
@@ -402,20 +413,17 @@ impl FileManager {
             let base = vfs_target.unwrap_or_else(|| self.vfs.current_path().clone());
             let new_path = base.join(&name);
             let operation = self.vfs.manager().write_file(&new_path, &[]);
-
-            // Block until completion
-            operation.recv()?;
-        } else {
-            fs::write(&target_full_path, "")?;
+            return self.start_remote_create(operation, target_full_path, false);
         }
 
+        fs::write(&target_full_path, "")?;
         self.navigation.set_newly_created_path(target_full_path);
         self.load_directory()?;
-        Ok(())
+        Ok(CreateOutcome::Done)
     }
 
     /// Create a new directory
-    pub fn create_directory(&mut self, name: String) -> Result<()> {
+    pub fn create_directory(&mut self, name: String) -> Result<CreateOutcome> {
         validate_entry_name(&name)?;
 
         let (local_target, vfs_target) = self.create_target_dir();
@@ -425,16 +433,31 @@ impl FileManager {
             let base = vfs_target.unwrap_or_else(|| self.vfs.current_path().clone());
             let new_path = base.join(&name);
             let operation = self.vfs.manager().create_dir(&new_path);
-
-            // Block until completion (sync behavior for UI)
-            operation.recv()?;
-        } else {
-            fs::create_dir(&target_full_path)?;
+            return self.start_remote_create(operation, target_full_path, true);
         }
 
+        fs::create_dir(&target_full_path)?;
         self.navigation.set_newly_created_path(target_full_path);
         self.load_directory()?;
-        Ok(())
+        Ok(CreateOutcome::Done)
+    }
+
+    /// Hand a remote create to the VFS poller rather than blocking the UI
+    /// thread on the round-trip. `on_tick` reveals the entry and reloads the
+    /// listing once the result arrives.
+    fn start_remote_create(
+        &mut self,
+        operation: termide_vfs::VfsOperation<()>,
+        reveal: std::path::PathBuf,
+        is_dir: bool,
+    ) -> Result<CreateOutcome> {
+        if self.vfs.start_create(operation, reveal, is_dir) {
+            Ok(CreateOutcome::Pending)
+        } else {
+            // `pending_operation` holds one slot; taking it would strand a
+            // directory listing that is still on its way.
+            anyhow::bail!("another remote operation is still in progress")
+        }
     }
 }
 

@@ -25,6 +25,7 @@ use dir_load::{AsyncDirReloadResult, PendingDirLoad};
 use expansion::PendingExpand;
 pub use file_info::FileInfo;
 use navigation::NavigationState;
+pub use operations::CreateOutcome;
 use search_bar::{BarFocus, SearchBarKind};
 use selection::SelectionState;
 pub use utils::shared_dir_size_cache;
