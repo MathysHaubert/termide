@@ -17,7 +17,6 @@ mod file_io;
 pub mod git;
 mod hover_popup;
 pub mod keyboard;
-pub mod remote;
 pub mod rendering;
 pub mod search;
 pub mod selection;
@@ -31,5 +30,4 @@ pub mod word_wrap;
 // Re-export main types
 pub use config::{EditorConfig, EditorInfo};
 pub use core::{Editor, LspManager};
-pub use remote::PendingRemoteOpen;
 pub use state::FileState;

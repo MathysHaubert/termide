@@ -103,7 +103,7 @@ impl VfsState {
         &self.manager
     }
 
-    /// Get shared reference to the VFS manager (for passing to Editor::open_remote_file).
+    /// Get shared reference to the VFS manager (for remote reads and transfers).
     pub fn manager_arc(&self) -> Arc<VfsManager> {
         Arc::clone(&self.manager)
     }

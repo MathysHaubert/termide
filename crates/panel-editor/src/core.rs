@@ -122,8 +122,6 @@ pub struct Editor {
         termide_vfs::VfsPath,
         std::sync::Arc<termide_vfs::VfsManager>,
     )>,
-    /// Pending remote file open operation (for async downloads)
-    pub(crate) pending_remote_open: Option<crate::remote::PendingRemoteOpen>,
     /// Updated config after save (for applying in AppState)
     config_update: Option<Config>,
     /// Status message to display to user
@@ -616,16 +614,6 @@ impl Editor {
         ),
     ) {
         self.pending_upload = Some(upload);
-    }
-
-    /// Take pending remote open operation (if any).
-    pub fn take_pending_remote_open(&mut self) -> Option<crate::remote::PendingRemoteOpen> {
-        self.pending_remote_open.take()
-    }
-
-    /// Set pending remote open operation.
-    pub fn set_pending_remote_open(&mut self, pending: crate::remote::PendingRemoteOpen) {
-        self.pending_remote_open = Some(pending);
     }
 
     /// Get the per-editor tab_size override, if any.
