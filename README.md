@@ -61,7 +61,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **System Monitor** - Real-time CPU, RAM, network I/O in menu bar and disk usage in status bar; click any indicator to open a detail modal (top processes by CPU/RAM, top processes by network connections with listening ports); repeated click on the same indicator closes the modal (toggle)
 - **Search & Replace** - Live preview, match counter, regex support
 - **Custom Scripts** - Run user-defined scripts from the Scripts menu (supports `.bg.` for background, `.report.` for scrollable modal output with success/failure indicator)
-- **Settings Modal** - Full-screen configuration (`Alt+P`) with sidebar layout, grouped fields (Appearance / Input / Layout / Performance / …), and in-place keybinding capture for 7 keybinding scopes
+- **Settings Modal** - Full-screen configuration (`Alt+P`) with sidebar layout, grouped fields (Appearance / Input / Layout / Performance / …), and in-place keybinding capture for all 9 keybinding scopes
 - **Cross-platform** - Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), Windows (native via ConPTY, WSL)
 - **Full Mouse Support** - Click navigation, scroll, double-click actions
 - **Keyboard Layouts** - Cyrillic support with automatic hotkey translation
