@@ -164,17 +164,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "async-trait"
-version = "0.1.89"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4832,30 +4821,16 @@ name = "termide"
 version = "0.32.0"
 dependencies = [
  "anyhow",
- "arboard",
- "base64",
  "cc",
- "chrono",
  "clap",
  "crossterm",
  "dirs",
  "libc",
  "log",
  "nix 0.29.0",
- "notify",
- "notify-debouncer-mini",
- "portable-pty",
  "ratatui",
- "regex",
- "ropey",
- "serde",
- "similar",
- "sysinfo",
  "tempfile",
  "termide-app",
- "termide-app-core",
- "termide-buffer",
- "termide-clipboard",
  "termide-config",
  "termide-core",
  "termide-git",
@@ -4863,47 +4838,12 @@ dependencies = [
  "termide-i18n",
  "termide-keyboard",
  "termide-layout",
- "termide-logger",
- "termide-modal",
  "termide-panel-editor",
  "termide-panel-file-manager",
- "termide-panel-git-log",
- "termide-panel-git-status",
- "termide-panel-image",
- "termide-panel-misc",
  "termide-panel-terminal",
  "termide-session",
- "termide-state",
- "termide-system-monitor",
  "termide-theme",
- "termide-ui",
  "termide-ui-render",
- "termide-watcher",
- "toml",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-haskell",
- "tree-sitter-highlight",
- "tree-sitter-html",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-md",
- "tree-sitter-nix",
- "tree-sitter-php",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "unicode-segmentation",
- "unicode-width",
- "vte",
  "windows-sys 0.59.0",
 ]
 
@@ -4977,7 +4917,6 @@ name = "termide-buffer"
 version = "0.32.0"
 dependencies = [
  "anyhow",
- "regex",
  "ropey",
  "tempfile",
  "unicode-segmentation",
@@ -4988,7 +4927,6 @@ dependencies = [
 name = "termide-clipboard"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "arboard",
  "base64",
  "log",
@@ -5022,7 +4960,6 @@ dependencies = [
  "termide-keyboard",
  "termide-session",
  "termide-theme",
- "termide-vfs",
 ]
 
 [[package]]
@@ -5049,10 +4986,8 @@ dependencies = [
 name = "termide-file-ops"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "log",
  "tempfile",
- "termide-logger",
  "termide-vfs",
  "thiserror 2.0.18",
 ]
@@ -5063,8 +4998,6 @@ version = "0.32.0"
 dependencies = [
  "anyhow",
  "log",
- "notify",
- "notify-debouncer-mini",
  "regex",
  "similar",
  "termide-i18n",
@@ -5119,7 +5052,6 @@ dependencies = [
  "anyhow",
  "log",
  "serde",
- "termide-logger",
  "toml",
 ]
 
@@ -5137,7 +5069,6 @@ dependencies = [
  "anyhow",
  "crossterm",
  "ratatui",
- "serde",
  "termide-config",
  "termide-core",
  "termide-session",
@@ -5161,7 +5092,6 @@ dependencies = [
  "lsp-types",
  "serde",
  "serde_json",
- "termide-logger",
  "url",
 ]
 
@@ -5183,13 +5113,10 @@ dependencies = [
  "termide-clipboard",
  "termide-config",
  "termide-core",
- "termide-git",
  "termide-i18n",
- "termide-keyboard",
  "termide-state",
  "termide-theme",
  "termide-ui",
- "unicode-segmentation",
  "unicode-width",
 ]
 
@@ -5201,10 +5128,8 @@ dependencies = [
  "crossterm",
  "ratatui",
  "termide-clipboard",
- "termide-config",
  "termide-core",
  "termide-modal",
- "termide-theme",
  "termide-ui",
 ]
 
@@ -5310,7 +5235,6 @@ dependencies = [
  "termide-config",
  "termide-core",
  "termide-git",
- "termide-highlight",
  "termide-i18n",
  "termide-keyboard",
  "termide-logger",
@@ -5320,7 +5244,6 @@ dependencies = [
  "termide-theme",
  "termide-ui",
  "termide-vfs",
- "termide-watcher",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -5329,7 +5252,6 @@ dependencies = [
 name = "termide-panel-git-diff"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "crossterm",
  "ratatui",
  "regex",
@@ -5338,7 +5260,6 @@ dependencies = [
  "termide-core",
  "termide-git",
  "termide-i18n",
- "termide-session",
  "termide-theme",
  "termide-ui",
  "unicode-width",
@@ -5348,7 +5269,6 @@ dependencies = [
 name = "termide-panel-git-log"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "crossterm",
  "ratatui",
  "termide-clipboard",
@@ -5357,7 +5277,6 @@ dependencies = [
  "termide-git",
  "termide-i18n",
  "termide-modal",
- "termide-session",
  "termide-state",
  "termide-theme",
  "termide-ui",
@@ -5369,7 +5288,6 @@ dependencies = [
 name = "termide-panel-git-status"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "crossterm",
  "ratatui",
  "termide-config",
@@ -5377,7 +5295,6 @@ dependencies = [
  "termide-git",
  "termide-i18n",
  "termide-modal",
- "termide-session",
  "termide-state",
  "termide-system-monitor",
  "termide-theme",
@@ -5443,27 +5360,22 @@ dependencies = [
  "termide-i18n",
  "termide-mermaid",
  "termide-ui",
- "unicode-width",
 ]
 
 [[package]]
 name = "termide-panel-misc"
 version = "0.32.0"
 dependencies = [
- "anyhow",
- "chrono",
  "crossterm",
  "ratatui",
  "termide-config",
  "termide-core",
  "termide-highlight",
  "termide-i18n",
- "termide-keyboard",
  "termide-logger",
  "termide-panel-editor",
  "termide-theme",
  "termide-ui",
- "unicode-width",
 ]
 
 [[package]]
@@ -5502,15 +5414,11 @@ dependencies = [
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",
- "tree-sitter-css",
  "tree-sitter-go",
- "tree-sitter-haskell",
- "tree-sitter-html",
  "tree-sitter-java",
  "tree-sitter-javascript",
  "tree-sitter-kotlin-ng",
  "tree-sitter-md",
- "tree-sitter-nix",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-ruby",
@@ -5524,7 +5432,6 @@ name = "termide-panel-terminal"
 version = "0.32.0"
 dependencies = [
  "anyhow",
- "chrono",
  "crossterm",
  "libc",
  "log",
@@ -5536,9 +5443,7 @@ dependencies = [
  "termide-config",
  "termide-core",
  "termide-i18n",
- "termide-keyboard",
  "termide-modal",
- "termide-state",
  "termide-theme",
  "termide-ui",
  "vte",
@@ -5642,7 +5547,6 @@ dependencies = [
 name = "termide-vfs"
 version = "0.32.0"
 dependencies = [
- "async-trait",
  "chrono",
  "dirs",
  "libc",
@@ -5653,7 +5557,6 @@ dependencies = [
  "russh-sftp",
  "suppaftp",
  "tempfile",
- "termide-logger",
  "thiserror 2.0.18",
  "tokio",
  "url",

@@ -17,6 +17,5 @@ dirs.workspace = true
 termide-theme = { path = "../theme" }
 termide-config = { path = "../config" }
 termide-session = { path = "../session" }
-termide-vfs = { path = "../vfs" }
 termide-file-ops = { path = "../file-ops" }
 termide-keyboard = { path = "../keyboard" }

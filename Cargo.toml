@@ -108,97 +108,39 @@ auto-req = "no"
 [package.metadata.generate-rpm.requires]
 
 [dependencies]
+# The root binary is a thin shell: CLI parsing, terminal setup, config load and
+# the app event loop. Everything else lives in the workspace crates, so only
+# what `src/main.rs` and `src/ui.rs` actually name belongs here — a dependency
+# needed by a crate must be declared by that crate.
 anyhow = "1.0"
-arboard = "3.4"
-base64.workspace = true
-chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 dirs = "6.0"
 log = "0.4"
-notify = { version = "6.1", default-features = false, features = ["macos_fsevent"] }
-notify-debouncer-mini = "0.4"
-portable-pty = "0.8"
 ratatui = "0.30.0"
-ropey = "1.6"
-serde = { version = "1.0", features = ["derive"] }
-sysinfo = "0.31"
-toml = "0.8"
-unicode-segmentation = "1.11"
-unicode-width = "0.2.0"
-vte = "0.13"
 
-# Tree-sitter syntax highlight
-tree-sitter = "0.24"
-tree-sitter-highlight = "0.24"
-
-# Grammar parsers (statically linked)
-# Programming languages
-tree-sitter-rust = "0.23"
-tree-sitter-python = "0.23"
-tree-sitter-go = "0.23"
-tree-sitter-javascript = "0.23"
-tree-sitter-typescript = "0.23"
-tree-sitter-c = "0.23"
-tree-sitter-cpp = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-ruby = "0.23"
-# Pinned to 0.23 workspace-wide: 0.24 ships an ABI-15 grammar that the
-# workspace's tree-sitter 0.24 (max ABI 14) rejects. Mixing 0.23 and 0.24 also
-# collides the exported `tree_sitter_php` C symbol at final-binary link time,
-# so the 0.24 (ABI-15) copy wins and disables PHP highlighting. Keep every
-# crate that depends on tree-sitter-php on the same 0.23 line.
-tree-sitter-php = "0.23"
-tree-sitter-haskell = "0.23"
-tree-sitter-nix = "0.3"
-
-# Web technologies
-tree-sitter-html = "0.23"
-tree-sitter-css = "0.23"
-tree-sitter-json = "0.23"
-
-# Configuration formats
-tree-sitter-toml-ng = "0.7"
-tree-sitter-yaml = "0.7"
-tree-sitter-bash = "0.23"
-tree-sitter-md = "0.3"
-regex = "1.12.2"
-similar = "2.7.0"
-
-# Workspace crates
-termide-buffer = { path = "crates/buffer" }
-termide-clipboard = { path = "crates/clipboard" }
+# Workspace crates referenced directly from main.rs / ui.rs
+termide-app = { path = "crates/app" }
 termide-config = { path = "crates/config" }
 termide-core = { path = "crates/core" }
 termide-git = { path = "crates/git" }
-termide-highlight = { path = "crates/highlight" }
 termide-i18n = { path = "crates/i18n" }
 termide-keyboard = { path = "crates/keyboard" }
 termide-layout = { path = "crates/layout" }
-termide-logger = { path = "crates/logger" }
-termide-modal = { path = "crates/modal" }
 termide-panel-editor = { path = "crates/panel-editor" }
 termide-panel-file-manager = { path = "crates/panel-file-manager" }
-termide-panel-misc = { path = "crates/panel-misc" }
 termide-panel-terminal = { path = "crates/panel-terminal" }
-termide-panel-image = { path = "crates/panel-image" }
-termide-panel-git-status = { path = "crates/panel-git-status" }
-termide-panel-git-log = { path = "crates/panel-git-log" }
 termide-session = { path = "crates/session" }
-termide-state = { path = "crates/state" }
-termide-system-monitor = { path = "crates/system-monitor" }
 termide-theme = { path = "crates/theme" }
-termide-ui = { path = "crates/ui" }
 termide-ui-render = { path = "crates/ui-render" }
-termide-watcher = { path = "crates/watcher" }
-termide-app-core = { path = "crates/app-core" }
-termide-app = { path = "crates/app" }
 
 [build-dependencies]
 cc = "1.0"
 
 [dev-dependencies]
 tempfile = "3.12"
+# tests/grammar_loads.rs asserts every SUPPORTED_LANGUAGES grammar loads.
+termide-highlight = { path = "crates/highlight" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

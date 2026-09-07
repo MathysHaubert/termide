@@ -10,7 +10,6 @@ description = "Language Server Protocol integration for termide"
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
-termide-logger = { path = "../logger" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 lsp-types = "0.97"
