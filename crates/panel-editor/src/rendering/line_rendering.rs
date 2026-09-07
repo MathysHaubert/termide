@@ -316,8 +316,6 @@ fn render_line_regular<H: LineHighlighter>(
                             current_match_style,
                             selection_style,
                             theme.accented_bg,
-                            theme.error,
-                            theme.warning,
                         );
                         cell.set_style(final_style);
                     }
@@ -446,8 +444,6 @@ fn render_line_with_inline_diff<H: LineHighlighter>(
                                 current_match_style,
                                 selection_style,
                                 theme.accented_bg,
-                                theme.error,
-                                theme.warning,
                             );
                             // If unchanged and no highlight, apply diff style if inserted
                             if change_type == InlineChangeType::Inserted

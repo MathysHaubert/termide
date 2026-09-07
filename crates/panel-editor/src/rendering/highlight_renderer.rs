@@ -1,11 +1,11 @@
 //! Syntax highlighting and text styling.
 //!
 //! This module provides functions for determining the final visual style of each
-//! character based on syntax highlighting, selection, search matches, cursor position,
-//! and diagnostic underlines.
+//! character based on syntax highlighting, selection, search matches, and cursor
+//! position. Diagnostics are surfaced as gutter markers and virtual diagnostic
+//! lines, not as per-character underlines.
 
-use lsp_types::DiagnosticSeverity;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 
 use super::context::RenderContext;
 
@@ -16,8 +16,7 @@ use super::context::RenderContext;
 /// 2. Regular search match
 /// 3. Text selection
 /// 4. Cursor line (base style with accented background)
-/// 5. Diagnostic underline (applied on top of base style)
-/// 6. Base syntax highlighting style
+/// 5. Base syntax highlighting style
 #[allow(clippy::too_many_arguments)] // Logical grouping of styling parameters
 pub(crate) fn determine_cell_style(
     line: usize,
@@ -29,8 +28,6 @@ pub(crate) fn determine_cell_style(
     current_match_style: Style,
     selection_style: Style,
     cursor_line_bg: Color,
-    error_color: Color,
-    warning_color: Color,
 ) -> Style {
     // Check if this is a search match (O(1) HashMap lookup)
     let match_idx = render_context
@@ -46,11 +43,8 @@ pub(crate) fn determine_cell_style(
         false
     };
 
-    // Check for diagnostic at this position
-    let diagnostic_severity = render_context.diagnostic_severity_at(line, column);
-
     // Determine final style based on priority
-    let mut result = if let Some(idx) = match_idx {
+    if let Some(idx) = match_idx {
         // Search match - highest priority
         if Some(idx) == render_context.current_match_idx {
             current_match_style
@@ -66,21 +60,7 @@ pub(crate) fn determine_cell_style(
     } else {
         // Regular syntax highlighting
         base_style
-    };
-
-    // Apply diagnostic underline if present (lower priority than search/selection)
-    if let Some(severity) = diagnostic_severity {
-        let underline_color = match severity {
-            DiagnosticSeverity::ERROR => error_color,
-            DiagnosticSeverity::WARNING => warning_color,
-            _ => warning_color, // Use warning color for INFO/HINT
-        };
-        result = result
-            .add_modifier(Modifier::UNDERLINED)
-            .underline_color(underline_color);
     }
-
-    result
 }
 
 #[cfg(test)]
@@ -106,7 +86,6 @@ mod tests {
             selection_range,
             cursor_viewport_pos: None,
             diagnostic_line_severity: HashMap::new(),
-            diagnostic_ranges: HashMap::new(),
         }
     }
 
@@ -129,8 +108,6 @@ mod tests {
             current_match_style,
             selection_style,
             Color::DarkGray,
-            Color::Red,
-            Color::Yellow,
         );
 
         assert_eq!(result.bg, Some(Color::Green)); // Current match has highest priority
@@ -155,8 +132,6 @@ mod tests {
             current_match_style,
             selection_style,
             Color::DarkGray,
-            Color::Red,
-            Color::Yellow,
         );
 
         assert_eq!(result.bg, Some(Color::Yellow)); // Regular search match
@@ -183,8 +158,6 @@ mod tests {
             current_match_style,
             selection_style,
             Color::DarkGray,
-            Color::Red,
-            Color::Yellow,
         );
 
         assert_eq!(result.bg, Some(Color::Blue)); // Selection style
@@ -209,8 +182,6 @@ mod tests {
             current_match_style,
             selection_style,
             Color::DarkGray,
-            Color::Red,
-            Color::Yellow,
         );
 
         assert_eq!(result.bg, Some(Color::DarkGray)); // Cursor line bg
@@ -236,8 +207,6 @@ mod tests {
             current_match_style,
             selection_style,
             Color::DarkGray,
-            Color::Red,
-            Color::Yellow,
         );
 
         assert_eq!(result, base_style); // Returns base style unchanged

@@ -428,8 +428,6 @@ fn render_visual_line<H: LineHighlighter>(
                             current_match_style,
                             selection_style,
                             theme.accented_bg,
-                            theme.error,
-                            theme.warning,
                         );
                         cell.set_style(final_style);
                     }
