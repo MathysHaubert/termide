@@ -51,7 +51,7 @@ Resolution rules:
 
 - Add regression tests near the touched logic unless integration coverage is clearly the better fit.
 - Start validation narrowly while working, then broaden only as needed:
-  - `cargo test -p <crate>`
+  - `cargo test -p <crate>` (or `cargo nextest run -p <crate>`)
   - `cargo check -p <crate>`
   - `cargo clippy -p <crate> -- -D warnings`
 - Use comments only for invariants, protocol details, and non-obvious constraints.
@@ -69,12 +69,18 @@ Resolution rules:
 ## Validation
 
 - Run the narrowest useful checks first.
-- This repository has a local `pre-commit` hook that runs `cargo fmt --check`, `cargo check`, `cargo clippy -- -D warnings`, and `cargo test`.
+- This repository has a local `pre-commit` hook that mirrors CI: `cargo fmt --check`, `cargo machete`, `cargo check`, `cargo clippy -- -D warnings`, and `cargo nextest run` (falling back to `cargo test` when nextest is absent).
+- The hook checks the staged tree, not the working tree: when the index and the working tree differ it materialises what is being committed in a throwaway worktree under `target/`. Splitting one edit session into several coherent commits therefore needs no `--no-verify`.
 - Do not rely on the hook as a substitute for targeted validation; use narrow crate-level checks to validate the changed area before committing.
 - Treat completed implementation or an internally completed plan as insufficient reason to commit. If human review or local user validation is still expected, stop before commit and report the current state instead.
 - Before finishing broader changes, run:
   - `cargo fmt --all`
-  - `cargo test`
+  - `cargo nextest run --workspace` (or `cargo test --workspace`)
+  - `cargo machete` — an unused dependency declaration produces no warning from cargo, so nothing else catches one
+- Optional local tooling, all installable and all gated in CI:
+  - `cargo install cargo-machete` — unused dependency declarations
+  - `cargo install cargo-nextest` — parallel test runner, roughly 5x faster here
+  - `cargo install cargo-deny` — reproduces the supply-chain job before a push
 
 ## Documentation policy
 
