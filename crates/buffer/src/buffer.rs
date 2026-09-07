@@ -202,6 +202,56 @@ impl TextBuffer {
         }
     }
 
+    /// LSP `character` offset for a grapheme column on `line`.
+    ///
+    /// The buffer counts columns in graphemes; LSP counts them in UTF-16 code
+    /// units. The two agree for ASCII and for the whole BMP — Cyrillic and CJK
+    /// included — and diverge for combining sequences (`e` + U+0301 is one
+    /// grapheme, two code units), astral characters (an emoji is one grapheme,
+    /// two code units) and ZWJ sequences (a family emoji is one grapheme and
+    /// seven). Sending a grapheme column as `character` therefore points a
+    /// request at the wrong place once such text sits to its left.
+    ///
+    /// A column past the end of the line clamps to the line's length, matching
+    /// how LSP treats an out-of-range position.
+    pub fn utf16_column(&self, line: usize, column: usize) -> usize {
+        let Some(text) = self.line(line) else {
+            return 0;
+        };
+        text.trim_end_matches('\n')
+            .graphemes(true)
+            .take(column)
+            .map(|g| g.encode_utf16().count())
+            .sum()
+    }
+
+    /// Grapheme column for an LSP `character` offset on `line`.
+    ///
+    /// The inverse of [`Self::utf16_column`], for server replies that name a
+    /// position inside this buffer. An offset landing inside a grapheme rounds
+    /// down to that grapheme's start, and one past the end of the line clamps
+    /// to the line's length — both cases the LSP specification calls out.
+    pub fn grapheme_column(&self, line: usize, utf16_column: usize) -> usize {
+        let Some(text) = self.line(line) else {
+            return 0;
+        };
+        let mut consumed = 0;
+        for (column, grapheme) in text.trim_end_matches('\n').graphemes(true).enumerate() {
+            if consumed >= utf16_column {
+                return column;
+            }
+            let next = consumed + grapheme.encode_utf16().count();
+            if next > utf16_column {
+                // The offset lands inside this grapheme — a surrogate half, or
+                // a combining mark. Round down to the grapheme's own start so
+                // the result stays a column this buffer can address.
+                return column;
+            }
+            consumed = next;
+        }
+        text.trim_end_matches('\n').graphemes(true).count()
+    }
+
     /// Get all text
     pub fn text(&self) -> String {
         self.rope.to_string()
@@ -590,5 +640,82 @@ mod tests {
 
         // Verify content is identical
         assert_eq!(content1, content2, "Content should not change across saves");
+    }
+}
+
+#[cfg(test)]
+mod position_encoding_tests {
+    use super::*;
+
+    fn buffer(text: &str) -> TextBuffer {
+        TextBuffer::from_text(text)
+    }
+
+    #[test]
+    fn ascii_and_bmp_columns_are_unchanged() {
+        // The units coincide across the whole BMP, so the common case must
+        // stay a straight pass-through.
+        let b = buffer("let x = 1;\nlet привет = 2;\nlet 日本 = 3;\n");
+        for (line, column) in [(0usize, 10usize), (1, 15), (2, 11)] {
+            assert_eq!(b.utf16_column(line, column), column, "line {line}");
+            assert_eq!(b.grapheme_column(line, column), column, "line {line}");
+        }
+    }
+
+    #[test]
+    fn a_combining_accent_is_one_grapheme_and_two_code_units() {
+        // "e" + U+0301
+        let b = buffer("x = \"e\u{301}\";\n");
+        // Up to and including the accented cluster: 4 ASCII + quote + cluster.
+        assert_eq!(b.utf16_column(0, 6), 7);
+        assert_eq!(b.grapheme_column(0, 7), 6);
+    }
+
+    #[test]
+    fn an_astral_character_is_one_grapheme_and_two_code_units() {
+        let b = buffer("s = \"🙂\";\n");
+        assert_eq!(b.utf16_column(0, 6), 7);
+        assert_eq!(b.grapheme_column(0, 7), 6);
+    }
+
+    #[test]
+    fn a_zwj_sequence_is_one_grapheme_and_many_code_units() {
+        let b = buffer("s = \"👨\u{200d}👩\u{200d}👧\";\n");
+        // 5 ASCII columns, then one cluster of three astral chars and two ZWJs.
+        assert_eq!(b.utf16_column(0, 5), 5);
+        assert_eq!(b.utf16_column(0, 6), 13);
+        assert_eq!(b.grapheme_column(0, 13), 6);
+    }
+
+    #[test]
+    fn the_conversions_round_trip_on_every_column() {
+        let b = buffer("a\u{301}🙂b日\u{200d}c\n");
+        let len = b.line_len_graphemes(0);
+        for column in 0..=len {
+            assert_eq!(
+                b.grapheme_column(0, b.utf16_column(0, column)),
+                column,
+                "column {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_inside_a_grapheme_resolves_to_its_start() {
+        let b = buffer("🙂x\n");
+        // Offset 1 is the emoji's low surrogate — not a position a buffer
+        // column can name, so it must not run past the grapheme.
+        assert_eq!(b.grapheme_column(0, 1), 0);
+        assert_eq!(b.grapheme_column(0, 2), 1);
+    }
+
+    #[test]
+    fn out_of_range_input_clamps_instead_of_panicking() {
+        let b = buffer("ab\n");
+        assert_eq!(b.utf16_column(0, 99), 2);
+        assert_eq!(b.grapheme_column(0, 99), 2);
+        // A line past the end of the buffer has no columns at all.
+        assert_eq!(b.utf16_column(99, 3), 0);
+        assert_eq!(b.grapheme_column(99, 3), 0);
     }
 }
