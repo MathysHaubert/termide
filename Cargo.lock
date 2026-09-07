@@ -5306,7 +5306,6 @@ dependencies = [
  "termide-modal",
  "termide-richtext",
  "termide-ui",
- "unicode-width",
  "url",
 ]
 

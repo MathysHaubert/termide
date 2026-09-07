@@ -1,8 +1,8 @@
 //! Cursor movement, scrolling, selection, and line metrics for the preview.
 
 use crate::render::{self, LinkSpan};
-use crate::text::{char_col_to_display, slice_chars};
 use crate::{MarkdownPanel, Pos};
+use termide_ui::text_utils::{char_col_to_display, slice_chars};
 
 impl MarkdownPanel {
     pub(crate) fn line_count(&self) -> usize {

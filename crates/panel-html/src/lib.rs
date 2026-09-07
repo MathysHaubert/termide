@@ -25,12 +25,11 @@ use termide_modal::FindBar;
 use termide_richtext::Rendered;
 use termide_ui::ScrollBar;
 
-use crate::text::{char_col_to_display, display_to_char_col, url_fragment};
+use termide_ui::text_utils::{char_col_to_display, display_to_char_col, url_fragment};
 
 mod links;
 mod navigation;
 mod search;
-mod text;
 
 /// A cursor / selection position: `(line index, character column)`.
 type Pos = (usize, usize);

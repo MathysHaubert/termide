@@ -10,7 +10,6 @@ repository.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
-unicode-width.workspace = true
 url.workspace = true
 
 # Workspace crates

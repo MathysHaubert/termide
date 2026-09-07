@@ -3,8 +3,8 @@
 use termide_html::render_html;
 use termide_richtext::LinkSpan;
 
-use crate::text::{char_col_to_display, slice_chars};
 use crate::{HtmlPanel, Pos};
+use termide_ui::text_utils::{char_col_to_display, slice_chars};
 
 impl HtmlPanel {
     pub(crate) fn line_count(&self) -> usize {
