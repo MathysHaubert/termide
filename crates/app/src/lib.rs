@@ -19,7 +19,6 @@ mod state_types;
 // Re-export main types for convenience
 pub use app::App;
 pub use layout_session::LayoutManagerSession;
-#[allow(deprecated)]
 pub use panel_ext::PanelExt;
 pub use state::AppState;
 

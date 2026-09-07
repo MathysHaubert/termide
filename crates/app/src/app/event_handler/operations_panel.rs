@@ -1,7 +1,5 @@
 //! Operations-panel event handlers and lifecycle helpers.
 
-#![allow(deprecated)]
-
 use anyhow::Result;
 
 use crate::app::App;

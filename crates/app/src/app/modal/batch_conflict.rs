@@ -1,7 +1,6 @@
 //! Conflict-resolution continuation and rename-pattern flow for batch operations.
 
 // Note: PanelExt is used for FileManager batch operations (copy/move/delete/rename).
-#![allow(deprecated)]
 
 use anyhow::Result;
 

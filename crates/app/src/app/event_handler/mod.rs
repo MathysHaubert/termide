@@ -10,7 +10,6 @@
 
 // Note: PanelExt is used for panel-specific operations (mouse clicks, resize)
 // that require concrete type access. Common operations use Panel::handle_command().
-#![allow(deprecated)]
 
 use anyhow::Result;
 

@@ -3,7 +3,6 @@
 //! Handles menu navigation and creating new panels.
 
 // Note: PanelExt is used for editor save operations that require concrete type access.
-#![allow(deprecated)]
 
 mod bookmarks;
 mod command_palette;

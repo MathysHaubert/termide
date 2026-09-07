@@ -1,32 +1,41 @@
-//! Panel extension traits for downcasting.
+//! Panel extension traits for downcasting to a concrete panel type.
 //!
-//! # Deprecation Notice
+//! # How this relates to `PanelCommand`
 //!
-//! This trait is **deprecated** in favor of the `handle_command()` method on `Panel`.
+//! The two are complements, not rivals, and the split is deliberate:
 //!
-//! Instead of downcasting to concrete panel types, use `Panel::handle_command()`
-//! with appropriate `PanelCommand` variants:
+//! - **`Panel::handle_command`** carries operations every panel can answer —
+//!   `Save`, `Reload`, `Copy`, `Resize`, `OnGitUpdate`, `GetScrollBars`. A
+//!   caller that does not care which panel is focused goes through it.
+//! - **`PanelExt`** reaches a specific panel's own API — `Editor::init_lsp`,
+//!   `Editor::poll_completion`, `Editor::set_symbol_lines`,
+//!   `FileManager::create_file`. These are features of one panel type, not
+//!   contracts every panel implements.
+//!
+//! This trait once carried `#[deprecated]`, on the plan that everything would
+//! move to `PanelCommand`. That plan does not survive contact with the
+//! numbers: the app calls 67 distinct `Editor` methods, 24 on `FileManager`
+//! and 5 on `Terminal` through these downcasts. Expressing them as commands
+//! would take roughly 96 new variants against the 25 `PanelCommand` has
+//! today, and all 96 would be panel-specific — which is precisely what a
+//! shared contract is not for. The deprecation was removed rather than
+//! carried as a warning nothing intended to act on.
+//!
+//! What still belongs in `PanelCommand`, and should be added there rather
+//! than reached through a downcast:
+//!
+//! - anything a second panel type would plausibly answer
+//! - anything the caller invokes without knowing the panel's type
 //!
 //! ```rust,ignore
-//! // Old approach (deprecated):
-//! if let Some(editor) = panel.as_editor_mut() {
-//!     editor.update_git_diff();
-//! }
-//!
-//! // New approach (preferred):
+//! // Cross-panel concern -> command:
 //! panel.handle_command(PanelCommand::OnGitUpdate { repo_paths: &paths });
+//!
+//! // One panel's own feature -> downcast:
+//! if let Some(editor) = panel.as_editor_mut() {
+//!     editor.init_lsp(lsp_manager);
+//! }
 //! ```
-//!
-//! # When PanelExt is still used
-//!
-//! Some operations intentionally remain using PanelExt because they don't fit
-//! the command pattern well:
-//!
-//! - **Resource extraction**: `take_config_update()`, `dir_size_receiver.take()`
-//! - **Complex type-specific methods**: `go_to_line()`, `save_as()`, batch operations
-//! - **Modal requests**: `take_modal_request()` (returns concrete types)
-//!
-//! These will be reviewed for potential migration in future versions.
 
 use std::any::Any;
 
@@ -39,22 +48,13 @@ use termide_panel_file_manager::FileManager;
 use termide_panel_git_log::GitLogPanel;
 use termide_panel_git_status::GitStatusPanel;
 use termide_panel_misc::JournalPanel;
-use termide_panel_outline::OutlinePanel;
 use termide_panel_terminal::Terminal;
 use termide_state::PendingAction;
 
 /// Extension trait for convenient downcasting of Panel trait objects.
 ///
-/// # Deprecated
-///
-/// This trait is deprecated. Use `Panel::handle_command()` with `PanelCommand` instead.
-/// See module documentation for migration examples.
-// Allow deprecated use within this module for internal implementation
-#[allow(deprecated)]
-#[deprecated(
-    since = "0.5.0",
-    note = "Use Panel::handle_command() with PanelCommand variants instead"
-)]
+/// See the module documentation for when to add a `PanelCommand` variant
+/// instead of a downcast here.
 pub trait PanelExt {
     /// Downcast to Editor (immutable)
     fn as_editor(&self) -> Option<&Editor>;
@@ -64,14 +64,8 @@ pub trait PanelExt {
     fn as_file_manager_mut(&mut self) -> Option<&mut FileManager>;
     /// Downcast to Terminal (mutable)
     fn as_terminal_mut(&mut self) -> Option<&mut Terminal>;
-    /// Downcast to GitStatusPanel (mutable)
-    fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel>;
     /// Downcast to DiagnosticsPanel (mutable)
     fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel>;
-    /// Downcast to OutlinePanel (mutable)
-    fn as_outline_panel_mut(&mut self) -> Option<&mut OutlinePanel>;
-    /// Downcast to GitLogPanel (mutable)
-    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel>;
     /// Check if panel is a Journal panel
     fn is_journal(&self) -> bool;
     /// Take modal request from FileManager, Editor, or GitStatusPanel.
@@ -88,7 +82,6 @@ pub trait PanelExt {
     )>;
 }
 
-#[allow(deprecated)]
 impl PanelExt for dyn Panel {
     fn as_editor(&self) -> Option<&Editor> {
         (self as &dyn Any).downcast_ref::<Editor>()
@@ -106,26 +99,18 @@ impl PanelExt for dyn Panel {
         (self as &mut dyn Any).downcast_mut::<Terminal>()
     }
 
-    fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel> {
-        (self as &mut dyn Any).downcast_mut::<GitStatusPanel>()
-    }
-
     fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel> {
         (self as &mut dyn Any).downcast_mut::<DiagnosticsPanel>()
-    }
-
-    fn as_outline_panel_mut(&mut self) -> Option<&mut OutlinePanel> {
-        (self as &mut dyn Any).downcast_mut::<OutlinePanel>()
-    }
-
-    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel> {
-        (self as &mut dyn Any).downcast_mut::<GitLogPanel>()
     }
 
     fn is_journal(&self) -> bool {
         (self as &dyn Any).is::<JournalPanel>()
     }
 
+    /// Collect a pending modal request from whichever panel type has one.
+    ///
+    /// Downcasts inline for the panels no caller reaches on its own, so the
+    /// trait exposes only the accessors something outside this module uses.
     fn take_modal_request(&mut self) -> Option<(PendingAction, ActiveModal)> {
         if let Some(fm) = self.as_file_manager_mut() {
             return fm.take_modal_request();
@@ -133,10 +118,10 @@ impl PanelExt for dyn Panel {
         if let Some(editor) = self.as_editor_mut() {
             return editor.take_modal_request();
         }
-        if let Some(git_status) = self.as_git_status_mut() {
+        if let Some(git_status) = (self as &mut dyn Any).downcast_mut::<GitStatusPanel>() {
             return git_status.take_modal_request();
         }
-        if let Some(git_log) = self.as_git_log_mut() {
+        if let Some(git_log) = (self as &mut dyn Any).downcast_mut::<GitLogPanel>() {
             return git_log.take_modal_request();
         }
         if let Some(journal) = (self as &mut dyn Any).downcast_mut::<JournalPanel>() {
@@ -162,7 +147,6 @@ impl PanelExt for dyn Panel {
     }
 }
 
-#[allow(deprecated)]
 impl PanelExt for Box<dyn Panel> {
     fn as_editor(&self) -> Option<&Editor> {
         (**self).as_editor()
@@ -180,20 +164,8 @@ impl PanelExt for Box<dyn Panel> {
         (**self).as_terminal_mut()
     }
 
-    fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel> {
-        (**self).as_git_status_mut()
-    }
-
     fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel> {
         (**self).as_diagnostics_panel_mut()
-    }
-
-    fn as_outline_panel_mut(&mut self) -> Option<&mut OutlinePanel> {
-        (**self).as_outline_panel_mut()
-    }
-
-    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel> {
-        (**self).as_git_log_mut()
     }
 
     fn is_journal(&self) -> bool {

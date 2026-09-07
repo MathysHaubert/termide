@@ -1,7 +1,6 @@
 //! Batch file operation handling: shared helpers and the progress/tracking engine.
 
 // Note: PanelExt is used for FileManager batch operations (copy/move/delete/rename).
-#![allow(deprecated)]
 
 use std::path::{Path, PathBuf};
 

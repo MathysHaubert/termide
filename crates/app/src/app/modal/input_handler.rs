@@ -1,7 +1,6 @@
 //! Input modal result handling.
 
 // Note: PanelExt is used for FileManager file operations (create file/dir).
-#![allow(deprecated)]
 
 use anyhow::Result;
 use std::path::PathBuf;
