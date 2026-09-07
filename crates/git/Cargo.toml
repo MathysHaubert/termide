@@ -10,7 +10,6 @@ description = "Git integration for termide"
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
-regex.workspace = true
 similar.workspace = true
 
 # Workspace crates

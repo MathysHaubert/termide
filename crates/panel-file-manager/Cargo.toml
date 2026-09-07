@@ -21,7 +21,6 @@ unicode-width.workspace = true
 
 # Workspace crates
 termide-config = { path = "../config" }
-termide-logger = { path = "../logger" }
 termide-vfs = { path = "../vfs" }
 termide-system-monitor = { path = "../system-monitor" }
 termide-core = { path = "../core" }

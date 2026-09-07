@@ -4852,7 +4852,6 @@ name = "termide-app"
 version = "0.32.0"
 dependencies = [
  "anyhow",
- "chrono",
  "crossterm",
  "dirs",
  "libc",
@@ -4966,12 +4965,10 @@ dependencies = [
 name = "termide-db"
 version = "0.32.0"
 dependencies = [
- "log",
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "url",
 ]
 
 [[package]]
@@ -4998,7 +4995,6 @@ version = "0.32.0"
 dependencies = [
  "anyhow",
  "log",
- "regex",
  "similar",
  "termide-i18n",
  "termide-ui",
@@ -5008,7 +5004,6 @@ dependencies = [
 name = "termide-highlight"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "log",
  "ratatui",
  "tree-sitter",
@@ -5106,10 +5101,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "crossterm",
- "glob",
- "ignore",
  "ratatui",
- "regex",
  "termide-clipboard",
  "termide-config",
  "termide-core",
@@ -5176,7 +5168,6 @@ name = "termide-panel-editor"
 version = "0.32.0"
 dependencies = [
  "anyhow",
- "chrono",
  "crossterm",
  "dirs",
  "log",
@@ -5237,7 +5228,6 @@ dependencies = [
  "termide-git",
  "termide-i18n",
  "termide-keyboard",
- "termide-logger",
  "termide-modal",
  "termide-state",
  "termide-system-monitor",
@@ -5382,7 +5372,6 @@ dependencies = [
 name = "termide-panel-operations"
 version = "0.32.0"
 dependencies = [
- "anyhow",
  "crossterm",
  "ratatui",
  "termide-config",
@@ -5547,7 +5536,6 @@ dependencies = [
 name = "termide-vfs"
 version = "0.32.0"
 dependencies = [
- "chrono",
  "dirs",
  "libc",
  "log",

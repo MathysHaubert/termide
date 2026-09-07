@@ -10,10 +10,7 @@ license = "MIT"
 anyhow.workspace = true
 chrono.workspace = true
 crossterm.workspace = true
-glob.workspace = true
-ignore.workspace = true
 ratatui.workspace = true
-regex.workspace = true
 unicode-width.workspace = true
 
 # Workspace crates

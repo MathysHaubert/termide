@@ -8,7 +8,6 @@ license = "MIT"
 [dependencies]
 # External
 anyhow.workspace = true
-chrono.workspace = true
 crossterm.workspace = true
 log.workspace = true
 lsp-types = "0.97"

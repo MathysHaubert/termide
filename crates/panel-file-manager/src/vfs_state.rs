@@ -353,9 +353,7 @@ impl VfsState {
                         Some(Err(e))
                     }
                     None => {
-                        // Note: Using debug level to avoid flooding logs
-                        // termide_logger::debug("VfsState: ListDir still pending".to_string());
-                        // Still pending, put it back
+                        // Still pending, put it back.
                         self.pending_operation = Some(PendingVfsOperation::ListDir(op));
                         None
                     }

@@ -12,7 +12,6 @@ thiserror = "2.0"
 url.workspace = true
 percent-encoding = "2"
 log = "0.4"
-chrono.workspace = true
 
 # SFTP support — pure-Rust russh stack (no OpenSSL/libssh2 needed).
 russh = "0.62"
