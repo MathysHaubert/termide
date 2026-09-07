@@ -10,6 +10,40 @@ use super::{ConflictAction, ConflictContext, OperationWorker, CHUNK_SIZE};
 
 /// Number of files between progress updates during scanning phase.
 const PROGRESS_THROTTLE_FILES: usize = 50;
+
+/// Removes a half-written destination file unless the copy completes.
+///
+/// `File::create` truncates the destination up front, so a cancelled or
+/// failed transfer would otherwise leave a short file on disk that looks
+/// like a finished copy. Arm the guard before opening the destination and
+/// call [`PartialFile::keep`] once the copy has been verified.
+struct PartialFile<'a> {
+    path: Option<&'a Path>,
+}
+
+impl<'a> PartialFile<'a> {
+    fn new(path: &'a Path) -> Self {
+        Self { path: Some(path) }
+    }
+
+    /// Disarm the guard: the destination is complete and must be kept.
+    fn keep(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for PartialFile<'_> {
+    fn drop(&mut self) {
+        if let Some(path) = self.path {
+            match fs::remove_file(path) {
+                Ok(()) => log::debug!("removed partial copy {path:?}"),
+                // Nothing was created (the open itself failed).
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("failed to remove partial copy {path:?}: {e}"),
+            }
+        }
+    }
+}
 use crate::types::{
     OperationControl, OperationError, OperationPhase, OperationProgress, OperationResult,
 };
@@ -112,6 +146,9 @@ impl LocalCopyWorker {
             // Copy regular file with chunked reading
             let file_size = metadata.len();
             let mut source_file = File::open(source)?;
+            // Declared before `dest_file` so the handle is closed before the
+            // guard removes the file (Windows refuses to unlink open files).
+            let partial = PartialFile::new(dest);
             let mut dest_file = File::create(dest)?;
 
             let mut buffer = vec![0u8; CHUNK_SIZE];
@@ -173,6 +210,9 @@ impl LocalCopyWorker {
                     file_bytes_copied
                 ))));
             }
+
+            // The destination is complete — keep it.
+            partial.keep();
 
             // Preserve permissions from source
             #[cfg(unix)]
@@ -763,6 +803,35 @@ mod tests {
         let result = worker.execute(&control, &tx);
         drop(tx);
         (result, rx.iter().collect())
+    }
+
+    /// Every early return in `copy_file` (cancel, pause-cancel, read/write
+    /// error, size mismatch) relies on this guard to unlink the truncated
+    /// destination, so test the guard itself rather than racing a cancel.
+    #[test]
+    fn partial_file_guard_removes_unless_kept() {
+        let tmp = TempDir::new().unwrap();
+
+        let dropped = tmp.path().join("dropped.bin");
+        {
+            let guard = PartialFile::new(&dropped);
+            fs::write(&dropped, b"half").unwrap();
+            drop(guard);
+        }
+        assert!(!dropped.exists(), "a partial copy must be removed");
+
+        let kept = tmp.path().join("kept.bin");
+        {
+            let guard = PartialFile::new(&kept);
+            fs::write(&kept, b"whole").unwrap();
+            guard.keep();
+        }
+        assert!(kept.exists(), "keep() must disarm the guard");
+
+        // The destination was never created: dropping must not warn or panic.
+        let missing = tmp.path().join("never.bin");
+        drop(PartialFile::new(&missing));
+        assert!(!missing.exists());
     }
 
     #[test]
