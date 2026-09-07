@@ -28,9 +28,6 @@ pub struct RenderContext {
 
     /// Map of line -> most severe diagnostic severity for gutter markers.
     pub diagnostic_line_severity: HashMap<usize, DiagnosticSeverity>,
-
-    /// Map of (line, column) -> diagnostic severity for inline underlines.
-    pub diagnostic_ranges: HashMap<(usize, usize), DiagnosticSeverity>,
 }
 
 impl RenderContext {
@@ -67,8 +64,9 @@ impl RenderContext {
         // Pre-extract selection information
         let selection_range = selection.as_ref().map(|s| (s.start(), s.end()));
 
-        // Build diagnostic maps for gutter markers and inline underlines
-        let (diagnostic_line_severity, diagnostic_ranges) = build_diagnostic_maps(diagnostics);
+        // Build the gutter-marker severity map (inline underlines are drawn as
+        // virtual diagnostic lines, not per-character spans).
+        let diagnostic_line_severity = build_diagnostic_line_severity(diagnostics);
 
         Self {
             search_match_map,
@@ -76,18 +74,12 @@ impl RenderContext {
             selection_range,
             cursor_viewport_pos: None,
             diagnostic_line_severity,
-            diagnostic_ranges,
         }
     }
 
     /// Get diagnostic severity for a line (for gutter marker).
     pub fn diagnostic_severity_at_line(&self, line: usize) -> Option<DiagnosticSeverity> {
         self.diagnostic_line_severity.get(&line).copied()
-    }
-
-    /// Get diagnostic severity at a specific position (for inline underline).
-    pub fn diagnostic_severity_at(&self, line: usize, column: usize) -> Option<DiagnosticSeverity> {
-        self.diagnostic_ranges.get(&(line, column)).copied()
     }
 }
 
@@ -127,12 +119,9 @@ fn build_search_match_map(
 /// Returns two maps:
 /// 1. Line -> most severe diagnostic severity (for gutter markers)
 /// 2. Empty map (inline underlines disabled - virtual diagnostic lines are used instead)
-fn build_diagnostic_maps(
+fn build_diagnostic_line_severity(
     diagnostics: &[Diagnostic],
-) -> (
-    HashMap<usize, DiagnosticSeverity>,
-    HashMap<(usize, usize), DiagnosticSeverity>,
-) {
+) -> HashMap<usize, DiagnosticSeverity> {
     let mut line_severity: HashMap<usize, DiagnosticSeverity> = HashMap::new();
 
     for diag in diagnostics {
@@ -153,8 +142,7 @@ fn build_diagnostic_maps(
         }
     }
 
-    // Return empty map for inline underlines - virtual diagnostic lines are used instead
-    (line_severity, HashMap::new())
+    line_severity
 }
 
 /// Get priority for diagnostic severity (lower is more severe).

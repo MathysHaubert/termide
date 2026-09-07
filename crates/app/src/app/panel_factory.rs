@@ -1,7 +1,5 @@
 //! Panel creation: instantiate and add new panels (Terminal, Editor, FileManager, etc.)
 
-#![allow(deprecated)]
-
 use anyhow::Result;
 use std::path::PathBuf;
 

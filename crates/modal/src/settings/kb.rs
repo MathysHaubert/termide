@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use termide_config::{Config, KeyBinding};
 
 /// Keybinding section names shown in the sidebar.
-pub(super) const KB_SECTIONS: [&str; 7] = [
+pub(super) const KB_SECTIONS: [&str; 9] = [
     "Global",
     "Editor",
     "FileManager",
@@ -16,6 +16,8 @@ pub(super) const KB_SECTIONS: [&str; 7] = [
     "GitDiff",
     "GitLog",
     "Terminal",
+    "Database",
+    "Viewer",
 ];
 
 macro_rules! kb_get {
@@ -150,6 +152,15 @@ pub(super) fn kb_binding_names(section: usize) -> &'static [&'static str] {
             "search",
             "switch_directory",
         ],
+        7 => &[
+            "sort",
+            "filter",
+            "clear_filter",
+            "detail",
+            "copy_row",
+            "refresh",
+        ],
+        8 => &["toggle_hex", "toggle_view"],
         _ => &[],
     }
 }
@@ -285,6 +296,17 @@ pub(super) fn get_kb_value(config: &Config, section: usize, name: &str) -> Strin
             search,
             switch_directory
         ),
+        7 => kb_get!(
+            config.database.keybindings,
+            name,
+            sort,
+            filter,
+            clear_filter,
+            detail,
+            copy_row,
+            refresh
+        ),
+        8 => kb_get!(config.viewer.keybindings, name, toggle_hex, toggle_view),
         _ => String::new(),
     }
 }
@@ -433,6 +455,24 @@ pub(super) fn set_kb_value(config: &mut Config, section: usize, name: &str, valu
             search,
             switch_directory
         ),
+        7 => kb_set!(
+            config.database.keybindings,
+            name,
+            value,
+            sort,
+            filter,
+            clear_filter,
+            detail,
+            copy_row,
+            refresh
+        ),
+        8 => kb_set!(
+            config.viewer.keybindings,
+            name,
+            value,
+            toggle_hex,
+            toggle_view
+        ),
         _ => {}
     }
 }
@@ -522,6 +562,54 @@ mod tests {
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }
+    }
+
+    /// Every name the sidebar lists has to be readable and writable. The
+    /// `kb_get!` / `kb_set!` macros compare the name against field
+    /// identifiers, so a typo in one of these arrays does not fail to
+    /// compile — the row just shows an empty binding and silently refuses to
+    /// take a new one.
+    #[test]
+    fn every_listed_binding_is_wired_to_a_field() {
+        // `normalize` is what fills in the defaults; a bare `default()` leaves
+        // every binding `None` and would make this test pass vacuously.
+        let mut config = Config::default();
+        config.normalize();
+        for (section, label) in KB_SECTIONS.iter().enumerate() {
+            let names = kb_binding_names(section);
+            assert!(
+                !names.is_empty(),
+                "section {section} ({label}) lists no bindings"
+            );
+            for name in names {
+                assert!(
+                    !get_kb_value(&config, section, name).is_empty(),
+                    "{label}.{name} reads back empty — name does not match a field"
+                );
+
+                let probe = KeyBinding::Single("Ctrl+Alt+F19".to_string());
+                set_kb_value(&mut config, section, name, probe);
+                assert_eq!(
+                    get_kb_value(&config, section, name),
+                    "Ctrl+Alt+F19",
+                    "{label}.{name} did not take a new binding"
+                );
+            }
+        }
+    }
+
+    /// A section index past the end must not panic; the sidebar clamps, but
+    /// the accessors are the ones that would go out of bounds.
+    #[test]
+    fn an_unknown_section_reads_empty_and_writes_nothing() {
+        let mut config = Config::default();
+        assert!(get_kb_value(&config, 99, "sort").is_empty());
+        set_kb_value(
+            &mut config,
+            99,
+            "sort",
+            KeyBinding::Single("Ctrl+X".to_string()),
+        );
     }
 
     #[test]

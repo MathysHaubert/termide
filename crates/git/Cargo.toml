@@ -10,10 +10,7 @@ description = "Git integration for termide"
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
-regex.workspace = true
 similar.workspace = true
-notify.workspace = true
-notify-debouncer-mini.workspace = true
 
 # Workspace crates
 termide-ui = { path = "../ui" }

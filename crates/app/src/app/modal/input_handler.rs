@@ -1,7 +1,6 @@
 //! Input modal result handling.
 
 // Note: PanelExt is used for FileManager file operations (create file/dir).
-#![allow(deprecated)]
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -10,7 +9,7 @@ use super::super::App;
 use crate::PanelExt;
 use termide_i18n as i18n;
 use termide_modal::SaveAsResult;
-use termide_panel_file_manager::FileManager;
+use termide_panel_file_manager::{CreateOutcome, FileManager};
 
 /// Whether `s` is a database connection URL the DB viewer handles.
 fn is_database_url(s: &str) -> bool {
@@ -156,7 +155,11 @@ impl App {
                     } else {
                         fm.create_file(name.clone())
                     };
-                    if result.is_ok() {
+                    // A remote create only starts here; reloading now would
+                    // replace the pending operation with a listing that cannot
+                    // yet show the new entry. The panel's own tick reloads and
+                    // reports it when the round-trip lands.
+                    if matches!(result, Ok(CreateOutcome::Done)) {
                         let _ = fm.load_directory();
                     }
                     Some(result)
@@ -171,7 +174,7 @@ impl App {
 
             if let Some(result) = result {
                 match result {
-                    Ok(_) => {
+                    Ok(CreateOutcome::Done) => {
                         let msg = if is_directory {
                             t.status_dir_created(name)
                         } else {
@@ -179,6 +182,9 @@ impl App {
                         };
                         self.state.set_info(msg);
                     }
+                    // The FileManager reports the outcome once the remote
+                    // answers — saying "created" here would be a guess.
+                    Ok(CreateOutcome::Pending) => {}
                     Err(e) => {
                         let kind = if is_directory { "directory" } else { "file" };
                         log::error!("{} creation error '{}': {}", kind, name, e);

@@ -1,7 +1,6 @@
 //! Panel management: close, focus, and path collection.
 
 // Note: PanelExt is used for panel-specific path queries that require concrete type access.
-#![allow(deprecated)]
 
 use std::path::PathBuf;
 

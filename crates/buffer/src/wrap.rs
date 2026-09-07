@@ -87,10 +87,18 @@ pub fn calculate_wrap_point(
 
 /// Check if a character is a word boundary
 ///
-/// Word boundaries are non-alphanumeric characters (spaces, punctuation, etc.)
-/// This is used by the wrapping algorithm and word selection.
+/// Word boundaries are characters that are neither alphanumeric nor `_`.
+/// Underscore counts as part of a word so that double-clicking a
+/// `snake_case` identifier selects all of it — matching this editor's own vim
+/// motions (`word_boundary::char_type`) and the terminal's double-click
+/// (`panel_terminal::selection::is_word_char`), which both already treat it
+/// that way.
+///
+/// Only word selection uses this; `calculate_wrap_point` carries its own
+/// predicate, where `_` deliberately stays a break point so a long
+/// `snake_case_identifier` wraps there instead of mid-word.
 pub fn is_word_boundary(c: char) -> bool {
-    !c.is_alphanumeric()
+    !(c.is_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -127,12 +135,14 @@ mod tests {
         assert!(is_word_boundary('.'));
         assert!(is_word_boundary(','));
         assert!(is_word_boundary('!'));
-        assert!(is_word_boundary('_'));
 
         assert!(!is_word_boundary('a'));
         assert!(!is_word_boundary('Z'));
         assert!(!is_word_boundary('5'));
         assert!(!is_word_boundary('ж')); // Cyrillic
         assert!(!is_word_boundary('中')); // Chinese
+                                          // Underscore belongs to the word: a double-click on `snake_case`
+                                          // selects the whole identifier.
+        assert!(!is_word_boundary('_'));
     }
 }

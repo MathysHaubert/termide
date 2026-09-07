@@ -34,7 +34,7 @@ termide.log
 *.profraw
 
 /.claude
-!/.claude/skills
-
 /.codex
+/.qwen
 /docs/
+CLAUDE.md

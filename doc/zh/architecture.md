@@ -262,7 +262,7 @@ while !state.should_quit {
 4. **活动面板**（通过 `panel.handle_key()`）
 
 **西里尔文支持：**
-通过 `termide_keyboard::translate_hotkey()` 进行键盘布局翻译，使快捷键在俄语键盘布局下也能工作。
+通过 `termide_keyboard::KeyNormalizer::canonicalize()` 进行键盘布局翻译，使快捷键在俄语键盘布局下也能工作。
 
 #### 3.3 鼠标处理器
 

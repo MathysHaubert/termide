@@ -64,6 +64,11 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Check formatting
         # Formatting is platform-independent; checking it twice only
         # doubles the ways a run can go red for the same reason.
@@ -77,7 +82,29 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace
+        # nextest, like the pre-commit hook: one process per test binary in
+        # parallel, and a non-zero exit on a test that fails to even start.
+        run: cargo nextest run --workspace
+
+  unused-deps:
+    name: Manifest hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.91.1
+
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+
+      # An unused dependency declaration produces no warning from cargo, so
+      # nothing but a dedicated check keeps them from piling back up.
+      - name: cargo machete
+        run: cargo machete
 
   deny:
     name: Supply-chain audit

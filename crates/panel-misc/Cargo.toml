@@ -5,18 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-chrono.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
-unicode-width.workspace = true
 
 # Workspace crates
 termide-config = { path = "../config" }
 termide-core = { path = "../core" }
 termide-highlight = { path = "../highlight" }
 termide-i18n = { path = "../i18n" }
-termide-keyboard = { path = "../keyboard" }
 termide-logger = { path = "../logger" }
 termide-panel-editor = { path = "../panel-editor" }
 termide-theme = { path = "../theme" }

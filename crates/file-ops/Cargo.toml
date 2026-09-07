@@ -10,9 +10,7 @@ description = "Unified file operations system for termide with queue, progress, 
 [dependencies]
 thiserror = "2.0"
 log = "0.4"
-termide-logger = { path = "../logger" }
 termide-vfs = { path = "../vfs" }
-anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

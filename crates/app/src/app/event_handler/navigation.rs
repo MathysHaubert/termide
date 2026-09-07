@@ -1,7 +1,5 @@
 //! Panel navigation, focus, paste, and cursor-position event handlers.
 
-#![allow(deprecated)]
-
 use anyhow::Result;
 use std::path::PathBuf;
 

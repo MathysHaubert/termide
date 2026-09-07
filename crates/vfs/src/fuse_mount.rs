@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::{VfsError, VfsResult};
 use crate::local::LocalFileSystem;
-use crate::traits::{DiskSpace, VfsProvider};
+use crate::traits::VfsProvider;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, VfsEntry, VfsMetadata, VfsOperation, VfsPath,
     VfsProtocol,
@@ -487,12 +487,6 @@ impl VfsProvider for NfsProvider {
 
     fn home_dir(&self) -> Option<VfsPath> {
         None
-    }
-
-    fn disk_space(&self, path: &VfsPath) -> Option<DiskSpace> {
-        let local = self.local.as_ref()?;
-        let local_path = self.create_local_path(path).ok()?;
-        local.disk_space(&local_path)
     }
 }
 

@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use crate::error::VfsResult;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, CopyProgress, VfsCopyOperation,
     VfsDownloadOperation, VfsEntry, VfsMetadata, VfsOperation, VfsPath, VfsUploadOperation,
@@ -158,69 +157,4 @@ pub trait VfsProvider: Send + Sync {
     fn home_dir(&self) -> Option<VfsPath> {
         None
     }
-
-    /// Get available disk space at path (if supported).
-    fn disk_space(&self, _path: &VfsPath) -> Option<DiskSpace> {
-        None
-    }
 }
-
-/// Disk space information.
-#[derive(Debug, Clone, Copy)]
-pub struct DiskSpace {
-    /// Total space in bytes.
-    pub total: u64,
-    /// Free space in bytes.
-    pub free: u64,
-    /// Used space in bytes.
-    pub used: u64,
-}
-
-impl DiskSpace {
-    /// Get usage as a percentage (0.0 - 100.0).
-    pub fn usage_percent(&self) -> f64 {
-        if self.total == 0 {
-            0.0
-        } else {
-            (self.used as f64 / self.total as f64) * 100.0
-        }
-    }
-}
-
-/// Synchronous wrapper for VfsProvider operations.
-///
-/// Blocks on async operations - useful for simple scripts or testing.
-pub trait VfsProviderSync: VfsProvider {
-    /// Connect synchronously.
-    fn connect_sync(&mut self, options: ConnectOptions) -> VfsResult<()> {
-        self.connect(options).recv()
-    }
-
-    /// List directory synchronously.
-    fn list_dir_sync(&self, path: &VfsPath) -> VfsResult<Vec<VfsEntry>> {
-        self.list_dir(path).recv()
-    }
-
-    /// Read file synchronously.
-    fn read_file_sync(&self, path: &VfsPath) -> VfsResult<Vec<u8>> {
-        self.read_file(path).recv()
-    }
-
-    /// Write file synchronously.
-    fn write_file_sync(&self, path: &VfsPath, data: &[u8]) -> VfsResult<()> {
-        self.write_file(path, data).recv()
-    }
-
-    /// Check existence synchronously.
-    fn exists_sync(&self, path: &VfsPath) -> VfsResult<bool> {
-        self.exists(path).recv()
-    }
-
-    /// Get metadata synchronously.
-    fn metadata_sync(&self, path: &VfsPath) -> VfsResult<VfsMetadata> {
-        self.metadata(path).recv()
-    }
-}
-
-// Implement VfsProviderSync for all VfsProvider implementations
-impl<T: VfsProvider> VfsProviderSync for T {}

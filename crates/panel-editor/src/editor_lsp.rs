@@ -25,6 +25,10 @@ impl Editor {
             if self.lsp.enabled {
                 let content = self.buffer.to_string();
                 self.lsp.did_open(path, &content, lsp_manager);
+                // `didOpen` carried the current text, so anything recorded
+                // before it is already reflected there and must not be
+                // replayed as a change on top.
+                let _ = self.buffer.take_lsp_changes();
             }
         }
     }
@@ -33,11 +37,50 @@ impl Editor {
     ///
     /// Should be called after any text modification (insert, delete, etc.)
     /// to keep the language server in sync with the editor content.
+    ///
+    /// Sends only the ranges that changed when the server accepts them.
+    /// Materialising the whole document instead walked the rope and allocated
+    /// a copy of the file on every edit, which is paid per keystroke and grows
+    /// with the file rather than with the change.
     pub fn notify_lsp_change(&mut self, lsp_manager: &LspManager) {
-        if let Some(path) = self.buffer.file_path() {
+        let Some(path) = self.buffer.file_path().map(|p| p.to_path_buf()) else {
+            // Nothing to sync: an unsaved scratch buffer was never opened.
+            let _ = self.buffer.take_lsp_changes();
+            return;
+        };
+
+        let recorded = self.buffer.take_lsp_changes();
+
+        // `None` means the recorded ranges stopped describing the document, and
+        // a server that only advertises Full sync cannot be sent ranges at all.
+        if !self.lsp.supports_incremental_sync(&path, lsp_manager) {
             let content = self.buffer.to_string();
-            self.lsp.did_change(path, &content, lsp_manager);
+            self.lsp.did_change_full(&path, &content, lsp_manager);
+            return;
         }
+
+        let Some(changes) = recorded else {
+            let content = self.buffer.to_string();
+            self.lsp.did_change_full(&path, &content, lsp_manager);
+            return;
+        };
+
+        if changes.is_empty() {
+            return;
+        }
+
+        let changes = changes
+            .into_iter()
+            .map(|c| lsp_types::TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range::new(
+                    lsp_types::Position::new(c.start_line, c.start_character),
+                    lsp_types::Position::new(c.end_line, c.end_character),
+                )),
+                range_length: None,
+                text: c.text,
+            })
+            .collect();
+        self.lsp.did_change_incremental(&path, changes, lsp_manager);
     }
 
     /// Cleanup LSP when editor is closed.

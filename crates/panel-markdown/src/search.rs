@@ -3,8 +3,8 @@
 use termide_core::PanelEvent;
 use termide_modal::{FindBar, FindBarAction, FindBarBtn, FindBarConfig, FindField};
 
-use crate::text::{find_in_line, slice_chars};
 use crate::MarkdownPanel;
+use termide_ui::text_utils::{find_in_line, slice_chars};
 
 impl MarkdownPanel {
     pub(crate) fn open_find(&mut self) {

@@ -4,7 +4,6 @@
 
 // Note: PanelExt is used for panel-specific operations (get current path, save editor)
 // that require concrete type access. Common operations use Panel::handle_command().
-#![allow(deprecated)]
 
 use anyhow::Result;
 use ratatui::{backend::Backend, Terminal};
@@ -891,7 +890,6 @@ impl App {
     }
 
     /// Find an editor with the given file path and focus it. Returns true if found.
-    #[allow(deprecated)]
     fn focus_editor_by_path(&mut self, path: &std::path::Path) -> bool {
         use crate::panel_ext::PanelExt;
         for (group_idx, group) in self.layout_manager.panel_groups.iter_mut().enumerate() {

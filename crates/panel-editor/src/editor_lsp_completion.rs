@@ -1,5 +1,7 @@
 //! LSP completion for the Editor: request/accept/filter, auto-completion scheduling, and text-edit application.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use termide_buffer::Cursor;
 
 use crate::completion_popup;
@@ -64,10 +66,13 @@ impl Editor {
     /// Request completion from LSP at current cursor position.
     pub fn request_completion(&mut self, lsp_manager: &LspManager) {
         if let Some(path) = self.buffer.file_path() {
+            let character = self
+                .buffer
+                .utf16_column(self.cursor.line, self.cursor.column);
             self.lsp.request_completion(
                 path,
                 self.cursor.line,
-                self.cursor.column,
+                character,
                 CompletionTriggerKind::INVOKED,
                 None,
                 lsp_manager,
@@ -313,10 +318,13 @@ impl Editor {
             self.lsp.completion_trigger_column = self.get_word_start_column();
             self.lsp.completion_requested = true;
 
+            let character = self
+                .buffer
+                .utf16_column(self.cursor.line, self.cursor.column);
             self.lsp.request_completion(
                 &file_path,
                 self.cursor.line,
-                self.cursor.column,
+                character,
                 trigger_kind,
                 trigger_character,
                 lsp_manager,
@@ -401,18 +409,40 @@ fn apply_text_edits(
         ))
     });
 
-    for (_, edit) in ordered {
-        let start = Cursor::at(
-            edit.range.start.line as usize,
-            edit.range.start.character as usize,
-        );
-        let end = Cursor::at(
-            edit.range.end.line as usize,
-            edit.range.end.character as usize,
-        );
-        let _ = buffer.delete_range(&start, &end);
+    // Every range refers to the document as it was before any edit, and the
+    // server states them in UTF-16 code units, so convert them all up front
+    // against the untouched buffer rather than after earlier edits have
+    // already shifted the lines.
+    let converted: Vec<(usize, Cursor, Cursor)> = ordered
+        .iter()
+        .map(|(index, edit)| {
+            let start_line = edit.range.start.line as usize;
+            let end_line = edit.range.end.line as usize;
+            (
+                *index,
+                Cursor::at(
+                    start_line,
+                    buffer.grapheme_column(start_line, edit.range.start.character as usize),
+                ),
+                Cursor::at(
+                    end_line,
+                    buffer.grapheme_column(end_line, edit.range.end.character as usize),
+                ),
+            )
+        })
+        .collect();
+
+    // The resulting cursor is expressed in the primary edit's coordinates, so
+    // its start column has to be read off the untouched buffer too.
+    let primary_start_column = primary.as_ref().map(|p| {
+        let line = p.range.start.line as usize;
+        buffer.grapheme_column(line, p.range.start.character as usize)
+    });
+
+    for ((_, edit), (_, start, end)) in ordered.iter().zip(&converted) {
+        let _ = buffer.delete_range(start, end);
         if !edit.new_text.is_empty() {
-            let _ = buffer.insert(&start, &edit.new_text);
+            let _ = buffer.insert(start, &edit.new_text);
         }
     }
 
@@ -429,14 +459,17 @@ fn apply_text_edits(
         let new_lines = primary.new_text.matches('\n').count();
         let line = (primary.range.start.line as i64 + lines_added_above + new_lines as i64).max(0)
             as usize;
+        // Buffer columns are graphemes, so the inserted text is measured in
+        // graphemes as well — not the chars this used to count, and not the
+        // UTF-16 units the server's range was stated in.
         let column = if new_lines == 0 {
-            primary.range.start.character as usize + primary.new_text.chars().count()
+            primary_start_column.unwrap_or(0) + primary.new_text.graphemes(true).count()
         } else {
             primary
                 .new_text
                 .rsplit('\n')
                 .next()
-                .map(|s| s.chars().count())
+                .map(|s| s.graphemes(true).count())
                 .unwrap_or(0)
         };
         Cursor::at(line, column)
@@ -484,6 +517,31 @@ mod text_edit_tests {
         assert_eq!(buffer.to_string(), "$var");
         let cursor = cursor.expect("primary edit yields a cursor");
         assert_eq!((cursor.line, cursor.column), (0, 4));
+    }
+
+    /// The server states ranges in UTF-16 code units while buffer columns are
+    /// graphemes. An emoji earlier on the line puts the two out of step, and
+    /// reading the range as a grapheme column would then cut the wrong text.
+    #[test]
+    fn a_range_after_an_emoji_is_read_as_utf16() {
+        // `// 🙂 ` is 5 graphemes but 6 UTF-16 code units, so the server names
+        // the `Ord` starting at grapheme column 5 as character 6.
+        let mut buffer = TextBuffer::from_text("// 🙂 Ord");
+        let cursor = apply_text_edits(&mut buffer, &[edit(0, 6, 0, 9, "Order")]);
+        assert_eq!(buffer.to_string(), "// 🙂 Order");
+        let cursor = cursor.expect("primary edit yields a cursor");
+        // Grapheme column 5, plus the five graphemes of `Order`.
+        assert_eq!((cursor.line, cursor.column), (0, 10));
+    }
+
+    /// A combining mark diverges the same way, and turns up in source text far
+    /// more often than an emoji.
+    #[test]
+    fn a_range_after_a_combining_accent_is_read_as_utf16() {
+        // `// cafe\u{301} ` is 8 graphemes but 9 UTF-16 code units.
+        let mut buffer = TextBuffer::from_text("// cafe\u{301} Ord");
+        apply_text_edits(&mut buffer, &[edit(0, 9, 0, 12, "Order")]);
+        assert_eq!(buffer.to_string(), "// cafe\u{301} Order");
     }
 
     #[test]

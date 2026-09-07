@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use termide_core::{LinkOpen, PanelEvent};
 
-use crate::text::is_image_path;
 use crate::MarkdownPanel;
+use termide_ui::text_utils::is_image_path;
 
 impl MarkdownPanel {
     /// Resolve a link `href` to an absolute target: against the document URL for

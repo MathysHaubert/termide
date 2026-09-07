@@ -121,24 +121,6 @@ pub fn revert_all(repo: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Push to remote
-#[must_use = "push result must be checked"]
-pub fn push(repo: &Path) -> Result<(), String> {
-    run_git_with_stderr(repo, &["push"], "push")
-}
-
-/// Pull from remote
-#[must_use = "pull result must be checked"]
-pub fn pull(repo: &Path) -> Result<(), String> {
-    run_git_with_stderr(repo, &["pull"], "pull")
-}
-
-/// Fetch from remote without merging
-#[must_use = "fetch result must be checked"]
-pub fn fetch(repo: &Path) -> Result<(), String> {
-    run_git_with_stderr(repo, &["fetch"], "fetch")
-}
-
 /// Initialize a new git repository
 #[must_use = "init result must be checked"]
 pub fn init_repo(path: &Path) -> Result<(), String> {

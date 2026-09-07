@@ -24,6 +24,16 @@ pub enum PendingVfsOperation {
     /// Generic operation (infrastructure for future VFS operations).
     #[allow(dead_code)]
     Generic(VfsOperation<()>),
+    /// A remote file or directory being created. Its completion has to reach
+    /// the FileManager so the listing reloads and the new entry is revealed.
+    CreateEntry {
+        /// Pending remote write / mkdir.
+        op: VfsOperation<()>,
+        /// Local-equivalent path of the new entry, selected after the reload.
+        reveal: PathBuf,
+        /// Whether a directory was requested, for the status message.
+        is_dir: bool,
+    },
     /// Resolve a remote symlink's target type (stat follows the link) to
     /// decide whether to navigate into it (directory) or open it (file).
     ResolveSymlink {
@@ -57,6 +67,10 @@ pub struct VfsState {
     /// A remote symlink that resolved to a file and should be opened in
     /// the editor. Taken by the FileManager on the next tick.
     resolved_file_open: Option<VfsPath>,
+    /// Outcome of a finished remote create: the new entry's local-equivalent
+    /// path and whether it is a directory. Taken by the FileManager on the
+    /// next tick.
+    completed_create: Option<VfsResult<(PathBuf, bool)>>,
 }
 
 impl Default for VfsState {
@@ -81,6 +95,7 @@ impl VfsState {
             awaiting_password: false,
             connection_started: None,
             resolved_file_open: None,
+            completed_create: None,
         }
     }
 
@@ -95,6 +110,7 @@ impl VfsState {
             awaiting_password: false,
             connection_started: None,
             resolved_file_open: None,
+            completed_create: None,
         }
     }
 
@@ -103,7 +119,7 @@ impl VfsState {
         &self.manager
     }
 
-    /// Get shared reference to the VFS manager (for passing to Editor::open_remote_file).
+    /// Get shared reference to the VFS manager (for remote reads and transfers).
     pub fn manager_arc(&self) -> Arc<VfsManager> {
         Arc::clone(&self.manager)
     }
@@ -267,6 +283,24 @@ impl VfsState {
         self.resolved_file_open.take()
     }
 
+    /// Start a remote create, to be polled by `tick` instead of blocked on.
+    ///
+    /// Returns `false` when another VFS operation is already in flight:
+    /// `pending_operation` is a single slot, and replacing a directory listing
+    /// would leave the panel waiting for a result that never arrives.
+    pub fn start_create(&mut self, op: VfsOperation<()>, reveal: PathBuf, is_dir: bool) -> bool {
+        if self.pending_operation.is_some() {
+            return false;
+        }
+        self.pending_operation = Some(PendingVfsOperation::CreateEntry { op, reveal, is_dir });
+        true
+    }
+
+    /// Take the outcome of a finished remote create, if one is ready.
+    pub fn take_completed_create(&mut self) -> Option<VfsResult<(PathBuf, bool)>> {
+        self.completed_create.take()
+    }
+
     /// Start a connection to a remote path.
     fn start_connect(&mut self, path: VfsPath) -> VfsResult<()> {
         // Start async connection based on protocol
@@ -353,9 +387,7 @@ impl VfsState {
                         Some(Err(e))
                     }
                     None => {
-                        // Note: Using debug level to avoid flooding logs
-                        // termide_logger::debug("VfsState: ListDir still pending".to_string());
-                        // Still pending, put it back
+                        // Still pending, put it back.
                         self.pending_operation = Some(PendingVfsOperation::ListDir(op));
                         None
                     }
@@ -433,6 +465,25 @@ impl VfsState {
                     None => {
                         // Still pending
                         self.pending_operation = Some(PendingVfsOperation::Generic(op));
+                        None
+                    }
+                }
+            }
+            PendingVfsOperation::CreateEntry { op, reveal, is_dir } => {
+                match op.try_recv() {
+                    Some(Ok(())) => {
+                        self.completed_create = Some(Ok((reveal, is_dir)));
+                        None
+                    }
+                    Some(Err(e)) => {
+                        log::error!("VfsState: remote create failed: {}", e);
+                        self.completed_create = Some(Err(e));
+                        None
+                    }
+                    None => {
+                        // Still pending, put it back.
+                        self.pending_operation =
+                            Some(PendingVfsOperation::CreateEntry { op, reveal, is_dir });
                         None
                     }
                 }
@@ -633,6 +684,64 @@ mod tests {
         assert!(!state.is_remote());
         assert!(!state.has_pending_operation());
         assert!(!state.awaiting_password());
+    }
+
+    /// A remote create must not block the UI thread: `start_create` parks the
+    /// operation and `tick` hands the outcome back through
+    /// `take_completed_create`.
+    #[test]
+    fn a_finished_create_is_handed_back_by_tick() {
+        let mut state = VfsState::new();
+        let reveal = PathBuf::from("/remote/dir/notes.txt");
+
+        assert!(state.start_create(VfsOperation::ready(Ok(())), reveal.clone(), false));
+        assert!(state.has_pending_operation());
+        // Nothing is ready to report until the operation is polled.
+        assert!(state.take_completed_create().is_none());
+
+        assert!(
+            state.tick().is_none(),
+            "a create is not a directory listing"
+        );
+
+        let (path, is_dir) = state
+            .take_completed_create()
+            .expect("the create should have completed")
+            .expect("and succeeded");
+        assert_eq!(path, reveal);
+        assert!(!is_dir);
+        assert!(!state.has_pending_operation());
+        assert!(state.take_completed_create().is_none(), "taken only once");
+    }
+
+    #[test]
+    fn a_failed_create_is_reported_as_an_error() {
+        let mut state = VfsState::new();
+        let op = VfsOperation::ready(Err(VfsError::RemoteError {
+            message: "permission denied".to_string(),
+        }));
+
+        assert!(state.start_create(op, PathBuf::from("/remote/dir/sub"), true));
+        state.tick();
+
+        let result = state.take_completed_create().expect("an outcome");
+        assert!(result.is_err());
+    }
+
+    /// `pending_operation` is a single slot, so a create must not evict an
+    /// in-flight listing — the panel would then wait on a result that never
+    /// arrives.
+    #[test]
+    fn a_create_does_not_evict_another_pending_operation() {
+        let mut state = VfsState::new();
+        state.start_list_dir();
+        assert!(state.has_pending_operation());
+
+        assert!(!state.start_create(
+            VfsOperation::ready(Ok(())),
+            PathBuf::from("/remote/dir/notes.txt"),
+            false
+        ));
     }
 
     #[test]

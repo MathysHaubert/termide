@@ -12,7 +12,6 @@ ropey.workspace = true
 anyhow.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
-regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -19,8 +19,6 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 thiserror = "2.0"
-log = "0.4"
-url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

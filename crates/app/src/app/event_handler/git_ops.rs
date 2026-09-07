@@ -1,7 +1,5 @@
 //! Git operation event handlers (push/pull/fetch and diff panels).
 
-#![allow(deprecated)]
-
 use anyhow::Result;
 use std::path::PathBuf;
 

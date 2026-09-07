@@ -14,7 +14,6 @@ mod links;
 mod navigation;
 mod render;
 mod search;
-mod text;
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -32,7 +31,7 @@ use termide_core::{
 use termide_modal::FindBar;
 use termide_ui::ScrollBar;
 
-use text::{char_col_to_display, display_to_char_col, url_fragment};
+use termide_ui::text_utils::{char_col_to_display, display_to_char_col, url_fragment};
 
 /// A cursor / selection position: `(line index, character column)`.
 type Pos = (usize, usize);

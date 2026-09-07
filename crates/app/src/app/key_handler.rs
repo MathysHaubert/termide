@@ -4,7 +4,6 @@
 
 // Note: PanelExt is still used for panel-specific resource extraction
 // (take_config_update, dir_size_receiver) which don't fit the command pattern.
-#![allow(deprecated)]
 
 use anyhow::Result;
 use std::sync::Arc;

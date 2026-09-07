@@ -312,15 +312,41 @@ impl LspState {
         }
     }
 
-    /// Send didChange notification when content changes.
-    pub fn did_change(&mut self, file_path: &Path, content: &str, lsp_manager: &LspManager) {
+    /// Whether an incremental `didChange` may be used for this file.
+    pub fn supports_incremental_sync(&self, file_path: &Path, lsp_manager: &LspManager) -> bool {
+        self.enabled
+            && self
+                .language_id
+                .as_ref()
+                .is_some_and(|lang| lsp_manager.supports_incremental_sync(lang, file_path))
+    }
+
+    /// Send didChange notification carrying the whole document.
+    pub fn did_change_full(&mut self, file_path: &Path, content: &str, lsp_manager: &LspManager) {
         if !self.enabled {
             return;
         }
 
         if let Some(ref lang) = self.language_id {
             self.document_version += 1;
-            lsp_manager.did_change(lang, file_path, self.document_version, content);
+            lsp_manager.did_change_full(lang, file_path, self.document_version, content);
+        }
+    }
+
+    /// Send didChange notification carrying only the ranges that changed.
+    pub fn did_change_incremental(
+        &mut self,
+        file_path: &Path,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+        lsp_manager: &LspManager,
+    ) {
+        if !self.enabled || changes.is_empty() {
+            return;
+        }
+
+        if let Some(ref lang) = self.language_id {
+            self.document_version += 1;
+            lsp_manager.did_change_incremental(lang, file_path, self.document_version, changes);
         }
     }
 
@@ -559,85 +585,6 @@ impl LspState {
     /// Update diagnostics for this file.
     pub fn update_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics = diagnostics;
-    }
-
-    /// Get error count.
-    pub fn error_count(&self) -> usize {
-        use lsp_types::DiagnosticSeverity;
-        self.diagnostics
-            .iter()
-            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
-            .count()
-    }
-
-    /// Get warning count.
-    pub fn warning_count(&self) -> usize {
-        use lsp_types::DiagnosticSeverity;
-        self.diagnostics
-            .iter()
-            .filter(|d| d.severity == Some(DiagnosticSeverity::WARNING))
-            .count()
-    }
-
-    /// Get the most severe diagnostic severity at a specific line.
-    ///
-    /// Returns the most severe (ERROR > WARNING > INFO > HINT) diagnostic
-    /// severity for the given line, used for gutter marker display.
-    pub fn diagnostic_severity_at_line(
-        &self,
-        line: usize,
-    ) -> Option<lsp_types::DiagnosticSeverity> {
-        use lsp_types::DiagnosticSeverity;
-
-        self.diagnostics
-            .iter()
-            .filter(|d| d.range.start.line as usize == line)
-            .filter_map(|d| d.severity)
-            .min_by_key(|s| match *s {
-                DiagnosticSeverity::ERROR => 0,
-                DiagnosticSeverity::WARNING => 1,
-                DiagnosticSeverity::INFORMATION => 2,
-                DiagnosticSeverity::HINT => 3,
-                _ => 4,
-            })
-    }
-
-    /// Get all diagnostics that overlap with a specific position.
-    ///
-    /// Used for showing diagnostic popup on Ctrl+click.
-    pub fn diagnostics_at_position(&self, line: usize, column: usize) -> Vec<&Diagnostic> {
-        self.diagnostics
-            .iter()
-            .filter(|d| {
-                let range = &d.range;
-                let start_line = range.start.line as usize;
-                let end_line = range.end.line as usize;
-                let start_col = range.start.character as usize;
-                let end_col = range.end.character as usize;
-
-                if line < start_line || line > end_line {
-                    return false;
-                }
-
-                if start_line == end_line {
-                    // Single line diagnostic
-                    // Handle zero-width ranges (start == end) by expanding to at least 1 character
-                    let effective_end_col = if end_col <= start_col {
-                        start_col + 1
-                    } else {
-                        end_col
-                    };
-                    column >= start_col && column < effective_end_col
-                } else if line == start_line {
-                    column >= start_col
-                } else if line == end_line {
-                    column < end_col
-                } else {
-                    // Middle line of multi-line diagnostic
-                    true
-                }
-            })
-            .collect()
     }
 }
 

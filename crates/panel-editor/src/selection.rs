@@ -163,3 +163,65 @@ pub fn select_line(buffer: &TextBuffer, cursor: &Cursor) -> Option<(Selection, C
     let end = Cursor::at(cursor.line, end_col);
     Some((Selection::new(start, end), end))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word_at(text: &str, column: usize) -> Option<String> {
+        let buffer = TextBuffer::from_text(text);
+        let (selection, _) = select_word(&buffer, &Cursor::at(0, column))?;
+        let line = buffer.line(0)?;
+        let chars: Vec<char> = line.chars().collect();
+        Some(
+            chars[selection.start().column..selection.end().column]
+                .iter()
+                .collect(),
+        )
+    }
+
+    /// Double-clicking a `snake_case` identifier must take all of it. The
+    /// editor's vim motions and the terminal's own double-click already treat
+    /// `_` as part of a word; word selection used to disagree and stop at it.
+    #[test]
+    fn a_double_click_takes_a_whole_snake_case_identifier() {
+        assert_eq!(
+            word_at("let some_long_name = 1;", 6).as_deref(),
+            Some("some_long_name")
+        );
+        // From any column inside it, including on an underscore.
+        assert_eq!(
+            word_at("let some_long_name = 1;", 8).as_deref(),
+            Some("some_long_name")
+        );
+        assert_eq!(
+            word_at("let some_long_name = 1;", 17).as_deref(),
+            Some("some_long_name")
+        );
+    }
+
+    #[test]
+    fn punctuation_still_bounds_a_word() {
+        assert_eq!(word_at("foo.bar", 0).as_deref(), Some("foo"));
+        assert_eq!(word_at("foo.bar", 4).as_deref(), Some("bar"));
+        assert_eq!(word_at("a(b)", 2).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_click_on_a_boundary_selects_nothing() {
+        assert_eq!(word_at("foo bar", 3), None);
+        assert_eq!(word_at("foo.bar", 3), None);
+    }
+
+    #[test]
+    fn words_are_not_limited_to_ascii() {
+        assert_eq!(word_at("let имя_поля = 1;", 5).as_deref(), Some("имя_поля"));
+        assert_eq!(word_at("日本語 x", 1).as_deref(), Some("日本語"));
+    }
+
+    #[test]
+    fn a_leading_or_trailing_underscore_stays_attached() {
+        assert_eq!(word_at("let _unused = 1;", 5).as_deref(), Some("_unused"));
+        assert_eq!(word_at("call(x_)", 5).as_deref(), Some("x_"));
+    }
+}

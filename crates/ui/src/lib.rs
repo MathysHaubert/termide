@@ -11,6 +11,7 @@ pub mod scrollbar;
 pub mod selection_style;
 pub mod suggestion_input;
 pub mod system_monitor;
+pub mod text_utils;
 pub mod textarea;
 pub mod viewport;
 

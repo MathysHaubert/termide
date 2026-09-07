@@ -1,7 +1,6 @@
 //! Select modal result handling.
 
 // Note: PanelExt is used for editor-specific operations (go_to_line, save, replace).
-#![allow(deprecated)]
 
 use anyhow::Result;
 use std::path::PathBuf;

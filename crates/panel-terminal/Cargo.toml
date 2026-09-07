@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 crossterm.workspace = true
 log.workspace = true
 open = "5"
@@ -21,9 +20,7 @@ vte.workspace = true
 termide-config = { path = "../config" }
 termide-core = { path = "../core" }
 termide-i18n = { path = "../i18n" }
-termide-keyboard = { path = "../keyboard" }
 termide-modal = { path = "../modal" }
-termide-state = { path = "../state" }
 termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }
 

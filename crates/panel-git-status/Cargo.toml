@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 unicode-width.workspace = true
@@ -19,7 +18,6 @@ termide-core = { path = "../core" }
 termide-git = { path = "../git" }
 termide-i18n = { path = "../i18n" }
 termide-modal = { path = "../modal" }
-termide-session = { path = "../session" }
 termide-state = { path = "../state" }
 termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }

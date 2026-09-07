@@ -1,7 +1,6 @@
 //! Copy/move entry points and remote transfer setup for batch operations.
 
 // Note: PanelExt is used for FileManager batch operations (copy/move/delete/rename).
-#![allow(deprecated)]
 
 use anyhow::Result;
 use std::path::PathBuf;

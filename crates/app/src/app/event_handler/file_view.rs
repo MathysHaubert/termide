@@ -1,7 +1,5 @@
 //! File and viewer open/swap handlers for panel events.
 
-#![allow(deprecated)]
-
 use anyhow::Result;
 use std::path::PathBuf;
 

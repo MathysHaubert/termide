@@ -1,7 +1,5 @@
 //! Filesystem watcher registration and git-status refresh event handlers.
 
-#![allow(deprecated)]
-
 use std::path::PathBuf;
 
 use crate::app::App;

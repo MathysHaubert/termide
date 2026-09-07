@@ -28,7 +28,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc as async_mpsc;
 
 use crate::error::{VfsError, VfsResult};
-use crate::traits::{DiskSpace, VfsProvider};
+use crate::traits::VfsProvider;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, DownloadProgress, UploadProgress,
     VfsDownloadOperation, VfsEntry, VfsFileType, VfsMetadata, VfsOperation, VfsPath, VfsProtocol,
@@ -63,21 +63,33 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 static SFTP_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-fn runtime() -> &'static Runtime {
-    SFTP_RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("vfs-sftp")
-            .enable_all()
-            .build()
-            .expect("failed to build SFTP tokio runtime")
-    })
+/// The global SFTP runtime, built on first use.
+///
+/// Returns an error instead of panicking when the OS refuses to spawn the
+/// worker threads: the caller may be the UI thread, and a connection
+/// problem must reach the user as a VFS error, not take the TUI down.
+fn try_runtime() -> VfsResult<&'static Runtime> {
+    if let Some(rt) = SFTP_RUNTIME.get() {
+        return Ok(rt);
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("vfs-sftp")
+        .enable_all()
+        .build()
+        .map_err(|e| VfsError::RemoteError {
+            message: format!("failed to build SFTP runtime: {e}"),
+        })?;
+    // A racing thread may have won the init; the loser's runtime is dropped.
+    Ok(SFTP_RUNTIME.get_or_init(|| rt))
 }
 
 /// Run a future to completion on the global SFTP runtime, blocking the
 /// calling (sync) thread. Safe to call from any non-tokio thread.
-fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    runtime().block_on(fut)
+///
+/// `Err` means the runtime itself is unavailable — the future never ran.
+fn block_on<F: std::future::Future>(fut: F) -> VfsResult<F::Output> {
+    Ok(try_runtime()?.block_on(fut))
 }
 
 // ============================================================================
@@ -282,7 +294,18 @@ impl VfsProvider for SftpProvider {
         let (tx, rx) = std_mpsc::channel();
 
         thread::spawn(move || {
-            let result = block_on(do_connect(
+            let rt = match try_runtime() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    if let Ok(mut inner) = inner_arc.lock() {
+                        inner.state = ConnectionState::Failed;
+                    }
+                    let _ = tx.send(Err(e));
+                    return;
+                }
+            };
+
+            let result = rt.block_on(do_connect(
                 host.clone(),
                 port,
                 username.clone(),
@@ -293,7 +316,7 @@ impl VfsProvider for SftpProvider {
             match result {
                 Ok((sftp, home_dir)) => {
                     let (cmd_tx, cmd_rx) = async_mpsc::channel::<SftpCommand>(32);
-                    runtime().spawn(sftp_actor(sftp, cmd_rx, Arc::clone(&inner_arc)));
+                    rt.spawn(sftp_actor(sftp, cmd_rx, Arc::clone(&inner_arc)));
                     if let Ok(mut inner) = inner_arc.lock() {
                         inner.state = ConnectionState::Connected;
                         inner.handle = Some(SftpHandle { cmd_tx });
@@ -734,11 +757,6 @@ impl VfsProvider for SftpProvider {
                 .with_port(self.port)
                 .with_username(self.effective_username()),
         )
-    }
-
-    fn disk_space(&self, _path: &VfsPath) -> Option<DiskSpace> {
-        // Could be implemented via SSH exec "df" but not used by termide yet.
-        None
     }
 }
 

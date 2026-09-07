@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Repository-wide pre-commit gate: the same fmt / check / clippy / test
-# sequence that .github/workflows/ci.yml runs on every pull request, so a
+# Repository-wide pre-commit gate: the same fmt / machete / check / clippy /
+# test sequence that .github/workflows/ci.yml runs on every pull request, so a
 # commit that would fail CI fails here first.
 #
 # Versioned in the repository and activated with:
@@ -31,6 +31,70 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
 fi
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# ---------------------------------------------------------------------------
+# What gets checked
+#
+# A hook that tests the working tree answers the wrong question during a
+# partial commit: splitting one edit session into several coherent commits
+# leaves the tree ahead of the index, so the gate would pass or fail on code
+# that is not what is being recorded. When the index and the working tree
+# agree — `git add -A` and commit, the common case — check in place and reuse
+# the warm target directory. When they differ, materialise the staged tree in
+# a throwaway worktree and check that instead.
+# ---------------------------------------------------------------------------
+
+# Snapshot what is about to be committed while git's hook environment is still
+# intact: GIT_INDEX_FILE may point at a temporary index (`git commit --only`),
+# and that is the index whose tree must be tested.
+if git diff --quiet; then
+    STAGED_TREE=""
+else
+    STAGED_TREE="$(git write-tree)"
+fi
+
+# Every git invocation below runs outside the directory git handed us, so the
+# inherited GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE — relative paths, all of
+# them — would resolve against the wrong root. In a linked worktree `.git` is a
+# file, which is what "index file open failed: Not a directory" means.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX
+
+WORKTREE=""
+cleanup() {
+    if [ -n "$WORKTREE" ]; then
+        git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT
+
+if [ -z "$STAGED_TREE" ]; then
+    CHECK_DIR="$REPO_ROOT"
+    SCOPE="working tree (identical to the index)"
+else
+    # A dedicated worktree path and target directory so the staged-tree build
+    # cache survives between partial commits instead of thrashing the main one.
+    WORKTREE="$REPO_ROOT/target/pre-commit-worktree"
+    staged_commit="$(git -C "$REPO_ROOT" commit-tree "$STAGED_TREE" -p HEAD \
+        -m 'pre-commit: staged tree under test')"
+    git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    git -C "$REPO_ROOT" worktree add -q --detach "$WORKTREE" "$staged_commit"
+    CHECK_DIR="$WORKTREE"
+    SCOPE="staged tree only (working tree has unstaged changes)"
+    export CARGO_TARGET_DIR="$REPO_ROOT/target/pre-commit-target"
+    # This build is thrown away after the gate runs, so it carries no debug
+    # info: nothing steps through it, and the artefacts are the bulk of a
+    # target directory's size. Correctness, warnings and test results are
+    # unaffected; only a panic backtrace here would lose line numbers.
+    export CARGO_PROFILE_DEV_DEBUG=none
+    export CARGO_PROFILE_TEST_DEBUG=none
+    printf 'pre-commit: partial commit — first run in %s builds from scratch.\n' \
+        "$(basename "$CARGO_TARGET_DIR")"
+fi
+
+printf 'pre-commit: checking %s\n' "$SCOPE"
+cd "$CHECK_DIR"
+
 run_step() {
     local label="$1"
     shift
@@ -42,9 +106,29 @@ run_step() {
 }
 
 run_step "cargo fmt --all -- --check" cargo fmt --all -- --check
+
+# Manifest hygiene: a textual scan, no build, so it runs before the slow steps.
+# Unused declarations are invisible to `cargo check`, which is how 99 of them
+# accumulated across the workspace before anything looked.
+if cargo machete --version >/dev/null 2>&1; then
+    run_step "cargo machete" cargo machete
+else
+    printf '\npre-commit: cargo-machete not installed, skipping manifest check.\n'
+    printf '  Install with: cargo install cargo-machete\n'
+fi
+
 run_step "cargo check --workspace --all-targets" cargo check --workspace --all-targets
 run_step "cargo clippy --workspace --all-targets -- -D warnings" \
     cargo clippy --workspace --all-targets -- -D warnings
-run_step "cargo test --workspace" cargo test --workspace
+
+# nextest runs the suite in parallel processes — about 5x faster here than
+# `cargo test` — but must not be a hard requirement for a fresh clone.
+if cargo nextest --version >/dev/null 2>&1; then
+    run_step "cargo nextest run --workspace" cargo nextest run --workspace
+else
+    printf '\npre-commit: cargo-nextest not installed, falling back to cargo test.\n'
+    printf '  Install with: cargo install cargo-nextest\n'
+    run_step "cargo test --workspace" cargo test --workspace
+fi
 
 printf '\npre-commit: all checks passed.\n'

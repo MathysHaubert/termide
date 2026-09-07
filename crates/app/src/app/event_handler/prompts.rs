@@ -1,7 +1,5 @@
 //! Modal-prompt event handlers (confirm, input, select, conflict).
 
-#![allow(deprecated)]
-
 use std::path::PathBuf;
 
 use crate::app::App;

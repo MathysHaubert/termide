@@ -27,7 +27,7 @@ use std::sync::mpsc;
 use anyhow::{Context, Result};
 use lsp_types::{
     CompletionResponse, GotoDefinitionResponse, Hover, Location, Position,
-    PublishDiagnosticsParams, Uri, WorkspaceEdit,
+    PublishDiagnosticsParams, TextDocumentContentChangeEvent, Uri, WorkspaceEdit,
 };
 use url::Url;
 
@@ -305,11 +305,38 @@ impl LspManager {
         }
     }
 
-    /// Send didChange notification
-    pub fn did_change(&self, lang: &str, file_path: &Path, version: i32, text: &str) {
+    /// Whether the server handling this file accepts ranged `didChange`
+    /// notifications. `false` for a server that advertises `Full`, and for one
+    /// that has not reported its capabilities yet.
+    pub fn supports_incremental_sync(&self, lang: &str, file_path: &Path) -> bool {
+        self.get_server(lang, file_path)
+            .map(|server| server.supports_incremental_sync())
+            .unwrap_or(false)
+    }
+
+    /// Send didChange notification carrying the whole document.
+    pub fn did_change_full(&self, lang: &str, file_path: &Path, version: i32, text: &str) {
         if let Some(server) = self.get_server(lang, file_path) {
             if let Some(uri) = path_to_uri(file_path) {
-                server.did_change(uri, version, text.to_string());
+                server.did_change_full(uri, version, text.to_string());
+            }
+        }
+    }
+
+    /// Send didChange notification carrying ranged changes.
+    ///
+    /// The caller is responsible for checking
+    /// [`Self::supports_incremental_sync`] first.
+    pub fn did_change_incremental(
+        &self,
+        lang: &str,
+        file_path: &Path,
+        version: i32,
+        changes: Vec<TextDocumentContentChangeEvent>,
+    ) {
+        if let Some(server) = self.get_server(lang, file_path) {
+            if let Some(uri) = path_to_uri(file_path) {
+                server.did_change(uri, version, changes);
             }
         }
     }

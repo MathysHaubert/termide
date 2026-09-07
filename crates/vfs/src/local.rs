@@ -8,7 +8,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 
 use crate::error::{VfsError, VfsResult};
-use crate::traits::{DiskSpace, VfsProvider};
+use crate::traits::VfsProvider;
 use crate::types::{
     AuthMethod, ConnectOptions, ConnectionState, CopyProgress, VfsCopyOperation, VfsEntry,
     VfsMetadata, VfsOperation, VfsPath,
@@ -647,72 +647,6 @@ impl VfsProvider for LocalFileSystem {
 
     fn home_dir(&self) -> Option<VfsPath> {
         dirs::home_dir().map(VfsPath::local)
-    }
-
-    fn disk_space(&self, path: &VfsPath) -> Option<DiskSpace> {
-        #[cfg(unix)]
-        {
-            use std::ffi::CString;
-            use std::mem::MaybeUninit;
-
-            let local_path = Self::to_local_path(path).ok()?;
-            let c_path = CString::new(local_path.to_str()?).ok()?;
-
-            unsafe {
-                let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
-                if libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) == 0 {
-                    let stat = stat.assume_init();
-                    #[allow(clippy::unnecessary_cast)]
-                    let block_size = stat.f_frsize as u64;
-                    #[allow(clippy::unnecessary_cast)]
-                    let total = (stat.f_blocks as u64).saturating_mul(block_size);
-                    #[allow(clippy::unnecessary_cast)]
-                    let free = (stat.f_bfree as u64).saturating_mul(block_size);
-                    let used = total.saturating_sub(free);
-                    return Some(DiskSpace { total, free, used });
-                }
-            }
-            None
-        }
-
-        #[cfg(not(unix))]
-        {
-            use std::ffi::OsStr;
-            use std::os::windows::ffi::OsStrExt;
-
-            let local_path = Self::to_local_path(path).ok()?;
-            let root = local_path.components().next()?;
-            let root_str = format!("{}\\", root.as_os_str().to_string_lossy());
-
-            let wide_path: Vec<u16> = OsStr::new(&root_str)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-
-            let mut free_bytes: u64 = 0;
-            let mut total_bytes: u64 = 0;
-            let mut _total_free: u64 = 0;
-
-            let success = unsafe {
-                windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
-                    wide_path.as_ptr(),
-                    &mut free_bytes,
-                    &mut total_bytes,
-                    &mut _total_free,
-                )
-            };
-
-            if success != 0 {
-                let used = total_bytes.saturating_sub(free_bytes);
-                Some(DiskSpace {
-                    total: total_bytes,
-                    free: free_bytes,
-                    used,
-                })
-            } else {
-                None
-            }
-        }
     }
 }
 

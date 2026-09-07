@@ -7,6 +7,26 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{Action, Cursor, History};
 use crate::LineEnding;
 
+/// Beyond this many undrained changes, resending the whole document is
+/// cheaper than tracking more — and while LSP is off for a buffer nothing
+/// drains them at all, so the list needs a ceiling either way.
+const MAX_PENDING_LSP_CHANGES: usize = 512;
+
+/// A replaced range and its replacement, in LSP coordinates.
+///
+/// Lines are 0-based and columns count UTF-16 code units, the units LSP
+/// positions are stated in. Each change describes the document as it was
+/// immediately before that change was applied, which is how a sequence of
+/// `didChange` content changes is interpreted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspContentChange {
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+    pub text: String,
+}
+
 /// Text buffer based on Rope for efficient work with large files
 #[derive(Debug, Clone)]
 pub struct TextBuffer {
@@ -23,6 +43,11 @@ pub struct TextBuffer {
     /// Monotonic counter incremented on every mutation (insert/delete/backspace/undo/redo).
     /// Used by outline panel to detect content changes without hashing.
     edit_version: u64,
+    /// Ranges replaced since the last drain, for LSP incremental sync.
+    lsp_changes: Vec<LspContentChange>,
+    /// The recorded ranges no longer describe this document, so the next sync
+    /// has to resend the whole text.
+    lsp_needs_full_sync: bool,
 }
 
 impl TextBuffer {
@@ -35,6 +60,8 @@ impl TextBuffer {
             line_ending: LineEnding::LF,
             history: History::new(),
             edit_version: 0,
+            lsp_changes: Vec::new(),
+            lsp_needs_full_sync: false,
         }
     }
 
@@ -47,6 +74,8 @@ impl TextBuffer {
             line_ending: LineEnding::LF,
             history: History::new(),
             edit_version: 0,
+            lsp_changes: Vec::new(),
+            lsp_needs_full_sync: false,
         }
     }
 
@@ -59,6 +88,8 @@ impl TextBuffer {
             line_ending: LineEnding::LF,
             history: History::new(),
             edit_version: 0,
+            lsp_changes: Vec::new(),
+            lsp_needs_full_sync: false,
         }
     }
 
@@ -93,6 +124,8 @@ impl TextBuffer {
             line_ending,
             history: History::new(),
             edit_version: 0,
+            lsp_changes: Vec::new(),
+            lsp_needs_full_sync: false,
         })
     }
 
@@ -202,6 +235,120 @@ impl TextBuffer {
         }
     }
 
+    /// LSP `character` offset for a grapheme column on `line`.
+    ///
+    /// The buffer counts columns in graphemes; LSP counts them in UTF-16 code
+    /// units. The two agree for ASCII and for the whole BMP — Cyrillic and CJK
+    /// included — and diverge for combining sequences (`e` + U+0301 is one
+    /// grapheme, two code units), astral characters (an emoji is one grapheme,
+    /// two code units) and ZWJ sequences (a family emoji is one grapheme and
+    /// seven). Sending a grapheme column as `character` therefore points a
+    /// request at the wrong place once such text sits to its left.
+    ///
+    /// A column past the end of the line clamps to the line's length, matching
+    /// how LSP treats an out-of-range position.
+    pub fn utf16_column(&self, line: usize, column: usize) -> usize {
+        let Some(text) = self.line(line) else {
+            return 0;
+        };
+        text.trim_end_matches('\n')
+            .graphemes(true)
+            .take(column)
+            .map(|g| g.encode_utf16().count())
+            .sum()
+    }
+
+    /// Grapheme column for an LSP `character` offset on `line`.
+    ///
+    /// The inverse of [`Self::utf16_column`], for server replies that name a
+    /// position inside this buffer. An offset landing inside a grapheme rounds
+    /// down to that grapheme's start, and one past the end of the line clamps
+    /// to the line's length — both cases the LSP specification calls out.
+    pub fn grapheme_column(&self, line: usize, utf16_column: usize) -> usize {
+        let Some(text) = self.line(line) else {
+            return 0;
+        };
+        let mut consumed = 0;
+        for (column, grapheme) in text.trim_end_matches('\n').graphemes(true).enumerate() {
+            if consumed >= utf16_column {
+                return column;
+            }
+            let next = consumed + grapheme.encode_utf16().count();
+            if next > utf16_column {
+                // The offset lands inside this grapheme — a surrogate half, or
+                // a combining mark. Round down to the grapheme's own start so
+                // the result stays a column this buffer can address.
+                return column;
+            }
+            consumed = next;
+        }
+        text.trim_end_matches('\n').graphemes(true).count()
+    }
+
+    /// LSP position for a char index in the rope as it stands right now.
+    ///
+    /// Works off char indices rather than grapheme arithmetic so it stays
+    /// exact for every mutation path, including the ones that delete a single
+    /// `char` out of a multi-codepoint grapheme.
+    fn lsp_position_at(&self, char_idx: usize) -> (u32, u32) {
+        let char_idx = char_idx.min(self.rope.len_chars());
+        let line = self.rope.char_to_line(char_idx);
+        let line_start = self.rope.line_to_char(line);
+        let units: usize = self
+            .rope
+            .slice(line_start..char_idx)
+            .chars()
+            .map(|c| c.len_utf16())
+            .sum();
+        (line as u32, units as u32)
+    }
+
+    /// Record that `chars` is about to be replaced with `text`.
+    ///
+    /// Must be called *before* the rope is modified: the range is stated in
+    /// the pre-edit document, which is what a `didChange` content change
+    /// means.
+    fn record_lsp_change(&mut self, chars: std::ops::Range<usize>, text: &str) {
+        if self.lsp_needs_full_sync {
+            return;
+        }
+        if self.lsp_changes.len() >= MAX_PENDING_LSP_CHANGES {
+            self.lsp_changes.clear();
+            self.lsp_needs_full_sync = true;
+            return;
+        }
+        let (start_line, start_character) = self.lsp_position_at(chars.start);
+        let (end_line, end_character) = self.lsp_position_at(chars.end);
+        self.lsp_changes.push(LspContentChange {
+            start_line,
+            start_character,
+            end_line,
+            end_character,
+            text: text.to_string(),
+        });
+    }
+
+    /// Demand that the next LSP sync resend the whole document.
+    ///
+    /// For a change this buffer cannot state as ranges — its text being
+    /// replaced wholesale by a reload from disk, for instance.
+    pub fn request_full_lsp_sync(&mut self) {
+        self.lsp_changes.clear();
+        self.lsp_needs_full_sync = true;
+    }
+
+    /// Take the changes recorded since the last drain.
+    ///
+    /// `None` means they can no longer describe the document and the whole
+    /// text has to be resent.
+    pub fn take_lsp_changes(&mut self) -> Option<Vec<LspContentChange>> {
+        if std::mem::take(&mut self.lsp_needs_full_sync) {
+            self.lsp_changes.clear();
+            return None;
+        }
+        Some(std::mem::take(&mut self.lsp_changes))
+    }
+
     /// Get all text
     pub fn text(&self) -> String {
         self.rope.to_string()
@@ -218,6 +365,7 @@ impl TextBuffer {
     /// Insert text at cursor position
     pub fn insert(&mut self, cursor: &Cursor, text: &str) -> Result<Cursor> {
         let char_idx = self.cursor_to_char_idx(cursor)?;
+        self.record_lsp_change(char_idx..char_idx, text);
         self.rope.insert(char_idx, text);
         self.modified = true;
         self.edit_version += 1;
@@ -246,6 +394,7 @@ impl TextBuffer {
         let deleted_char = self.rope.char(char_idx).to_string();
 
         // Delete one character
+        self.record_lsp_change(char_idx..char_idx + 1, "");
         self.rope.remove(char_idx..char_idx + 1);
         self.modified = true;
         self.edit_version += 1;
@@ -284,6 +433,7 @@ impl TextBuffer {
         };
 
         // Delete character before cursor
+        self.record_lsp_change(char_idx - 1..char_idx, "");
         self.rope.remove(char_idx - 1..char_idx);
         self.modified = true;
         self.edit_version += 1;
@@ -307,6 +457,7 @@ impl TextBuffer {
             let deleted_text: String = self.rope.slice(start_idx..end_idx).to_string();
 
             // Delete text
+            self.record_lsp_change(start_idx..end_idx, "");
             self.rope.remove(start_idx..end_idx);
             self.modified = true;
             self.edit_version += 1;
@@ -434,6 +585,7 @@ impl TextBuffer {
         match action {
             Action::Insert { position, text } => {
                 let char_idx = self.cursor_to_char_idx(position)?;
+                self.record_lsp_change(char_idx..char_idx, text);
                 self.rope.insert(char_idx, text);
                 let new_cursor = self.advance_cursor(position, text);
                 Ok(new_cursor)
@@ -441,6 +593,7 @@ impl TextBuffer {
             Action::Delete { position, text } => {
                 let char_idx = self.cursor_to_char_idx(position)?;
                 let end_idx = char_idx + text.chars().count();
+                self.record_lsp_change(char_idx..end_idx, "");
                 self.rope.remove(char_idx..end_idx);
                 Ok(*position)
             }
@@ -590,5 +743,262 @@ mod tests {
 
         // Verify content is identical
         assert_eq!(content1, content2, "Content should not change across saves");
+    }
+}
+
+#[cfg(test)]
+mod position_encoding_tests {
+    use super::*;
+
+    fn buffer(text: &str) -> TextBuffer {
+        TextBuffer::from_text(text)
+    }
+
+    #[test]
+    fn ascii_and_bmp_columns_are_unchanged() {
+        // The units coincide across the whole BMP, so the common case must
+        // stay a straight pass-through.
+        let b = buffer("let x = 1;\nlet привет = 2;\nlet 日本 = 3;\n");
+        for (line, column) in [(0usize, 10usize), (1, 15), (2, 11)] {
+            assert_eq!(b.utf16_column(line, column), column, "line {line}");
+            assert_eq!(b.grapheme_column(line, column), column, "line {line}");
+        }
+    }
+
+    #[test]
+    fn a_combining_accent_is_one_grapheme_and_two_code_units() {
+        // "e" + U+0301
+        let b = buffer("x = \"e\u{301}\";\n");
+        // Up to and including the accented cluster: 4 ASCII + quote + cluster.
+        assert_eq!(b.utf16_column(0, 6), 7);
+        assert_eq!(b.grapheme_column(0, 7), 6);
+    }
+
+    #[test]
+    fn an_astral_character_is_one_grapheme_and_two_code_units() {
+        let b = buffer("s = \"🙂\";\n");
+        assert_eq!(b.utf16_column(0, 6), 7);
+        assert_eq!(b.grapheme_column(0, 7), 6);
+    }
+
+    #[test]
+    fn a_zwj_sequence_is_one_grapheme_and_many_code_units() {
+        let b = buffer("s = \"👨\u{200d}👩\u{200d}👧\";\n");
+        // 5 ASCII columns, then one cluster of three astral chars and two ZWJs.
+        assert_eq!(b.utf16_column(0, 5), 5);
+        assert_eq!(b.utf16_column(0, 6), 13);
+        assert_eq!(b.grapheme_column(0, 13), 6);
+    }
+
+    #[test]
+    fn the_conversions_round_trip_on_every_column() {
+        let b = buffer("a\u{301}🙂b日\u{200d}c\n");
+        let len = b.line_len_graphemes(0);
+        for column in 0..=len {
+            assert_eq!(
+                b.grapheme_column(0, b.utf16_column(0, column)),
+                column,
+                "column {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_inside_a_grapheme_resolves_to_its_start() {
+        let b = buffer("🙂x\n");
+        // Offset 1 is the emoji's low surrogate — not a position a buffer
+        // column can name, so it must not run past the grapheme.
+        assert_eq!(b.grapheme_column(0, 1), 0);
+        assert_eq!(b.grapheme_column(0, 2), 1);
+    }
+
+    #[test]
+    fn out_of_range_input_clamps_instead_of_panicking() {
+        let b = buffer("ab\n");
+        assert_eq!(b.utf16_column(0, 99), 2);
+        assert_eq!(b.grapheme_column(0, 99), 2);
+        // A line past the end of the buffer has no columns at all.
+        assert_eq!(b.utf16_column(99, 3), 0);
+        assert_eq!(b.grapheme_column(99, 3), 0);
+    }
+}
+
+#[cfg(test)]
+mod lsp_change_tests {
+    use super::*;
+
+    /// Apply recorded changes to a copy of the text the way a language server
+    /// would, so a test can assert the server's document ends up identical to
+    /// the buffer's. A wrong range desynchronises the server silently, which
+    /// is the whole risk of ranged sync.
+    fn replay(original: &str, changes: &[LspContentChange]) -> String {
+        let mut text = original.to_string();
+        for change in changes {
+            let start = utf16_offset(&text, change.start_line, change.start_character);
+            let end = utf16_offset(&text, change.end_line, change.end_character);
+            text.replace_range(start..end, &change.text);
+        }
+        text
+    }
+
+    /// Byte offset for an LSP position, mirroring a server's own decoding.
+    fn utf16_offset(text: &str, line: u32, character: u32) -> usize {
+        let mut byte = 0;
+        for _ in 0..line {
+            byte += text[byte..]
+                .find('\n')
+                .map(|i| i + 1)
+                .expect("line within text");
+        }
+        let mut units = 0;
+        for ch in text[byte..].chars() {
+            if units >= character {
+                break;
+            }
+            units += ch.len_utf16() as u32;
+            byte += ch.len_utf8();
+        }
+        byte
+    }
+
+    fn drained(buffer: &mut TextBuffer) -> Vec<LspContentChange> {
+        buffer
+            .take_lsp_changes()
+            .expect("changes should be describable as ranges")
+    }
+
+    #[test]
+    fn typing_records_one_insertion_per_edit() {
+        let mut buf = TextBuffer::from_text("");
+        let mut cursor = Cursor::at(0, 0);
+        for ch in ["l", "e", "t"] {
+            cursor = buf.insert(&cursor, ch).unwrap();
+        }
+        let changes = drained(&mut buf);
+        assert_eq!(changes.len(), 3);
+        assert_eq!(replay("", &changes), buf.text());
+        // Each insertion is zero-width at the point it happened.
+        assert_eq!(
+            (changes[2].start_character, changes[2].end_character),
+            (2, 2)
+        );
+    }
+
+    #[test]
+    fn a_deletion_spans_the_removed_range() {
+        let original = "hello world";
+        let mut buf = TextBuffer::from_text(original);
+        buf.delete_range(&Cursor::at(0, 5), &Cursor::at(0, 11))
+            .unwrap();
+        let changes = drained(&mut buf);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            (changes[0].start_character, changes[0].end_character),
+            (5, 11)
+        );
+        assert!(changes[0].text.is_empty());
+        assert_eq!(replay(original, &changes), buf.text());
+    }
+
+    #[test]
+    fn a_newline_deletion_spans_two_lines() {
+        let original = "ab\ncd";
+        let mut buf = TextBuffer::from_text(original);
+        // Deleting at the end of line 0 removes the newline itself.
+        buf.delete_char(&Cursor::at(0, 2)).unwrap();
+        let changes = drained(&mut buf);
+        assert_eq!(
+            (
+                changes[0].start_line,
+                changes[0].start_character,
+                changes[0].end_line,
+                changes[0].end_character
+            ),
+            (0, 2, 1, 0)
+        );
+        assert_eq!(replay(original, &changes), buf.text());
+    }
+
+    #[test]
+    fn backspace_records_the_character_it_removed() {
+        let original = "ab";
+        let mut buf = TextBuffer::from_text(original);
+        buf.backspace(&Cursor::at(0, 2)).unwrap();
+        let changes = drained(&mut buf);
+        assert_eq!(
+            (changes[0].start_character, changes[0].end_character),
+            (1, 2)
+        );
+        assert_eq!(replay(original, &changes), buf.text());
+    }
+
+    #[test]
+    fn columns_are_utf16_not_graphemes() {
+        // An emoji to the left makes the two units disagree; a grapheme column
+        // here would point the server one unit short and corrupt its copy.
+        let original = "🙂ab";
+        let mut buf = TextBuffer::from_text(original);
+        buf.delete_range(&Cursor::at(0, 1), &Cursor::at(0, 2))
+            .unwrap();
+        let changes = drained(&mut buf);
+        assert_eq!(
+            (changes[0].start_character, changes[0].end_character),
+            (2, 3)
+        );
+        assert_eq!(replay(original, &changes), buf.text());
+        assert_eq!(buf.text(), "🙂b");
+    }
+
+    #[test]
+    fn a_multiline_insertion_replays_exactly() {
+        let original = "fn main() {}\n";
+        let mut buf = TextBuffer::from_text(original);
+        buf.insert(&Cursor::at(0, 11), "\n    let x = 1;\n")
+            .unwrap();
+        let changes = drained(&mut buf);
+        assert_eq!(replay(original, &changes), buf.text());
+    }
+
+    #[test]
+    fn undo_and_redo_are_recorded_too() {
+        // Undo mutates the rope directly rather than going through insert or
+        // delete, so it needs its own recording or the server drifts.
+        let original = "ab";
+        let mut buf = TextBuffer::from_text(original);
+        buf.insert(&Cursor::at(0, 2), "c").unwrap();
+        let after_insert = buf.text();
+        assert_eq!(replay(original, &drained(&mut buf)), after_insert);
+
+        buf.undo().unwrap();
+        assert_eq!(replay(&after_insert, &drained(&mut buf)), buf.text());
+
+        let after_undo = buf.text();
+        buf.redo().unwrap();
+        assert_eq!(replay(&after_undo, &drained(&mut buf)), buf.text());
+    }
+
+    #[test]
+    fn a_reload_demands_the_whole_document() {
+        let mut buf = TextBuffer::from_text("a");
+        buf.insert(&Cursor::at(0, 1), "b").unwrap();
+        buf.request_full_lsp_sync();
+        assert!(
+            buf.take_lsp_changes().is_none(),
+            "a full resync must discard the ranges it supersedes"
+        );
+        // And the demand is one-shot.
+        assert_eq!(buf.take_lsp_changes(), Some(Vec::new()));
+    }
+
+    #[test]
+    fn an_undrained_backlog_falls_back_to_a_full_document() {
+        // Nothing drains the list while LSP is off for a buffer, so it must
+        // not grow without bound.
+        let mut buf = TextBuffer::from_text("");
+        let mut cursor = Cursor::at(0, 0);
+        for _ in 0..MAX_PENDING_LSP_CHANGES + 1 {
+            cursor = buf.insert(&cursor, "x").unwrap();
+        }
+        assert!(buf.take_lsp_changes().is_none());
     }
 }

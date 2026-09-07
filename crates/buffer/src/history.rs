@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use super::Cursor;
 
 /// Action for undo/redo
@@ -104,8 +106,9 @@ impl Action {
 /// Edit history for undo/redo
 #[derive(Debug, Clone)]
 pub struct History {
-    /// Action stack for undo
-    undo_stack: Vec<Action>,
+    /// Action stack for undo. A deque so trimming the oldest entry once
+    /// `max_size` is reached is O(1) instead of shifting the whole buffer.
+    undo_stack: VecDeque<Action>,
     /// Action stack for redo
     redo_stack: Vec<Action>,
     /// Maximum history size
@@ -123,7 +126,7 @@ impl History {
     /// Create history with specified size
     pub fn with_capacity(max_size: usize) -> Self {
         Self {
-            undo_stack: Vec::new(),
+            undo_stack: VecDeque::new(),
             redo_stack: Vec::new(),
             max_size,
             pending_action: None,
@@ -146,7 +149,7 @@ impl History {
                     .pending_action
                     .take()
                     .expect("pending_action is Some inside if let Some branch");
-                self.undo_stack.push(completed);
+                self.undo_stack.push_back(completed);
             }
         }
 
@@ -155,14 +158,14 @@ impl History {
 
         // Limit history size
         if self.undo_stack.len() > self.max_size {
-            self.undo_stack.remove(0);
+            self.undo_stack.pop_front();
         }
     }
 
     /// Complete current action group (e.g., on focus loss)
     pub fn commit_pending(&mut self) {
         if let Some(action) = self.pending_action.take() {
-            self.undo_stack.push(action);
+            self.undo_stack.push_back(action);
         }
     }
 
@@ -171,7 +174,7 @@ impl History {
         // First complete current action
         self.commit_pending();
 
-        if let Some(action) = self.undo_stack.pop() {
+        if let Some(action) = self.undo_stack.pop_back() {
             let inverse = action.inverse();
             self.redo_stack.push(action);
             Some(inverse)
@@ -188,7 +191,7 @@ impl History {
         if let Some(action) = self.redo_stack.pop() {
             // Return original action (not inverse!)
             // Store action in undo_stack for possible subsequent undo
-            self.undo_stack.push(action.clone());
+            self.undo_stack.push_back(action.clone());
             Some(action)
         } else {
             None

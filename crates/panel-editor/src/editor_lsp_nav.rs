@@ -19,7 +19,8 @@ impl Editor {
     /// Request hover info from LSP at specified position.
     pub fn request_hover(&mut self, line: usize, column: usize, lsp_manager: &LspManager) {
         if let Some(path) = self.buffer.file_path() {
-            self.lsp.request_hover(path, line, column, lsp_manager);
+            let character = self.buffer.utf16_column(line, column);
+            self.lsp.request_hover(path, line, character, lsp_manager);
         }
     }
 
@@ -101,7 +102,9 @@ impl Editor {
     /// Request go-to-definition from LSP at specified position.
     pub fn request_definition(&mut self, line: usize, column: usize, lsp_manager: &LspManager) {
         if let Some(path) = self.buffer.file_path() {
-            self.lsp.request_definition(path, line, column, lsp_manager);
+            let character = self.buffer.utf16_column(line, column);
+            self.lsp
+                .request_definition(path, line, character, lsp_manager);
         }
     }
 
@@ -162,7 +165,9 @@ impl Editor {
     /// Send find-references request to LSP at specified position.
     pub fn request_references(&mut self, line: usize, column: usize, lsp_manager: &LspManager) {
         if let Some(path) = self.buffer.file_path() {
-            self.lsp.request_references(path, line, column, lsp_manager);
+            let character = self.buffer.utf16_column(line, column);
+            self.lsp
+                .request_references(path, line, character, lsp_manager);
         }
     }
 
@@ -208,8 +213,9 @@ impl Editor {
         lsp_manager: &LspManager,
     ) {
         if let Some(path) = self.buffer.file_path() {
+            let character = self.buffer.utf16_column(line, column);
             self.lsp
-                .request_rename(path, line, column, new_name, lsp_manager);
+                .request_rename(path, line, character, new_name, lsp_manager);
         }
     }
 

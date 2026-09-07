@@ -28,11 +28,12 @@ impl Editor {
             return;
         };
         let line = self.cursor.line as u32;
-        let line_len = self
-            .buffer
-            .line(self.cursor.line)
-            .map(|l| l.trim_end_matches('\n').chars().count())
-            .unwrap_or(0) as u32;
+        // The range covers the whole line, and LSP measures it in UTF-16 code
+        // units — not the chars this used to count.
+        let line_len = self.buffer.utf16_column(
+            self.cursor.line,
+            self.buffer.line_len_graphemes(self.cursor.line),
+        ) as u32;
         let range = lsp_types::Range::new(
             lsp_types::Position::new(line, 0),
             lsp_types::Position::new(line, line_len),

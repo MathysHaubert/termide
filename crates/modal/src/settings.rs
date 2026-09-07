@@ -88,7 +88,7 @@ enum SidebarRow {
     Leaf(SettingsTab),
     /// Expandable "Keybindings" group header.
     KbGroupHeader,
-    /// Keybindings subsection (index into `KB_SECTIONS`, 0..7).
+    /// Keybindings subsection (index into `KB_SECTIONS`).
     KbChild(usize),
 }
 

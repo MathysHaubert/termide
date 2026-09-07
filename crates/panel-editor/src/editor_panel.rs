@@ -266,7 +266,7 @@ impl Panel for Editor {
         }
 
         // Note: Key translation should be done at app level before calling handle_key
-        // If you need translation, call translate_hotkey from termide-core or keyboard module
+        // If you need translation, call termide_keyboard::KeyNormalizer::canonicalize
 
         // The viewer's hex/text toggle (configurable, default Ctrl+L) swaps this
         // editor in place for the hex viewer of the same file — the inverse of
