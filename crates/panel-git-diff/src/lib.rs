@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{buffer::Buffer, layout::Rect};
 
+use termide_config::constants::spinner_frame;
 use termide_config::{is_go_end, is_go_home, is_move_down, is_move_up, Config};
 use termide_core::{
     CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel,
@@ -64,6 +65,14 @@ pub struct GitDiffPanel {
     is_stash: bool,
     /// Stash message (for title display instead of hash)
     stash_message: Option<String>,
+    /// Result channel of the in-flight refresh worker, drained by `tick()`.
+    /// `Some` means a worker is running.
+    refresh_rx: Option<std::sync::mpsc::Receiver<load::GitDiffRefreshResult>>,
+    /// A refresh was requested while a worker was in flight; run one more pass
+    /// when it finishes instead of spawning workers per event.
+    refresh_pending: bool,
+    /// Whether a refresh is in flight, for the loading marker in `title()`.
+    is_loading: bool,
 }
 
 /// Build HotkeyTable for the git diff panel from config.
@@ -95,14 +104,23 @@ impl GitDiffPanel {
         self.file_filter.as_deref()
     }
 
-    /// Create a new Git Diff panel for working directory changes
-    pub fn new(repo_path: PathBuf) -> Self {
-        let branch = git::get_current_branch(&repo_path);
+    /// Build the panel empty and start the first load.
+    ///
+    /// The four entry points below differ only in which target they point at,
+    /// and `refresh()` is asynchronous, so none of them touches git before
+    /// returning.
+    fn for_target(
+        repo_path: PathBuf,
+        commit_hash: Option<String>,
+        file_filter: Option<String>,
+        is_stash: bool,
+        stash_message: Option<String>,
+    ) -> Self {
         let mut panel = Self {
             repo_path,
-            commit_hash: None,
-            branch,
-            file_filter: None,
+            commit_hash,
+            branch: None,
+            file_filter,
             diffs: Vec::new(),
             scrollbars: termide_core::ScrollBars::default(),
             scroll: 0,
@@ -116,98 +134,37 @@ impl GitDiffPanel {
             vim_mode: false,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
-            is_stash: false,
-            stash_message: None,
+            is_stash,
+            stash_message,
+            refresh_rx: None,
+            refresh_pending: false,
+            is_loading: false,
         };
         panel.refresh();
         panel
     }
 
+    /// Create a new Git Diff panel for working directory changes
+    pub fn new(repo_path: PathBuf) -> Self {
+        Self::for_target(repo_path, None, None, false, None)
+    }
+
     /// Create a new Git Diff panel for a specific commit
     pub fn new_for_commit(repo_path: PathBuf, commit_hash: String) -> Self {
-        let branch = git::get_current_branch(&repo_path);
-        let mut panel = Self {
-            repo_path,
-            commit_hash: Some(commit_hash),
-            branch,
-            file_filter: None,
-            diffs: Vec::new(),
-            scrollbars: termide_core::ScrollBars::default(),
-            scroll: 0,
-            collapsed: HashSet::new(),
-            selected_file: 0,
-            cached_theme: ThemeColors::default(),
-            last_area: Rect::default(),
-            total_lines: 0,
-            visible_height: 0,
-            status_message: None,
-            vim_mode: false,
-            hotkeys: HotkeyTable::default(),
-            last_config_ptr: 0,
-            is_stash: false,
-            stash_message: None,
-        };
-        panel.refresh();
-        panel
+        Self::for_target(repo_path, Some(commit_hash), None, false, None)
     }
 
     /// Create a new Git Diff panel for a stash entry.
     ///
     /// Uses `git stash show -p` instead of `git show` to get proper diff output.
     pub fn new_for_stash(repo_path: PathBuf, stash_ref: String, message: String) -> Self {
-        let branch = git::get_current_branch(&repo_path);
-        let mut panel = Self {
-            repo_path,
-            commit_hash: Some(stash_ref),
-            branch,
-            file_filter: None,
-            diffs: Vec::new(),
-            scrollbars: termide_core::ScrollBars::default(),
-            scroll: 0,
-            collapsed: HashSet::new(),
-            selected_file: 0,
-            cached_theme: ThemeColors::default(),
-            last_area: Rect::default(),
-            total_lines: 0,
-            visible_height: 0,
-            status_message: None,
-            vim_mode: false,
-            hotkeys: HotkeyTable::default(),
-            last_config_ptr: 0,
-            is_stash: true,
-            stash_message: Some(message),
-        };
-        panel.refresh();
-        panel
+        Self::for_target(repo_path, Some(stash_ref), None, true, Some(message))
     }
 
     /// Create a new Git Diff panel filtered to a single file
     pub fn new_with_file_filter(repo_path: PathBuf, file_path: PathBuf) -> Self {
-        let branch = git::get_current_branch(&repo_path);
         let file_filter = file_path.to_string_lossy().to_string();
-        let mut panel = Self {
-            repo_path,
-            commit_hash: None,
-            branch,
-            file_filter: Some(file_filter),
-            diffs: Vec::new(),
-            scrollbars: termide_core::ScrollBars::default(),
-            scroll: 0,
-            collapsed: HashSet::new(),
-            selected_file: 0,
-            cached_theme: ThemeColors::default(),
-            last_area: Rect::default(),
-            total_lines: 0,
-            visible_height: 0,
-            status_message: None,
-            vim_mode: false,
-            hotkeys: HotkeyTable::default(),
-            last_config_ptr: 0,
-            is_stash: false,
-            stash_message: None,
-        };
-        panel.refresh();
-        panel
+        Self::for_target(repo_path, None, Some(file_filter), false, None)
     }
 }
 
@@ -270,7 +227,9 @@ impl Panel for GitDiffPanel {
     fn title(&self) -> String {
         let t = termide_i18n::t();
         let repo_name = git::get_repo_name(&self.repo_path);
-        let branch = self.branch.as_deref().unwrap_or("detached");
+        // The branch name arrives with the first refresh result, so until then
+        // there is nothing to show — and "detached" would be a lie.
+        let branch = self.branch.as_deref().unwrap_or("…");
 
         // Build files string: "N files" or single filename
         let files = if self.diffs.len() == 1 {
@@ -279,7 +238,7 @@ impl Panel for GitDiffPanel {
             format!("{} files", self.diffs.len())
         };
 
-        if let Some(ref msg) = self.stash_message {
+        let title = if let Some(ref msg) = self.stash_message {
             // Stash diff: show message instead of hash
             format!("Diff: {} — {}", msg, files)
         } else if let Some(ref hash) = self.commit_hash {
@@ -288,7 +247,26 @@ impl Panel for GitDiffPanel {
             t.git_diff_title_commit_fmt(&repo_name, branch, short_hash, &files)
         } else {
             t.git_diff_title_fmt(&repo_name, branch, &files)
+        };
+
+        if self.is_loading {
+            format!("{} {} ({})", spinner_frame(), title, t.git_status_loading())
+        } else {
+            title
         }
+    }
+
+    fn tick(&mut self) -> Vec<PanelEvent> {
+        // Fold in the async refresh once the worker is done. Until then the
+        // panel shows the previous diff with a loading marker in the title.
+        if self.poll_refresh() {
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        // Keep the title's spinner animating while a refresh is in flight.
+        if self.is_loading {
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        vec![]
     }
 
     fn prepare_render(&mut self, theme: &Theme, config: &std::sync::Arc<Config>) {
@@ -433,5 +411,163 @@ impl Panel for GitDiffPanel {
 
     fn get_working_directory(&self) -> Option<PathBuf> {
         Some(self.repo_path.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    /// A directory that is deliberately *not* a git repository: every command
+    /// the worker runs fails, so it returns an empty diff quickly and without
+    /// depending on a git fixture. These tests cover the refresh state
+    /// machine, which is what moving the load off the UI thread introduced.
+    fn not_a_repo() -> TempDir {
+        TempDir::new().expect("temp dir")
+    }
+
+    /// Drain the worker, polling until it delivers. Returns once the result
+    /// has been applied.
+    fn wait_for_result(panel: &mut GitDiffPanel) {
+        for _ in 0..500 {
+            if panel.poll_refresh() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the refresh worker never delivered a result");
+    }
+
+    /// Hand a result straight to the panel, bypassing the worker, so the
+    /// apply step can be checked exactly.
+    fn deliver(panel: &mut GitDiffPanel, branch: Option<&str>, paths: &[&str]) {
+        let (tx, rx) = mpsc::channel();
+        tx.send(load::GitDiffRefreshResult {
+            branch: branch.map(str::to_string),
+            diffs: paths
+                .iter()
+                .map(|path| FileDiff {
+                    path: (*path).to_string(),
+                    status: FileStatus::Modified,
+                    staged: false,
+                    additions: 0,
+                    deletions: 0,
+                    hunks: Vec::new(),
+                })
+                .collect(),
+        })
+        .expect("send");
+        panel.refresh_rx = Some(rx);
+        assert!(panel.poll_refresh(), "a queued result must be applied");
+    }
+
+    #[test]
+    fn construction_does_not_load_synchronously() {
+        let dir = not_a_repo();
+        let panel = GitDiffPanel::new(dir.path().to_path_buf());
+
+        // The constructor used to run `git status` twice plus a `git diff` per
+        // changed file before returning. Now it hands back a loading panel and
+        // the diff arrives through `poll_refresh`.
+        assert!(panel.is_loading);
+        assert!(panel.refresh_rx.is_some());
+        assert!(panel.diffs.is_empty());
+    }
+
+    #[test]
+    fn polling_a_finished_worker_clears_the_loading_state() {
+        let dir = not_a_repo();
+        let mut panel = GitDiffPanel::new(dir.path().to_path_buf());
+
+        wait_for_result(&mut panel);
+
+        assert!(!panel.is_loading);
+        assert!(panel.refresh_rx.is_none());
+        // Nothing further is queued, so a later poll has no work.
+        assert!(!panel.poll_refresh());
+    }
+
+    #[test]
+    fn requests_during_one_worker_collapse_into_a_single_follow_up() {
+        let dir = not_a_repo();
+        let mut panel = GitDiffPanel::new(dir.path().to_path_buf());
+        assert!(panel.refresh_rx.is_some(), "the first worker is in flight");
+
+        // The watcher refreshes on every filesystem and git event, so bursts
+        // are the normal case rather than the exception.
+        panel.refresh();
+        panel.refresh();
+        panel.refresh();
+        assert!(panel.refresh_pending);
+
+        // Draining the first result runs exactly one coalesced pass...
+        wait_for_result(&mut panel);
+        assert!(!panel.refresh_pending);
+        assert!(
+            panel.refresh_rx.is_some(),
+            "the coalesced follow-up should be in flight"
+        );
+
+        // ...and that pass queues nothing more.
+        wait_for_result(&mut panel);
+        assert!(panel.refresh_rx.is_none());
+        assert!(!panel.refresh_pending);
+        assert!(!panel.is_loading);
+    }
+
+    #[test]
+    fn a_file_filter_keeps_only_its_own_diff() {
+        let dir = not_a_repo();
+        let mut panel =
+            GitDiffPanel::new_with_file_filter(dir.path().to_path_buf(), PathBuf::from("src/b.rs"));
+        wait_for_result(&mut panel);
+
+        deliver(
+            &mut panel,
+            Some("main"),
+            &["src/a.rs", "src/b.rs", "src/c.rs"],
+        );
+
+        assert_eq!(panel.diffs.len(), 1);
+        assert_eq!(panel.diffs[0].path, "src/b.rs");
+        assert_eq!(panel.branch.as_deref(), Some("main"));
+        // One file header, no hunks.
+        assert_eq!(panel.total_lines, 1);
+    }
+
+    #[test]
+    fn selection_is_clamped_into_a_shorter_diff_list() {
+        let dir = not_a_repo();
+        let mut panel = GitDiffPanel::new(dir.path().to_path_buf());
+        wait_for_result(&mut panel);
+
+        deliver(&mut panel, None, &["a", "b", "c"]);
+        panel.selected_file = 2;
+
+        deliver(&mut panel, None, &["a"]);
+
+        assert_eq!(panel.diffs.len(), 1);
+        assert_eq!(panel.selected_file, 0);
+    }
+
+    #[test]
+    fn a_worker_that_dies_without_sending_does_not_wedge_the_panel() {
+        let dir = not_a_repo();
+        let mut panel = GitDiffPanel::new(dir.path().to_path_buf());
+        wait_for_result(&mut panel);
+
+        // Drop the sender to simulate a panicking worker thread.
+        let (tx, rx) = mpsc::channel::<load::GitDiffRefreshResult>();
+        drop(tx);
+        panel.refresh_rx = Some(rx);
+        panel.is_loading = true;
+
+        assert!(panel.poll_refresh());
+        assert!(!panel.is_loading, "a dead worker must not leave it loading");
+        assert!(panel.refresh_rx.is_none());
     }
 }

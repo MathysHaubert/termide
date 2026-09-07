@@ -20,3 +20,6 @@ termide-git = { path = "../git" }
 termide-i18n = { path = "../i18n" }
 termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }
+
+[dev-dependencies]
+tempfile.workspace = true

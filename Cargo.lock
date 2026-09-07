@@ -5245,6 +5245,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "regex",
+ "tempfile",
  "termide-clipboard",
  "termide-config",
  "termide-core",
