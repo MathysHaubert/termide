@@ -115,6 +115,11 @@ impl Editor {
         if let Some(path) = self.buffer.file_path().map(|p| p.to_path_buf()) {
             // Re-read the file
             self.buffer = TextBuffer::from_file(&path)?;
+            // The server still holds the pre-reload text and the fresh buffer
+            // has no ranges to describe the difference, so ask for a whole
+            // document on the next sync and make sure one happens.
+            self.buffer.request_full_lsp_sync();
+            self.lsp.mark_changed();
 
             // Update modification time
             self.file_state.mtime = file_io::get_file_mtime(&path);

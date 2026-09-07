@@ -10,7 +10,7 @@ mod search;
 mod viewport;
 mod wrap;
 
-pub use buffer::TextBuffer;
+pub use buffer::{LspContentChange, TextBuffer};
 pub use cursor::{Cursor, Selection};
 pub use history::{Action, History};
 pub use search::SearchState;

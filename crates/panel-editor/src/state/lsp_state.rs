@@ -312,15 +312,41 @@ impl LspState {
         }
     }
 
-    /// Send didChange notification when content changes.
-    pub fn did_change(&mut self, file_path: &Path, content: &str, lsp_manager: &LspManager) {
+    /// Whether an incremental `didChange` may be used for this file.
+    pub fn supports_incremental_sync(&self, file_path: &Path, lsp_manager: &LspManager) -> bool {
+        self.enabled
+            && self
+                .language_id
+                .as_ref()
+                .is_some_and(|lang| lsp_manager.supports_incremental_sync(lang, file_path))
+    }
+
+    /// Send didChange notification carrying the whole document.
+    pub fn did_change_full(&mut self, file_path: &Path, content: &str, lsp_manager: &LspManager) {
         if !self.enabled {
             return;
         }
 
         if let Some(ref lang) = self.language_id {
             self.document_version += 1;
-            lsp_manager.did_change(lang, file_path, self.document_version, content);
+            lsp_manager.did_change_full(lang, file_path, self.document_version, content);
+        }
+    }
+
+    /// Send didChange notification carrying only the ranges that changed.
+    pub fn did_change_incremental(
+        &mut self,
+        file_path: &Path,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+        lsp_manager: &LspManager,
+    ) {
+        if !self.enabled || changes.is_empty() {
+            return;
+        }
+
+        if let Some(ref lang) = self.language_id {
+            self.document_version += 1;
+            lsp_manager.did_change_incremental(lang, file_path, self.document_version, changes);
         }
     }
 

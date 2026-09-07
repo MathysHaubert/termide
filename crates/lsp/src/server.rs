@@ -17,7 +17,8 @@ use lsp_types::{
     GotoDefinitionResponse, Hover, InitializeParams, InitializeResult, Location, Position,
     PublishDiagnosticsParams, ServerCapabilities, TextDocumentClientCapabilities,
     TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Uri, VersionedTextDocumentIdentifier, WorkspaceEdit,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    VersionedTextDocumentIdentifier, WorkspaceEdit,
 };
 use serde_json::Value;
 
@@ -479,15 +480,55 @@ impl LspServer {
         self.send_notification("textDocument/didOpen", params);
     }
 
-    /// Send textDocument/didChange notification (full sync)
-    pub fn did_change(&self, uri: Uri, version: i32, text: String) {
-        let params = lsp_types::DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier { uri, version },
-            content_changes: vec![TextDocumentContentChangeEvent {
+    /// Whether this server accepts ranged `didChange` notifications.
+    ///
+    /// A server that advertises `Full` — or has not reported its capabilities
+    /// yet — must be sent the whole document; handing it a ranged change would
+    /// silently corrupt its copy, and every answer afterwards with it.
+    pub fn supports_incremental_sync(&self) -> bool {
+        self.capabilities
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|caps| caps.text_document_sync.as_ref())
+            .map(|sync| match sync {
+                TextDocumentSyncCapability::Kind(kind) => {
+                    *kind == TextDocumentSyncKind::INCREMENTAL
+                }
+                TextDocumentSyncCapability::Options(options) => {
+                    options.change == Some(TextDocumentSyncKind::INCREMENTAL)
+                }
+            })
+            .unwrap_or(false)
+    }
+
+    /// Send textDocument/didChange notification with the whole document.
+    pub fn did_change_full(&self, uri: Uri, version: i32, text: String) {
+        self.did_change(
+            uri,
+            version,
+            vec![TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,
                 text,
             }],
+        );
+    }
+
+    /// Send textDocument/didChange notification.
+    ///
+    /// Ranged changes are applied in order, each to the document as the
+    /// previous one left it. Only send them when
+    /// [`Self::supports_incremental_sync`] agrees.
+    pub fn did_change(
+        &self,
+        uri: Uri,
+        version: i32,
+        content_changes: Vec<TextDocumentContentChangeEvent>,
+    ) {
+        let params = lsp_types::DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri, version },
+            content_changes,
         };
         self.send_notification("textDocument/didChange", params);
     }
