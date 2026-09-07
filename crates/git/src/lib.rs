@@ -30,8 +30,8 @@ pub use branches::{
 };
 pub use command::{network_command, SshAuth};
 pub use commits::{
-    get_commit_details, get_commit_diff, get_file_diff, get_file_diff_stats, get_log,
-    get_log_graph_unicode, get_log_with_graph, CommitDetails, CommitInfo, DiffStats,
+    get_commit_details, get_commit_diff, get_file_diff, get_file_diff_stats, get_log_graph_unicode,
+    get_log_with_graph, CommitDetails, CommitInfo, DiffStats,
 };
 pub use discovery::{
     find_all_repos, find_repo_root, find_repos_from_paths, find_toplevel_repo, find_toplevel_repos,
@@ -39,10 +39,10 @@ pub use discovery::{
 };
 pub use files::{get_staged_files, get_unstaged_files, StagedFile, UnstagedFile};
 pub use operations::{
-    commit, fetch, init_repo, pull, push, revert_all, revert_file, stage_all, stage_file,
-    stage_files, unstage_all, unstage_file, unstage_files,
+    commit, init_repo, revert_all, revert_file, stage_all, stage_file, stage_files, unstage_all,
+    unstage_file, unstage_files,
 };
-pub use remote_url::{get_commit_web_url, get_remote_web_url};
+pub use remote_url::get_commit_web_url;
 pub use repo_manager::RepoManager;
 pub use stash::{
     stash_apply, stash_diff, stash_drop, stash_info, stash_list, stash_pop, stash_push,
@@ -52,7 +52,7 @@ pub use status::{
     get_git_status, get_git_status_async, get_repo_status, GitRepoStatus, GitStatus,
     GitStatusAsyncResult, GitStatusCache,
 };
-pub use utils::{truncate_left, truncate_path_left, truncate_right, truncate_to_width};
+pub use utils::{truncate_left, truncate_right, truncate_to_width};
 
 // Re-export diff types
 pub use diff::{

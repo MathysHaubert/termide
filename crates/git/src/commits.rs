@@ -23,48 +23,6 @@ pub struct CommitInfo {
     pub refs: Option<String>,
 }
 
-/// Get commit log
-pub fn get_log(repo: &Path, count: usize) -> Vec<CommitInfo> {
-    let count_str = count.to_string();
-    // Format: hash, author, date, refs, message
-    let format = "%h\t%an\t%ar\t%d\t%s";
-
-    git_command_stdout(
-        repo,
-        &[
-            "log",
-            &format!("-{}", count_str),
-            &format!("--format={}", format),
-        ],
-    )
-    .map(|stdout| {
-        stdout
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.splitn(5, '\t').collect();
-                if parts.len() == 5 {
-                    let refs = if parts[3].is_empty() {
-                        None
-                    } else {
-                        Some(parts[3].trim().to_string())
-                    };
-                    Some(CommitInfo {
-                        hash: parts[0].to_string(),
-                        author: parts[1].to_string(),
-                        date: parts[2].to_string(),
-                        message: parts[4].to_string(),
-                        graph: None,
-                        refs,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
-    })
-    .unwrap_or_default()
-}
-
 /// Get commit log with graph.
 ///
 /// If `branch` is `Some(name)`, shows the log for that branch instead of HEAD.

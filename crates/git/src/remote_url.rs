@@ -13,7 +13,7 @@ use crate::command::git_command_stdout;
 /// - `http://host/user/repo.git` → `http://host/user/repo`
 ///
 /// Returns `None` if remote is not found or URL format is not recognized.
-pub fn get_remote_web_url(repo: &Path, remote: &str) -> Option<String> {
+fn get_remote_web_url(repo: &Path, remote: &str) -> Option<String> {
     let raw = git_command_stdout(repo, &["remote", "get-url", remote])?;
     let url = raw.trim();
     parse_remote_url(url)

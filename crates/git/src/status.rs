@@ -224,15 +224,6 @@ impl GitStatusCache {
         GitStatus::Unmodified
     }
 
-    pub fn is_ignored(&self, file_name: &str) -> bool {
-        let full_path = if self.relative_path.as_os_str().is_empty() {
-            PathBuf::from(file_name)
-        } else {
-            self.relative_path.join(file_name)
-        };
-        self.ignored_files.contains(&full_path)
-    }
-
     pub fn has_changes_in_directory(&self, dir_name: &str) -> bool {
         let full_dir = if self.relative_path.as_os_str().is_empty() {
             PathBuf::from(dir_name)
