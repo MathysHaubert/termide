@@ -82,6 +82,12 @@ else
     CHECK_DIR="$WORKTREE"
     SCOPE="staged tree only (working tree has unstaged changes)"
     export CARGO_TARGET_DIR="$REPO_ROOT/target/pre-commit-target"
+    # This build is thrown away after the gate runs, so it carries no debug
+    # info: nothing steps through it, and the artefacts are the bulk of a
+    # target directory's size. Correctness, warnings and test results are
+    # unaffected; only a panic backtrace here would lose line numbers.
+    export CARGO_PROFILE_DEV_DEBUG=none
+    export CARGO_PROFILE_TEST_DEBUG=none
     printf 'pre-commit: partial commit — first run in %s builds from scratch.\n' \
         "$(basename "$CARGO_TARGET_DIR")"
 fi
