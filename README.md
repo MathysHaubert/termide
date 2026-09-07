@@ -54,7 +54,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **Markdown Preview** - Rendered read-only view for `.md` / `.markdown` (headings, lists, tables, syntax-highlighted code blocks, clickable links and image pictograms) with cursor navigation, selection and clipboard copy; `Ctrl+E` toggles to the editable source; embedded ```mermaid``` blocks render as diagrams
 - **Mermaid Diagram Viewer** - Render `.mmd` / `.mermaid` files as text pseudographics — flowchart, sequence, state, class, ER, gantt, pie, journey, mindmap, timeline, gitGraph, quadrant; 2D scroll, copy to clipboard, and `Ctrl+E` to edit the source
 - **External Apps** - Open files with system default applications (Shift+Enter)
-- **39 Built-in Themes** - Dark, light, retro, and cinematic themes (Dracula, Nord, Monokai, Solarized, Matrix, Pip-Boy, Norton Commander, Windows 95, etc.)
+- **38 Built-in Themes** - Dark, light, retro, and cinematic themes (Dracula, Nord, Monokai, Solarized, Matrix, Pip-Boy, Norton Commander, Windows 95, etc.)
 - **Custom Themes** - Create your own themes in TOML format
 - **15 UI Languages** - Bengali, Chinese, English, French, German, Hindi, Indonesian, Japanese, Korean, Portuguese, Russian, Spanish, Thai, Turkish, Vietnamese (missing keys transparently fall back to English)
 - **Session Management** - Auto-save and restore panel layouts

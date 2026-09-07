@@ -99,7 +99,7 @@ pub struct UnifiedWatcher {
     watched_dirs: HashMap<PathBuf, usize>,
     /// Receiver for internal events from debouncer callback
     internal_rx: Receiver<InternalEvent>,
-    /// Pending git events waiting for 1000ms debounce
+    /// Pending git events waiting for the `GIT_DEBOUNCE_MS` debounce
     pending_git: HashMap<PathBuf, Instant>,
     /// Pending gitignore changes waiting for debounce
     pending_gitignore: HashMap<PathBuf, Instant>,
@@ -497,7 +497,7 @@ impl UnifiedWatcher {
         let mut events = Vec::new();
         let now = Instant::now();
 
-        // Emit git events that have been debounced for 1000ms
+        // Emit git events that have waited out GIT_DEBOUNCE_MS
         let git_debounce = Duration::from_millis(GIT_DEBOUNCE_MS);
         let ready_git: Vec<PathBuf> = self
             .pending_git
@@ -511,7 +511,7 @@ impl UnifiedWatcher {
             events.push(WatchEvent::GitCommit(repo_root));
         }
 
-        // Emit gitignore events that have been debounced for 1000ms
+        // Emit gitignore events that have waited out the same debounce
         let ready_gitignore: Vec<PathBuf> = self
             .pending_gitignore
             .iter()

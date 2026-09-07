@@ -86,7 +86,7 @@ impl FmCommand {
     ///
     /// # Arguments
     ///
-    /// * `key` - The key event to parse (should already be translated via translate_hotkey)
+    /// * `key` - The key event to parse (already canonicalized by `KeyNormalizer`)
     /// * `hotkeys` - HotkeyTable built from config (configurable bindings)
     /// * `vim_mode` - Whether vim mode is enabled (adds j/k/g/G navigation)
     pub fn from_key_event(key: KeyEvent, hotkeys: &HotkeyTable, vim_mode: bool) -> Self {

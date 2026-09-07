@@ -158,7 +158,7 @@ impl EditorCommand {
     ///
     /// # Arguments
     ///
-    /// * `key` - The key event to parse (should already be translated via translate_hotkey)
+    /// * `key` - The key event to parse (already canonicalized by `KeyNormalizer`)
     /// * `read_only` - Whether the editor is in read-only mode
     /// * `has_search` - Whether there's an active search
     /// * `has_selection` - Whether there's an active text selection

@@ -263,7 +263,7 @@ Handles keyboard input with priority:
 4. **Active panel** (via `panel.handle_key()`)
 
 **Cyrillic Support:**
-Keyboard layout translation via `termide_keyboard::translate_hotkey()` allows hotkeys to work with Russian keyboard layout.
+Keyboard layout translation via `termide_keyboard::KeyNormalizer::canonicalize()` allows hotkeys to work with Russian keyboard layout.
 
 #### 3.3 Mouse Handler
 
