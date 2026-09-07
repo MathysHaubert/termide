@@ -133,6 +133,8 @@ impl SftpHandle {
     {
         let (tx, rx) = oneshot::channel();
         let cmd = build(tx);
+        // Outer `?`: the SFTP runtime is unavailable. Inner result: the
+        // command's own outcome.
         block_on(async move {
             self.cmd_tx.send(cmd).await.map_err(|e| {
                 log::debug!("sftp dispatch send failed (actor gone): {e}");
@@ -148,7 +150,7 @@ impl SftpHandle {
                     message: "SFTP backend not responding within deadline".into(),
                 }),
             }
-        })
+        })?
     }
 }
 
@@ -170,14 +172,21 @@ pub(super) async fn sftp_actor(
     let mut open_files: HashMap<u64, russh_sftp::client::fs::File> = HashMap::new();
     let mut next_handle_id: u64 = 1;
 
-    // Convenience: pull the live session reference for a command. The
-    // actor only enters the next iteration if a previous iteration's
-    // reconnect succeeded, so unwrap is safe by construction.
+    // Convenience: pull the live session reference for a command. Today
+    // `sftp_opt` is `Some` for the whole loop, but a future teardown or
+    // reconnect path could leave it empty — so skip the command rather
+    // than unwrap. Dropping `reply` closes the oneshot, and
+    // `SftpHandle::dispatch` maps a closed channel to `NotConnected`, so
+    // the caller gets a connection error instead of the process aborting.
     macro_rules! sftp {
         () => {
-            sftp_opt
-                .as_ref()
-                .expect("SFTP session must exist while actor runs")
+            match sftp_opt.as_ref() {
+                Some(session) => session,
+                None => {
+                    log::debug!("sftp actor: command arrived with no live session");
+                    continue;
+                }
+            }
         };
     }
 
