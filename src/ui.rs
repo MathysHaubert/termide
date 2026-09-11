@@ -283,7 +283,10 @@ fn render_dropdowns_and_modals(
         let dropdown_y = 1_u16; // Below menu bar
 
         // Render Options submenu
-        let options_items = get_options_items(state.detach_available);
+        let options_items = get_options_items(
+            state.detach_available,
+            Some(&state.config.general.keybindings),
+        );
         let dropdown = Dropdown::new(
             &options_items,
             state.ui.options_submenu.selected,

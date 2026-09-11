@@ -137,8 +137,11 @@ pub enum SettingsResult {
 /// `SettingsModal::project_override_active`. The trailing slot is
 /// Cancel and is matched as the catch-all in `execute_selected_button`.
 const BUTTON_APPLY: usize = 0;
-const BUTTON_RESET: usize = 1;
-const BUTTON_PROJECT_OVERRIDE: usize = 2;
+const BUTTON_PROJECT_OVERRIDE: usize = 1;
+/// Reset sits next to Cancel, away from the two Apply buttons: it is the
+/// other destructive end of the row, and putting it between them invited
+/// wiping the config while reaching for "Apply to Project".
+const BUTTON_RESET: usize = 2;
 const BUTTON_COUNT: usize = 4;
 
 /// Get localized button labels. The third label depends on whether the
@@ -152,8 +155,8 @@ fn button_labels(project_override_active: bool) -> [String; BUTTON_COUNT] {
     };
     [
         t.settings_btn_apply().to_string(),
-        t.settings_btn_reset().to_string(),
         project_label.to_string(),
+        t.settings_btn_reset().to_string(),
         t.settings_btn_cancel().to_string(),
     ]
 }
@@ -540,5 +543,62 @@ mod button_layout_tests {
                 .expect("the centre lands inside some button");
             assert_eq!(hit, index);
         }
+    }
+}
+
+#[cfg(test)]
+mod button_order_tests {
+    use super::*;
+
+    /// The constants index into `button_labels`, and nothing ties them to it.
+    /// Reordering the row without moving a constant would fire the wrong
+    /// action — reset where the user pressed Apply to Project.
+    #[test]
+    fn constants_match_the_rendered_order() {
+        let labels = button_labels(false);
+        let t = i18n::t();
+
+        assert_eq!(labels[BUTTON_APPLY], t.settings_btn_apply());
+        assert_eq!(
+            labels[BUTTON_PROJECT_OVERRIDE],
+            t.settings_btn_create_project_override()
+        );
+        assert_eq!(labels[BUTTON_RESET], t.settings_btn_reset());
+        assert_eq!(labels[BUTTON_COUNT - 1], t.settings_btn_cancel());
+    }
+
+    /// Reset must stay next to Cancel, away from the two Apply buttons.
+    #[test]
+    fn reset_sits_last_before_cancel() {
+        let labels = button_labels(false);
+        let order: Vec<&str> = labels.iter().map(|l| l.as_str()).collect();
+        let t = i18n::t();
+
+        let position = |needle: &str| {
+            order
+                .iter()
+                .position(|l| *l == needle)
+                .expect("label present")
+        };
+
+        assert!(
+            position(t.settings_btn_apply()) < position(t.settings_btn_create_project_override())
+        );
+        assert!(
+            position(t.settings_btn_create_project_override()) < position(t.settings_btn_reset())
+        );
+        assert_eq!(
+            position(t.settings_btn_reset()) + 1,
+            position(t.settings_btn_cancel())
+        );
+    }
+
+    #[test]
+    fn the_project_label_follows_whether_an_override_exists() {
+        let t = i18n::t();
+        assert_eq!(
+            button_labels(true)[BUTTON_PROJECT_OVERRIDE],
+            t.settings_btn_remove_project_override()
+        );
     }
 }

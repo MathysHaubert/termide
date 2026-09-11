@@ -24,6 +24,8 @@ pub struct DropdownItem {
     pub is_separator: bool,
     /// Whether this item comes from a project-local .termide/ directory (rendered bold)
     pub is_project: bool,
+    /// Keyboard shortcut for this action, shown dimmed on the right.
+    pub shortcut: Option<String>,
 }
 
 impl DropdownItem {
@@ -34,7 +36,15 @@ impl DropdownItem {
             has_submenu: false,
             is_separator: false,
             is_project: false,
+            shortcut: None,
         }
+    }
+
+    /// Show `shortcut` dimmed on the right of the row. An empty or missing
+    /// shortcut leaves the column blank, so unbound actions stay flush.
+    pub fn with_shortcut(mut self, shortcut: Option<String>) -> Self {
+        self.shortcut = shortcut.filter(|s| !s.is_empty());
+        self
     }
 
     /// Create a separator item (horizontal line, not selectable)
@@ -45,6 +55,7 @@ impl DropdownItem {
             has_submenu: false,
             is_separator: true,
             is_project: false,
+            shortcut: None,
         }
     }
 
@@ -110,8 +121,22 @@ impl<'a> Dropdown<'a> {
             .map(|item| str_display_width(&item.label))
             .max()
             .unwrap_or(0);
-        // 2 (borders) + 1 (space) + label + 3 (" ▶ ") = label + 6
-        (max_label_len + 6).min(40) as u16
+        // Shortcuts share the row with the labels, so the widest of each has
+        // to fit side by side or the two would overlap.
+        let max_shortcut_len = self
+            .items
+            .iter()
+            .filter_map(|item| item.shortcut.as_deref())
+            .map(str_display_width)
+            .max()
+            .unwrap_or(0);
+        let shortcut_column = if max_shortcut_len == 0 {
+            0
+        } else {
+            max_shortcut_len + 2
+        };
+        // 2 (borders) + 1 (space) + label + shortcut + 3 (" ▶ ")
+        (max_label_len + shortcut_column + 6).min(48) as u16
     }
 
     /// Get the height of this dropdown
@@ -242,8 +267,26 @@ impl<'a> Dropdown<'a> {
                 "   "
             };
             let suffix_x = inner.x + inner.width.saturating_sub(3);
+
+            // Shortcut, right-aligned against the suffix and dimmed — it is a
+            // reminder, not a thing to read first. On the highlighted row the
+            // dim colour would sink into the selection background, so the
+            // selected foreground is kept instead.
+            if let Some(shortcut) = &item.shortcut {
+                let shortcut_width = str_display_width(shortcut) as u16;
+                let shortcut_x = suffix_x.saturating_sub(shortcut_width);
+                if shortcut_x > cursor_x {
+                    let style = if is_selected {
+                        base_style
+                    } else {
+                        Style::default().fg(self.theme.disabled).bg(self.theme.bg)
+                    };
+                    render_text_cells(buf, shortcut_x, row_y, shortcut, shortcut_width, style);
+                }
+            }
+
             render_text_cells(buf, suffix_x, row_y, suffix, 3, base_style);
-            let _ = (cursor_x, label_width); // suppress warnings
+            let _ = label_width; // suppress warnings
         }
 
         // Render scrollbar on right edge (inside border)
@@ -338,26 +381,71 @@ pub fn get_shell_items(
         .collect()
 }
 
+/// The shortcut to show beside a menu entry, if the action has one.
+///
+/// Menu entries and keybindings are named independently — the Tools entry
+/// keyed `git_status` is bound as `open_git_status` — so the two are mapped
+/// here rather than assumed to match.
+pub fn menu_shortcut(kb: &termide_config::GlobalKeybindings, key: &str) -> Option<String> {
+    let binding = match key {
+        // Options
+        "edit_preferences" => &kb.open_preferences,
+        "help" => &kb.open_help,
+        "detach_session" => &kb.detach_session,
+        "quit" => &kb.quit,
+        // Sessions
+        "new_session" => &kb.new_session,
+        "switch_session" => &kb.open_sessions,
+        // Tools / Windows
+        "terminal" => &kb.new_terminal,
+        "files" => &kb.new_file_manager,
+        "editor" => &kb.new_editor,
+        "git_status" => &kb.open_git_status,
+        "git_log" => &kb.open_git_log,
+        "journal" => &kb.new_journal,
+        "diagnostics" => &kb.open_diagnostics,
+        "outline" => &kb.open_outline,
+        // Bookmarks
+        BOOKMARK_ADD_CURRENT => &kb.open_bookmark_add,
+        _ => return None,
+    };
+    // Only the primary key: a menu row is a reminder, and "Alt+H, F1" costs
+    // width while saying no more than "Alt+H" does. The full list stays
+    // visible in Settings and in the Help panel.
+    binding
+        .as_ref()
+        .map(|b| b.display().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Get options submenu items.
 ///
 /// `can_detach` says whether this termide is hosted in a detachable session.
 /// When it is not, the Detach entry is left out entirely rather than shown and
 /// refused: a menu item that normally does nothing teaches users to distrust
 /// the menu.
-pub fn get_options_items(can_detach: bool) -> Vec<DropdownItem> {
+pub fn get_options_items(
+    can_detach: bool,
+    kb: Option<&termide_config::GlobalKeybindings>,
+) -> Vec<DropdownItem> {
     let t = i18n::t();
+    let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     let mut items = vec![
         DropdownItem::new(t.preferences_themes(), "themes").with_submenu(),
         DropdownItem::new(t.preferences_language(), "language").with_submenu(),
-        DropdownItem::new(t.preferences_edit(), "edit_preferences"),
-        DropdownItem::new(t.options_help(), "help"),
+        DropdownItem::new(t.preferences_edit(), "edit_preferences")
+            .with_shortcut(shortcut("edit_preferences")),
+        DropdownItem::new(t.options_help(), "help").with_shortcut(shortcut("help")),
     ];
     // Detaching sits next to Quit because it is the other way of leaving the
     // session — the one that keeps it running.
     if can_detach {
-        items.push(DropdownItem::new(t.detach_session(), "detach_session"));
+        items.push(
+            DropdownItem::new(t.detach_session(), "detach_session")
+                .with_shortcut(shortcut("detach_session")),
+        );
     }
-    items.push(DropdownItem::new(t.menu_quit(), "quit"));
+    items.push(DropdownItem::new(t.menu_quit(), "quit").with_shortcut(shortcut("quit")));
     items
 }
 
@@ -836,7 +924,7 @@ mod options_menu_tests {
     use super::*;
 
     fn keys(can_detach: bool) -> Vec<String> {
-        get_options_items(can_detach)
+        get_options_items(can_detach, None)
             .into_iter()
             .map(|i| i.key)
             .collect()
@@ -867,7 +955,7 @@ mod options_menu_tests {
     #[test]
     fn nested_submenu_indices_hold_for_both_shapes() {
         for can_detach in [true, false] {
-            let items = get_options_items(can_detach);
+            let items = get_options_items(can_detach, None);
             assert_eq!(items[OPTIONS_SUBMENU_THEMES].key, "themes");
             assert_eq!(items[OPTIONS_SUBMENU_LANGUAGE].key, "language");
             assert!(items[OPTIONS_SUBMENU_THEMES].has_submenu);
@@ -882,5 +970,90 @@ mod options_menu_tests {
         for can_detach in [true, false] {
             assert_eq!(keys(can_detach).last().unwrap(), "quit");
         }
+    }
+}
+
+#[cfg(test)]
+mod menu_shortcut_tests {
+    use super::*;
+    use termide_config::GlobalKeybindings;
+
+    fn defaults() -> GlobalKeybindings {
+        let mut kb = GlobalKeybindings::default();
+        kb.with_defaults();
+        kb
+    }
+
+    #[test]
+    fn entries_show_the_binding_of_the_action_they_run() {
+        let kb = defaults();
+        assert_eq!(menu_shortcut(&kb, "quit").as_deref(), Some("Alt+Q"));
+        assert_eq!(
+            menu_shortcut(&kb, "detach_session").as_deref(),
+            Some("Alt+D")
+        );
+        // Menu key and binding name differ here, which is the reason for the
+        // explicit mapping.
+        assert_eq!(
+            menu_shortcut(&kb, "git_status").as_deref(),
+            Some("Alt+G"),
+            "the Tools entry `git_status` is bound as `open_git_status`"
+        );
+        assert_eq!(
+            menu_shortcut(&kb, "help").as_deref(),
+            Some("Alt+H"),
+            "only the primary key, not the whole `Alt+H, F1` list"
+        );
+    }
+
+    #[test]
+    fn entries_without_an_action_have_no_shortcut() {
+        let kb = defaults();
+        assert_eq!(menu_shortcut(&kb, "themes"), None);
+        assert_eq!(menu_shortcut(&kb, "language"), None);
+        assert_eq!(menu_shortcut(&kb, "nonexistent"), None);
+    }
+
+    /// Options entries carry their shortcuts through to the dropdown, and the
+    /// submenu entries stay blank.
+    #[test]
+    fn options_items_are_annotated() {
+        let kb = defaults();
+        let items = get_options_items(true, Some(&kb));
+
+        let by_key = |key: &str| {
+            items
+                .iter()
+                .find(|i| i.key == key)
+                .unwrap_or_else(|| panic!("{key} missing"))
+        };
+        assert_eq!(by_key("quit").shortcut.as_deref(), Some("Alt+Q"));
+        assert_eq!(by_key("detach_session").shortcut.as_deref(), Some("Alt+D"));
+        assert_eq!(by_key("themes").shortcut, None);
+
+        // Without keybindings nothing is annotated, and nothing panics.
+        assert!(get_options_items(true, None)
+            .iter()
+            .all(|i| i.shortcut.is_none()));
+    }
+
+    /// The row must be wide enough for the longest label and the longest
+    /// shortcut side by side, or one would be drawn over the other.
+    #[test]
+    fn width_accounts_for_the_shortcut_column() {
+        let theme = termide_theme::Theme::default();
+        let plain_items = [DropdownItem::new("Quit", "quit")];
+        let annotated_items =
+            [DropdownItem::new("Quit", "quit").with_shortcut(Some("Alt+Q".to_string()))];
+
+        let plain = Dropdown::new(&plain_items, 0, 0, 0, &theme);
+        let annotated = Dropdown::new(&annotated_items, 0, 0, 0, &theme);
+
+        assert!(
+            annotated.width() > plain.width(),
+            "annotated {} should exceed plain {}",
+            annotated.width(),
+            plain.width()
+        );
     }
 }

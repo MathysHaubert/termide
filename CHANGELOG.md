@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **`Alt+D` now detaches and `Alt+W` closes a panel.** Both letters were held by the WASD navigation alternatives (`Alt+W/S/A/D` mirroring the arrow keys), which are no longer bound by default. They existed partly as a workaround for terminals that swallow `Alt+<arrow>` — Ghostty rebinds `Option+Left`/`Right` to `ESC b`/`ESC f` out of the box — and that is now handled in the terminal's own configuration, which `doc/*/keybindings.md` explains. Configs that still carry the old defaults verbatim are migrated; a binding you chose yourself is never rewritten, even when it names the same keys.
+- **Menu entries show their shortcut** in a dimmed column on the right, so the keyboard route is discoverable from the menu rather than only from the help panel. Only the primary key is shown; the full list stays in Settings and in Help.
+- **Reset to Defaults moved to the right of the button row**, next to Cancel. It sat between the two Apply buttons, where reaching for "Apply to Project" risked wiping the configuration instead.
 - **The Keybindings group in Settings starts expanded.** It holds nine sections, and collapsing it by default hid every binding behind a step users have no reason to expect.
 
 ### Fixed

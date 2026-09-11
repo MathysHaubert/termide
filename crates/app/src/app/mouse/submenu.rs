@@ -48,7 +48,10 @@ impl App {
         let dropdown_y = 1_u16;
 
         // Calculate Options dropdown dimensions
-        let options_items = get_options_items(self.detach_available());
+        let options_items = get_options_items(
+            self.detach_available(),
+            Some(&self.state.config.general.keybindings),
+        );
         let options_width = options_items
             .iter()
             .map(|i| i.label.width())

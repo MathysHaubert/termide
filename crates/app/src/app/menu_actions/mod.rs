@@ -256,7 +256,11 @@ impl App {
             return self.handle_nested_submenu_key(key);
         }
 
-        let item_count = termide_ui_render::get_options_items(self.detach_available()).len();
+        let item_count = termide_ui_render::get_options_items(
+            self.detach_available(),
+            Some(&self.state.config.general.keybindings),
+        )
+        .len();
 
         match navigate_submenu(&key, &mut self.state.ui.options_submenu, item_count, &[]) {
             SubmenuNavAction::Close => self.state.close_menu(),
@@ -283,7 +287,10 @@ impl App {
         // Dispatch on the item's key, not its position: the Detach entry is
         // only present in a detachable session, so a positional match would
         // fire Quit where Detach was chosen.
-        let items = termide_ui_render::get_options_items(self.detach_available());
+        let items = termide_ui_render::get_options_items(
+            self.detach_available(),
+            Some(&self.state.config.general.keybindings),
+        );
         let Some(key) = items
             .get(self.state.ui.options_submenu.selected)
             .map(|item| item.key.clone())
