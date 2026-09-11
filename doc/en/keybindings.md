@@ -116,8 +116,11 @@ keyboard protocol gets a say, so `Option+Left` arrives as the two bytes
 prefixes (`global:`, `all:`, `unconsumed:`, `performable:`) and key tables
 have no way to scope a binding to one application.
 
-The simplest answer is to use `Alt+A` / `Alt+D`, which are bound to the
-same two actions and are untouched.
+Termide used to ship `Alt+A` / `Alt+D` as alternatives for these two
+actions, which sidestepped the problem without touching Ghostty. They were
+dropped in favour of `Alt+D` for detaching and `Alt+W` for closing a panel —
+the letters users reach for first — so the fix now belongs in Ghostty's
+config.
 
 To get `Option+Left` / `Option+Right` back, clear the bindings in
 `~/.config/ghostty/config`:
@@ -181,8 +184,8 @@ Option+Left   -> Alt+Char('b')      Option+Up   -> Up   (no ALT)
 Option+Right  -> Alt+Char('f')      Option+Down -> Down (no ALT)
 ```
 
-`Alt+A` / `Alt+D` remain the alternatives that need no key-mapping work,
-once Option-as-Meta is on.
+`Option+Up` / `Option+Down` reach termide unchanged once Option-as-Meta is
+on; only the horizontal pair needs the Ghostty unbind above.
 
 ### macOS: `Option+Z` cannot be bound
 
@@ -200,7 +203,7 @@ where `Option+Q` and `Option+T` correctly report `Char('q') + ALT` and
 arrived, and mapping `Ω` back to `z` would misfire for anyone typing Greek.
 
 So an `Alt+Z` binding simply never matches on macOS. Pick another letter — this
-is why `detach_session` defaults to `Alt+J`.
+is why `detach_session` defaults to `Alt+D`.
 
 ### macOS reserves some function keys
 

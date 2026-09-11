@@ -21,7 +21,7 @@ termide --attach              # attach to the most recent session
 termide --attach my-project   # attach to a specific one
 ```
 
-`Alt+J` detaches again, leaving everything running — as does **Options →
+`Alt+D` detaches again, leaving everything running — as does **Options →
 Detach session** in the menu. That entry is shown only in a detachable
 session; in an ordinary one there is nothing to detach from, so it is left
 out rather than shown and refused.
@@ -46,7 +46,7 @@ always_detachable = true
 ```
 
 or tick **Always detachable (Unix)** in Settings (`Alt+P`) → General. Every
-`termide` then starts in a host of its own, and `Alt+J` works everywhere.
+`termide` then starts in a host of its own, and `Alt+D` works everywhere.
 
 Worth knowing before you enable it:
 
@@ -67,7 +67,7 @@ cd ~/src/my-project
 termide --detached
 termide --attach
 # … work, start a build, run an agent in a terminal panel …
-# press Alt+J, or just close the SSH connection
+# press Alt+D, or just close the SSH connection
 ```
 
 Later, from any machine:
@@ -122,9 +122,9 @@ a crash never leaves a phantom entry behind.
 
 | Way | When to use it |
 |-----|----------------|
-| `Alt+J` | The normal way. Rebind it as `detach_session` in the `[general.keybindings]` section. |
+| `Alt+D` | The normal way. Rebind it as `detach_session` in the `[general.keybindings]` section. |
 | Close the terminal | Safe. The session notices and keeps running. |
-| `Ctrl+Z` | Does **not** work, and cannot: termide reads keys in raw mode, so the key never reaches the tty line discipline to become a SIGTSTP. `Alt+J` is the binding that does what you meant. |
+| `Ctrl+Z` | Does **not** work, and cannot: termide reads keys in raw mode, so the key never reaches the tty line discipline to become a SIGTSTP. `Alt+D` is the binding that does what you meant. |
 | `Ctrl+\` three times | Emergency only — if TermIDE itself has stopped responding. Handled by the client, so it works even when the app does not. |
 
 Ending a session is the same as ending any TermIDE: quit it (`Alt+Q`) while

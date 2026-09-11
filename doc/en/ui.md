@@ -248,13 +248,12 @@ The device name is automatically detected from the filesystem:
 | `Alt+H`           | Open help window                           |
 | `Alt+Q`           | Close application                          |
 | `Escape`          | Close panel / Close modal                  |
-| `Alt+X`           | Close panel                                |
+| `Alt+W` / `Alt+X` | Close panel                                |
 | `Alt+Delete`      | Close panel                                |
 | `Alt+Left`        | Go to previous panel group (horizontal)    |
 | `Alt+Right`       | Go to next panel group (horizontal)        |
 | `Alt+Up`          | Go to previous panel in group (vertical)   |
 | `Alt+Down`        | Go to next panel in group (vertical)       |
-| `Alt+W/S/A/D`     | WASD-style panel navigation (alternative to arrows) |
 | `Alt+PgUp`        | Move panel to previous group               |
 | `Alt+PgDn`        | Move panel to next group                   |
 | `Alt+Home`        | Move panel to first group                  |

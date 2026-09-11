@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Detached sessions.** `termide --detached` starts a session that outlives the terminal it was launched from: close the SSH connection, come back hours later, `termide --attach`, and the editors, shells, LSP servers and long-running jobs are where you left them. `--list-sessions` shows what is running. `Alt+D`, or Options → Detach session, lets go of the client without stopping anything. This is what `tmux` and `screen` give, without a second multiplexer between you and termide — no prefix key competing with termide's own bindings, and no second layer to configure for colours or mouse reporting. Unix only: Windows has no `fork`/`setsid` and its ConPTY model needs a different host.
+- **`general.always_detachable`** makes every session detachable without having to remember `--detached` at launch. Off by default, because it changes what closing a terminal means — the session survives it, and so do its language servers and shells. Ignored for `$EDITOR`-style launches: `git commit` waits for the editor to exit, and a detach would tell it the edit finished when it had not.
+- **Enum settings open a dropdown** instead of only cycling. Enter and Left/Right stepped to the next variant, with no way to see what else was on offer or to reach a distant entry — workable for three icon modes, not for twenty-five themes. The list takes keyboard, wheel and click selection.
+
+### Changed
+- **`Alt+D` now detaches and `Alt+W` closes a panel.** Both letters were held by the WASD navigation alternatives (`Alt+W/S/A/D` mirroring the arrow keys), which are no longer bound by default. They existed partly as a workaround for terminals that swallow `Alt+<arrow>` — Ghostty rebinds `Option+Left`/`Right` to `ESC b`/`ESC f` out of the box — and that is now handled in the terminal's own configuration, which `doc/*/keybindings.md` explains. Configs that still carry the old defaults verbatim are migrated; a binding you chose yourself is never rewritten, even when it names the same keys.
+- **The Keybindings group in Settings starts expanded.** It holds nine sections, and collapsing it by default hid every binding behind a step users have no reason to expect.
+
+### Fixed
+- **Clicking a control in Settings now operates it.** A click only moved the cursor; the switch stayed put, which reads as an ignored click. Clicking and pressing Enter now run the same code.
+- **"Reset to Defaults" was greyed out exactly when it had the most to do.** It keyed off whether the modal had unsaved edits — which is the state it opens in — so a user who had configured termide, saved, and reopened Settings found the button dead, while a single unrelated edit lit it up. It now asks whether the config differs from the shipped defaults, which is what the button actually resets.
+- **Saving froze the entire keybinding table into `config.toml`.** Settings you never touched were written out on the first save, because the diff ran against a baseline whose bindings were all unset. A binding frozen that way stops tracking the defaults: a later version that adds or moves one collides with the copy instead of applying it.
+- **The theme could not be changed from Settings on a fresh install.** Cycling looked the current value up in the theme list by position, and the stock config ships `theme = "default"` — a fallback name rather than a theme — so it found nothing and silently did not move.
+
 
 ## [0.33.0] - 2026-09-07
 

@@ -756,6 +756,69 @@ mod keybinding_default_tests {
     /// present and any binding added later is absent. `normalize()` has to
     /// fill the new one in, or the feature it belongs to is unreachable for
     /// every existing user while working fine on a fresh install.
+    /// An older config carries the whole binding table verbatim, including
+    /// defaults this version has replaced. Those frozen copies must give way,
+    /// or the new bindings are unreachable for exactly the users who have been
+    /// running termide the longest — `Alt+D` would still switch panel groups
+    /// rather than detach.
+    #[test]
+    fn superseded_defaults_give_way_to_the_new_ones() {
+        let toml = r#"
+[general.keybindings]
+next_group = ["Alt+Right", "Alt+D"]
+prev_group = ["Alt+Left", "Alt+A"]
+prev_panel = ["Alt+Up", "Alt+W"]
+next_panel = ["Alt+Down", "Alt+S"]
+close_panel = ["Alt+X", "F10"]
+"#;
+        let mut config: Config = toml::from_str(toml).expect("config parses");
+        config.normalize();
+
+        let kb = &config.general.keybindings;
+        assert_eq!(
+            kb.next_group,
+            Some(KeyBinding::Single("Alt+Right".to_string()))
+        );
+        assert_eq!(
+            kb.prev_panel,
+            Some(KeyBinding::Single("Alt+Up".to_string()))
+        );
+        assert_eq!(
+            kb.detach_session,
+            Some(KeyBinding::Single("Alt+D".to_string())),
+            "the freed letter must now reach detach"
+        );
+        assert_eq!(
+            kb.close_panel,
+            Some(KeyBinding::Multiple(vec![
+                "Alt+W".to_string(),
+                "Alt+X".to_string(),
+                "F10".to_string()
+            ]))
+        );
+    }
+
+    /// A binding the user chose themselves is never rewritten, even when it
+    /// mentions the same keys.
+    #[test]
+    fn a_deliberate_binding_survives_the_migration() {
+        let toml = r#"
+[general.keybindings]
+next_group = ["Alt+D"]
+prev_panel = "Alt+W"
+"#;
+        let mut config: Config = toml::from_str(toml).expect("config parses");
+        config.normalize();
+
+        let kb = &config.general.keybindings;
+        assert_eq!(
+            kb.next_group,
+            Some(KeyBinding::Multiple(vec!["Alt+D".to_string()])),
+            "only a verbatim copy of the old default is dropped"
+        );
+        assert_eq!(kb.prev_panel, Some(KeyBinding::Single("Alt+W".to_string())));
+    }
+
     #[test]
     fn a_binding_added_later_is_filled_into_an_older_saved_config() {
         let toml = r#"
@@ -780,7 +843,7 @@ next_group = ["Alt+Right", "Alt+D"]
             .keybindings
             .detach_session
             .expect("normalize fills in the new binding");
-        assert_eq!(binding, KeyBinding::Single("Alt+J".to_string()));
+        assert_eq!(binding, KeyBinding::Single("Alt+D".to_string()));
 
         // Bindings the file did set must survive untouched.
         assert_eq!(

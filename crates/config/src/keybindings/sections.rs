@@ -341,8 +341,42 @@ pub struct TerminalKeybindings {
 // =============================================================================
 
 impl GlobalKeybindings {
+    /// Drop bindings that are verbatim copies of defaults this version no
+    /// longer ships, so the new default can take their place.
+    ///
+    /// Needed because older versions wrote the whole binding table into
+    /// config.toml on the first save (see `Config::save_global`). Those frozen
+    /// copies outrank any new default, so `Alt+D` would keep switching panel
+    /// groups instead of detaching, and `Alt+W` would keep moving between
+    /// panels instead of closing one.
+    ///
+    /// Only an exact match is dropped. A user who deliberately bound
+    /// `next_group` to something of their own — even something containing the
+    /// old keys — keeps it.
+    fn drop_superseded_defaults(&mut self) {
+        fn drop_if_exactly(field: &mut Option<KeyBinding>, legacy: &[&str]) {
+            let matches_legacy = match field {
+                Some(KeyBinding::Multiple(keys)) => {
+                    keys.len() == legacy.len() && keys.iter().zip(legacy).all(|(k, l)| k == l)
+                }
+                _ => false,
+            };
+            if matches_legacy {
+                *field = None;
+            }
+        }
+
+        drop_if_exactly(&mut self.prev_group, &["Alt+Left", "Alt+A"]);
+        drop_if_exactly(&mut self.next_group, &["Alt+Right", "Alt+D"]);
+        drop_if_exactly(&mut self.prev_panel, &["Alt+Up", "Alt+W"]);
+        drop_if_exactly(&mut self.next_panel, &["Alt+Down", "Alt+S"]);
+        drop_if_exactly(&mut self.close_panel, &["Alt+X", "F10"]);
+    }
+
     /// Fill None values with default keybindings
     pub fn with_defaults(&mut self) {
+        self.drop_superseded_defaults();
+
         macro_rules! set_default {
             ($field:ident, $default:expr) => {
                 if self.$field.is_none() {
@@ -409,14 +443,20 @@ impl GlobalKeybindings {
         // Navigation (with WASD alternatives)
         set_default_multiple!(toggle_menu, "Alt+M", "F9");
         set_default_multiple!(open_help, "Alt+H", "F1");
-        set_default_multiple!(close_panel, "Alt+X", "F10");
+        set_default_multiple!(close_panel, "Alt+W", "Alt+X", "F10");
         set_default_multiple!(toggle_stack, "Alt+Backspace", "F11");
         set_default_multiple!(panel_action_menu, "Alt+K", "Shift+F10");
 
-        set_default_multiple!(prev_group, "Alt+Left", "Alt+A");
-        set_default_multiple!(next_group, "Alt+Right", "Alt+D");
-        set_default_multiple!(prev_panel, "Alt+Up", "Alt+W");
-        set_default_multiple!(next_panel, "Alt+Down", "Alt+S");
+        // Arrows only. The WASD alternatives used to double as a workaround
+        // for terminals that swallow `Alt+<arrow>` — Ghostty rebinds
+        // `Option+Left`/`Right` to `ESC b`/`ESC f` by default — but they held
+        // the two letters users reach for first: `D` for detach, as in tmux
+        // and screen, and `W` for closing, as everywhere else. Affected
+        // terminals are configured directly instead; see doc/*/keybindings.md.
+        set_default!(prev_group, "Alt+Left");
+        set_default!(next_group, "Alt+Right");
+        set_default!(prev_panel, "Alt+Up");
+        set_default!(next_panel, "Alt+Down");
         set_default!(goto_panel_1, "Alt+1");
         set_default!(goto_panel_2, "Alt+2");
         set_default!(goto_panel_3, "Alt+3");
@@ -431,14 +471,11 @@ impl GlobalKeybindings {
         set_default!(quit, "Alt+Q");
         // Universal tier on purpose: detaching matters most over SSH, where
         // the terminal is least likely to speak the Kitty protocol that an
-        // `Alt+Shift+<letter>` default would require.
-        //
-        // The mnemonic letters are all taken — `D` by next_group, `S` by
-        // next_panel — and `Alt+Z` is unusable on macOS: `Option+Z` is the one
+        // `Alt+Shift+<letter>` default would require. `Alt+Z` would be the
+        // obvious mnemonic and is unusable on macOS: `Option+Z` is the one
         // combination on the US layout that composes an *uppercase* glyph
-        // (`Ω`), which the terminal then reports as `Shift+Ω` with no ALT bit
-        // at all. `J` is free in every section and arrives intact.
-        set_default!(detach_session, "Alt+J");
+        // (`Ω`), reported as `Shift+Ω` with no ALT bit at all.
+        set_default!(detach_session, "Alt+D");
         set_default!(open_command_palette, "Ctrl+P");
 
         // Clipboard (routed to the focused panel)
