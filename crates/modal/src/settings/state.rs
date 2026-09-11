@@ -532,3 +532,36 @@ mod reset_availability_tests {
         assert!(!modal.reset_available);
     }
 }
+
+#[cfg(test)]
+mod reset_content_tests {
+    use super::*;
+    use crate::settings::kb::{get_kb_value, kb_binding_names};
+    use crate::settings::BUTTON_RESET;
+
+    /// Reset used to install a raw `Config::default()`, whose keybindings are
+    /// all unset — so the Keybindings tab went blank and stayed blank until
+    /// the modal was reopened, making it look as though reset had wiped them.
+    #[test]
+    fn reset_leaves_the_keybinding_list_populated() {
+        let mut modal = SettingsModal::new(Config::default(), false);
+        modal.config.general.keybindings.quit =
+            Some(termide_config::KeyBinding::Single("Alt+F4".to_string()));
+        modal.mark_dirty();
+
+        modal.selected_button = BUTTON_RESET;
+        modal.execute_selected_button().unwrap();
+
+        let names = kb_binding_names(0);
+        let populated = names
+            .iter()
+            .filter(|name| !get_kb_value(&modal.config, 0, name).is_empty())
+            .count();
+        assert!(
+            populated > 20,
+            "defaults should be visible straight away, got {populated} of {}",
+            names.len()
+        );
+        assert_eq!(get_kb_value(&modal.config, 0, "quit"), "Alt+Q");
+    }
+}

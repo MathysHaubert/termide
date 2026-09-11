@@ -491,7 +491,12 @@ impl SettingsModal {
                 if !self.reset_available {
                     return Ok(None);
                 }
-                self.config = Config::default();
+                // `Config::default()` derives its keybindings, so they are
+                // all unset there; without normalising, the Keybindings tab
+                // would show an empty list until the modal is reopened.
+                let mut defaults = Config::default();
+                defaults.normalize();
+                self.config = defaults;
                 self.mark_dirty();
                 self.field_cursor = 0;
                 self.content_scroll = 0;

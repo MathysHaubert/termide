@@ -18,9 +18,37 @@ use super::fields::{
 };
 use super::kb::{get_kb_value, kb_binding_names, KB_SECTIONS};
 use super::{
-    button_labels, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab, SidebarRow,
-    BUTTON_RESET, ENUM_PICKER_MAX_VISIBLE,
+    button_labels, button_spans, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab,
+    SidebarRow, BUTTON_RESET, ENUM_PICKER_MAX_VISIBLE,
 };
+
+/// Width reserved for field labels, and therefore where values line up.
+///
+/// Measured from the labels actually in use rather than fixed at 32 columns:
+/// a translated label — "Всегда отсоединяемая сессия (Unix)" is 34 — would
+/// otherwise be truncated or run under its own value. Capped at half the
+/// content width so a long label cannot squeeze the values out.
+fn label_column_width(tab: SettingsTab, area_width: u16) -> usize {
+    const MIN: usize = 24;
+    /// Blank columns between the longest label and the values, so that a label
+    /// filling the column does not end up touching its own value.
+    const GAP: usize = 2;
+
+    let widest = fields_for_tab(tab)
+        .iter()
+        .map(|d| d.label.width())
+        .max()
+        .unwrap_or(MIN);
+
+    // Capped by what the values need, not by an arbitrary half: with a hard
+    // half-width cap the column landed exactly on the longest label at the
+    // sizes this modal actually opens at, leaving no gap at all.
+    const MIN_VALUE_WIDTH: usize = 12;
+    let cap = (area_width as usize)
+        .saturating_sub(MIN_VALUE_WIDTH)
+        .max(MIN);
+    (widest + GAP).clamp(MIN, cap)
+}
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, safe for UTF-8 slicing.
 fn truncate_str(s: &str, max_chars: usize) -> &str {
@@ -133,13 +161,11 @@ impl SettingsModal {
             return;
         }
 
-        let spacing = 4;
         let labels = button_labels(self.project_override_active);
-        let total_label_len: usize = labels.iter().map(|l| l.len() + 4).sum::<usize>() // "[ label ]"
-            + spacing * (labels.len().saturating_sub(1));
-        let mut x = area.x as usize + (area.width as usize).saturating_sub(total_label_len) / 2;
+        let spans = button_spans(area.x, area.width, &labels);
 
         for (i, label) in labels.iter().enumerate() {
+            let mut x = spans[i].0;
             let is_selected = self.focus == FocusArea::Buttons && self.selected_button == i;
             let style = if i == BUTTON_RESET && !self.reset_available && !is_selected {
                 Style::default().fg(theme.disabled)
@@ -151,16 +177,6 @@ impl SettingsModal {
                 if x < (area.x as usize) + area.width as usize {
                     buf[(x as u16, by)].set_char(ch).set_style(style);
                     x += 1;
-                }
-            }
-            if i < labels.len() - 1 {
-                for _ in 0..spacing {
-                    if x < (area.x as usize) + area.width as usize {
-                        buf[(x as u16, by)]
-                            .set_char(' ')
-                            .set_style(Style::default());
-                        x += 1;
-                    }
                 }
             }
         }
@@ -224,7 +240,7 @@ impl SettingsModal {
         self.clamp_scroll(visible_rows);
 
         let fields = fields_for_tab(self.active_tab);
-        let label_width = 32;
+        let label_width = label_column_width(self.active_tab, area.width);
         let value_x = area.x as usize + 2 + label_width;
         let max_value_width = (area.x as usize + area.width as usize).saturating_sub(value_x);
 
@@ -579,8 +595,8 @@ impl SettingsModal {
         };
         // Aligned with the value column the form uses, so the list drops out
         // of the value it replaces rather than out of the label.
-        const VALUE_COLUMN: u16 = 2 + 32;
-        let x = inner.x + VALUE_COLUMN.min(inner.width.saturating_sub(width));
+        let value_column = 2 + label_column_width(self.active_tab, inner.width) as u16;
+        let x = inner.x + value_column.min(inner.width.saturating_sub(width));
         let rect = Rect::new(x, y, width, height);
 
         Clear.render(rect, buf);
@@ -618,6 +634,65 @@ impl SettingsModal {
 
         if let Some(picker) = self.enum_picker.as_mut() {
             picker.area = Some(rect);
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_column_tests {
+    use super::*;
+
+    /// Values must not butt up against the longest label — "Resource monitor
+    /// interval (ms)" is 31 columns and used to render as
+    /// `…interval (ms)2000` once the column was measured rather than fixed.
+    #[test]
+    fn the_longest_label_still_leaves_a_gap() {
+        for tab in [
+            SettingsTab::General,
+            SettingsTab::Editor,
+            SettingsTab::FileManager,
+            SettingsTab::Terminal,
+            SettingsTab::Lsp,
+            SettingsTab::Logging,
+            SettingsTab::Vfs,
+        ] {
+            let width = label_column_width(tab, 100);
+            let widest = fields_for_tab(tab)
+                .iter()
+                .map(|d| d.label.width())
+                .max()
+                .unwrap_or(0);
+            assert!(
+                width > widest,
+                "{tab:?}: column {width} must exceed the longest label {widest}"
+            );
+        }
+    }
+
+    /// A narrow modal must not let labels eat the values.
+    #[test]
+    fn the_column_is_capped_on_narrow_layouts() {
+        let width = label_column_width(SettingsTab::General, 40);
+        assert!(width <= 40 - 12, "got {width}");
+    }
+
+    /// At the widths this modal actually opens at, the gap must survive the
+    /// cap — this is what failed in practice while the unit test passed at
+    /// width 100.
+    #[test]
+    fn the_gap_survives_realistic_widths() {
+        let widest = fields_for_tab(SettingsTab::General)
+            .iter()
+            .map(|d| d.label.width())
+            .max()
+            .unwrap_or(0);
+
+        for area in [56u16, 60, 62, 70, 80, 100] {
+            let width = label_column_width(SettingsTab::General, area);
+            assert!(
+                width > widest,
+                "area {area}: column {width} leaves no gap after a {widest}-column label"
+            );
         }
     }
 }

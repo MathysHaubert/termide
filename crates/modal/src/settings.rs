@@ -11,6 +11,7 @@ use ratatui::{
 use termide_config::Config;
 use termide_i18n as i18n;
 use termide_theme::Theme;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{Modal, ModalResult};
 
@@ -252,6 +253,28 @@ pub struct SettingsModal {
 // Modal trait implementation
 // ---------------------------------------------------------------------------
 
+/// Column span of each button, as `[ label ]` boxes centred in `area`.
+///
+/// Shared by the renderer and by hit-testing. They used to compute this
+/// separately, both with `label.len()` — which counts *bytes* while the
+/// renderer draws *characters*. On a localised build every label past the
+/// first was offset by the difference, so clicking a button either did
+/// nothing or hit its neighbour.
+fn button_spans(area_x: u16, area_width: u16, labels: &[String]) -> Vec<(usize, usize)> {
+    const SPACING: usize = 4;
+
+    let box_widths: Vec<usize> = labels.iter().map(|l| l.width() + 4).collect();
+    let total: usize = box_widths.iter().sum::<usize>() + SPACING * labels.len().saturating_sub(1);
+
+    let mut x = area_x as usize + (area_width as usize).saturating_sub(total) / 2;
+    let mut spans = Vec::with_capacity(labels.len());
+    for width in box_widths {
+        spans.push((x, x + width));
+        x += width + SPACING;
+    }
+    spans
+}
+
 /// State of an open enum dropdown.
 #[derive(Debug, Clone)]
 pub(super) struct EnumPicker {
@@ -452,25 +475,70 @@ impl Modal for SettingsModal {
         if let Some(btn_area) = self.last_buttons_area {
             if btn_area.contains((mouse.column, mouse.row).into()) {
                 self.focus = FocusArea::Buttons;
-                // Calculate button positions to determine which one was clicked
-                let spacing = 4;
                 let labels = button_labels(self.project_override_active);
-                let total_label_len: usize = labels.iter().map(|l| l.len() + 4).sum::<usize>()
-                    + spacing * (labels.len().saturating_sub(1));
-                let mut x = btn_area.x as usize
-                    + (btn_area.width as usize).saturating_sub(total_label_len) / 2;
-                for (i, label) in labels.iter().enumerate() {
-                    let btn_end = x + label.len() + 4; // "[ label ]"
-                    if (mouse.column as usize) >= x && (mouse.column as usize) < btn_end {
+                for (i, (start, end)) in button_spans(btn_area.x, btn_area.width, &labels)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let column = mouse.column as usize;
+                    if column >= start && column < end {
                         self.selected_button = i;
                         return self.execute_selected_button();
                     }
-                    x = btn_end + spacing;
                 }
                 return Ok(None);
             }
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod button_layout_tests {
+    use super::*;
+
+    /// Renderer and hit-testing derived button positions separately, both from
+    /// `label.len()` — bytes, where the renderer draws characters. On a
+    /// localised build every button past the first sat some columns away from
+    /// where clicks were expected, so "Сбросить" could not be clicked at all.
+    #[test]
+    fn spans_follow_display_width_not_byte_length() {
+        let labels: Vec<String> = ["Применить", "Сбросить", "Отмена"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let spans = button_spans(0, 80, &labels);
+        assert_eq!(spans.len(), labels.len());
+
+        for (span, label) in spans.iter().zip(&labels) {
+            assert_eq!(
+                span.1 - span.0,
+                label.width() + 4,
+                "a box is the label plus \"[ \" and \" ]\""
+            );
+        }
+
+        // Boxes keep their order and never overlap.
+        for pair in spans.windows(2) {
+            assert!(pair[0].1 <= pair[1].0);
+        }
+    }
+
+    /// The centre of every button must hit that button.
+    #[test]
+    fn clicking_the_middle_of_a_button_selects_it() {
+        let labels = button_labels(false);
+        let spans = button_spans(3, 100, &labels);
+
+        for (index, (start, end)) in spans.iter().enumerate() {
+            let centre = (start + end) / 2;
+            let hit = spans
+                .iter()
+                .position(|(s, e)| centre >= *s && centre < *e)
+                .expect("the centre lands inside some button");
+            assert_eq!(hit, index);
+        }
     }
 }
