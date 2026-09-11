@@ -32,6 +32,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 | Background File Operations | ✓ | plugin | ✗ | ✗ |
 | Git Integration | ✓ | plugin | ✗ | ✗ |
 | Sessions | ✓ | plugin | ✗ | ✗ |
+| Detachable Sessions | ✓ | ✗ | ✗ | ✗ |
 | Multi-panel Layout | ✓ | plugin | ✗ | ✗ |
 | Bookmarks | ✓ | plugin | ✗ | ✗ |
 | Resource Monitor | ✓ | ✗ | ✗ | ✗ |
@@ -58,6 +59,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **Custom Themes** - Create your own themes in TOML format
 - **15 UI Languages** - Bengali, Chinese, English, French, German, Hindi, Indonesian, Japanese, Korean, Portuguese, Russian, Spanish, Thai, Turkish, Vietnamese (missing keys transparently fall back to English)
 - **Session Management** - Auto-save and restore panel layouts
+- **Detached Sessions** - `termide --detached` keeps the whole session — editors, shells, LSP servers, running jobs — alive after the terminal closes; `termide --attach` picks it up again from any terminal, at any size (Unix only)
 - **System Monitor** - Real-time CPU, RAM, network I/O in menu bar and disk usage in status bar; click any indicator to open a detail modal (top processes by CPU/RAM, top processes by network connections with listening ports); repeated click on the same indicator closes the modal (toggle)
 - **Search & Replace** - Live preview, match counter, regex support
 - **Custom Scripts** - Run user-defined scripts from the Scripts menu (supports `.bg.` for background, `.report.` for scrollable modal output with success/failure indicator)
@@ -334,6 +336,10 @@ Options:
   --no-lsp             Disable LSP language servers
   --config <FILE>      Use custom config file path
   --diagnostics        Run pre-flight diagnostics and exit (no UI)
+  --detached           Start a detached session that survives the terminal
+                       closing, and print its id (Unix only)
+  --attach [<ID>]      Attach to a detached session, most recent if omitted
+  --list-sessions      List detached sessions and exit
   -h, --help           Print help
   -V, --version        Print version
 ```

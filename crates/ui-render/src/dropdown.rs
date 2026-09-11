@@ -338,27 +338,37 @@ pub fn get_shell_items(
         .collect()
 }
 
-/// Get options submenu items
-pub fn get_options_items() -> Vec<DropdownItem> {
+/// Get options submenu items.
+///
+/// `can_detach` says whether this termide is hosted in a detachable session.
+/// When it is not, the Detach entry is left out entirely rather than shown and
+/// refused: a menu item that normally does nothing teaches users to distrust
+/// the menu.
+pub fn get_options_items(can_detach: bool) -> Vec<DropdownItem> {
     let t = i18n::t();
-    vec![
+    let mut items = vec![
         DropdownItem::new(t.preferences_themes(), "themes").with_submenu(),
         DropdownItem::new(t.preferences_language(), "language").with_submenu(),
         DropdownItem::new(t.preferences_edit(), "edit_preferences"),
         DropdownItem::new(t.options_help(), "help"),
-        DropdownItem::new(t.menu_quit(), "quit"),
-    ]
+    ];
+    // Detaching sits next to Quit because it is the other way of leaving the
+    // session — the one that keeps it running.
+    if can_detach {
+        items.push(DropdownItem::new(t.detach_session(), "detach_session"));
+    }
+    items.push(DropdownItem::new(t.menu_quit(), "quit"));
+    items
 }
 
-/// Number of items in Options submenu
-pub const OPTIONS_SUBMENU_ITEM_COUNT: usize = 5;
-
-/// Index of Options submenu items
+/// Index of the two Options entries that open a nested submenu.
+///
+/// Only these two are addressed by position, because the nested-submenu state
+/// is keyed on it. Everything else is dispatched by `DropdownItem::key`, so
+/// that a list whose length varies cannot silently map a click to the wrong
+/// action.
 pub const OPTIONS_SUBMENU_THEMES: usize = 0;
 pub const OPTIONS_SUBMENU_LANGUAGE: usize = 1;
-pub const OPTIONS_SUBMENU_PREFERENCES: usize = 2;
-pub const OPTIONS_SUBMENU_HELP: usize = 3;
-pub const OPTIONS_SUBMENU_QUIT: usize = 4;
 
 /// Special command ID for "Add command..." menu item
 pub const COMMAND_ADD_NEW: &str = "__add_command__";
@@ -818,5 +828,59 @@ mod operation_menu_tests {
     fn command_operation_offers_only_cancel() {
         assert_eq!(keys(false, true), vec![OPERATION_ACTION_CANCEL]);
         assert_eq!(keys(true, true), vec![OPERATION_ACTION_CANCEL]);
+    }
+}
+
+#[cfg(test)]
+mod options_menu_tests {
+    use super::*;
+
+    fn keys(can_detach: bool) -> Vec<String> {
+        get_options_items(can_detach)
+            .into_iter()
+            .map(|i| i.key)
+            .collect()
+    }
+
+    #[test]
+    fn detach_is_offered_only_when_the_session_can_detach() {
+        assert_eq!(
+            keys(true),
+            vec![
+                "themes",
+                "language",
+                "edit_preferences",
+                "help",
+                "detach_session",
+                "quit"
+            ]
+        );
+        assert_eq!(
+            keys(false),
+            vec!["themes", "language", "edit_preferences", "help", "quit"]
+        );
+    }
+
+    /// The nested submenus (Themes, Language) are the only entries addressed
+    /// by position, so those two indices must stay put whichever shape the
+    /// list takes.
+    #[test]
+    fn nested_submenu_indices_hold_for_both_shapes() {
+        for can_detach in [true, false] {
+            let items = get_options_items(can_detach);
+            assert_eq!(items[OPTIONS_SUBMENU_THEMES].key, "themes");
+            assert_eq!(items[OPTIONS_SUBMENU_LANGUAGE].key, "language");
+            assert!(items[OPTIONS_SUBMENU_THEMES].has_submenu);
+            assert!(items[OPTIONS_SUBMENU_LANGUAGE].has_submenu);
+        }
+    }
+
+    /// Quit is last in both shapes: detaching is an alternative to quitting,
+    /// not a replacement, and muscle memory goes to the bottom entry.
+    #[test]
+    fn quit_stays_last() {
+        for can_detach in [true, false] {
+            assert_eq!(keys(can_detach).last().unwrap(), "quit");
+        }
     }
 }

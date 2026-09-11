@@ -522,6 +522,12 @@ pub trait Translation: Send + Sync {
     fn session_created(&self) -> &str;
     fn session_moved(&self) -> &str;
 
+    // Detached sessions
+    fn detach_session(&self) -> &str;
+    fn detach_not_detached_session(&self) -> &str;
+    fn detach_failed(&self) -> &str;
+    fn help_desc_detach_session(&self) -> &str;
+
     // Directory picker
     fn directory_picker_create(&self) -> &str;
     fn directory_picker_move(&self) -> &str;

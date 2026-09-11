@@ -48,7 +48,7 @@ impl App {
         let dropdown_y = 1_u16;
 
         // Calculate Options dropdown dimensions
-        let options_items = get_options_items();
+        let options_items = get_options_items(self.detach_available());
         let options_width = options_items
             .iter()
             .map(|i| i.label.width())
@@ -150,39 +150,38 @@ impl App {
             let item_index = item_y as usize;
             if item_index < options_items.len() {
                 self.state.ui.options_submenu.selected = item_index;
-                match item_index {
-                    0 => {
-                        // Themes - toggle nested submenu
+                // Themes and Language toggle their nested dropdown on a second
+                // click, which the keyboard path has no equivalent for; every
+                // other entry is dispatched by `execute_submenu_action` so that
+                // clicking and pressing Enter can never disagree about what an
+                // item does.
+                match options_items[item_index].key.as_str() {
+                    "themes" => {
                         if self.state.ui.nested_submenu.open
                             && self.state.ui.options_submenu.selected == 0
                         {
-                            // Already open - close it and restore theme
                             if let Some(original_name) = self.state.ui.theme_preview_original.take()
                             {
                                 self.state.theme = Theme::get_by_name(&original_name);
                             }
                             self.state.close_nested_submenu();
                         } else {
-                            // Open nested submenu with live preview
                             let theme_names = Theme::all_theme_names();
                             let current_idx = theme_names
                                 .iter()
                                 .position(|n| n == self.state.theme.name)
                                 .unwrap_or(0);
-                            // Save current theme for restoration on cancel
                             self.state.ui.theme_preview_original =
                                 Some(self.state.theme.name.to_string());
                             self.state.open_nested_submenu(current_idx);
                         }
                     }
-                    1 => {
-                        // Language - toggle nested submenu
+                    "language" => {
                         use termide_i18n as i18n;
                         use termide_ui_render::find_current_language_index;
                         if self.state.ui.nested_submenu.open
                             && self.state.ui.options_submenu.selected == 1
                         {
-                            // Already open - close it and restore language
                             if let Some(original_lang) =
                                 self.state.ui.language_preview_original.take()
                             {
@@ -190,44 +189,13 @@ impl App {
                             }
                             self.state.close_nested_submenu();
                         } else {
-                            // Open nested submenu with live preview
                             let current_idx = find_current_language_index();
-                            // Save current language for restoration on cancel
                             self.state.ui.language_preview_original =
                                 Some(i18n::current_language());
                             self.state.open_nested_submenu(current_idx);
                         }
                     }
-                    2 => {
-                        // Settings
-                        self.state.close_menu();
-                        self.open_settings_modal();
-                    }
-                    3 => {
-                        // Help
-                        self.state.close_menu();
-                        self.handle_new_help()?;
-                    }
-                    4 => {
-                        // Quit
-                        self.state.close_menu();
-                        if self.has_panels_requiring_confirmation() {
-                            use crate::state::{ActiveModal, PendingAction};
-                            use termide_i18n as i18n;
-                            let t = i18n::t();
-                            let modal = termide_modal::ConfirmModal::new(
-                                t.app_quit_title(),
-                                t.app_quit_confirm(),
-                            );
-                            self.state.set_pending_action(
-                                PendingAction::QuitApplication,
-                                ActiveModal::Confirm(Box::new(modal)),
-                            );
-                        } else {
-                            self.state.quit();
-                        }
-                    }
-                    _ => {}
+                    _ => self.execute_submenu_action()?,
                 }
                 return Ok(true);
             }

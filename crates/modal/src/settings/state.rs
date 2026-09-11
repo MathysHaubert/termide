@@ -418,3 +418,49 @@ impl SettingsModal {
         }
     }
 }
+
+#[cfg(test)]
+mod content_row_tests {
+    use super::*;
+    use crate::settings::fields::fields_for_tab;
+
+    /// `content_rows` lists the fields to render by hand, one `Field(i)` per
+    /// entry, while `fields_for_tab` declares what exists. Nothing connects
+    /// them, so a setting added to the descriptor list but not to the rows is
+    /// simply invisible in the modal — configurable only by editing the TOML.
+    /// This test is what notices.
+    #[test]
+    fn every_declared_field_is_rendered_somewhere() {
+        let tabs = [
+            SettingsTab::General,
+            SettingsTab::Editor,
+            SettingsTab::FileManager,
+            SettingsTab::Terminal,
+            SettingsTab::Lsp,
+            SettingsTab::Logging,
+            SettingsTab::Vfs,
+        ];
+
+        for tab in tabs {
+            let mut modal = SettingsModal::new(Config::default(), false);
+            modal.active_tab = tab;
+
+            let declared = fields_for_tab(tab).len();
+            let rendered: Vec<usize> = modal
+                .content_rows()
+                .into_iter()
+                .filter_map(|row| match row {
+                    ContentRow::Field(i) => Some(i),
+                    _ => None,
+                })
+                .collect();
+
+            for index in 0..declared {
+                assert!(
+                    rendered.contains(&index),
+                    "{tab:?}: field {index} is declared but never rendered"
+                );
+            }
+        }
+    }
+}

@@ -4833,6 +4833,7 @@ dependencies = [
  "termide-app",
  "termide-config",
  "termide-core",
+ "termide-detach",
  "termide-git",
  "termide-highlight",
  "termide-i18n",
@@ -4864,6 +4865,7 @@ dependencies = [
  "termide-clipboard",
  "termide-config",
  "termide-core",
+ "termide-detach",
  "termide-fetch",
  "termide-file-ops",
  "termide-git",
@@ -4969,6 +4971,21 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "termide-detach"
+version = "0.33.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "dirs",
+ "libc",
+ "log",
+ "nix 0.29.0",
+ "portable-pty",
+ "tempfile",
+ "termide-core",
 ]
 
 [[package]]

@@ -78,6 +78,9 @@ pub struct App {
     /// with explicit file arguments ($EDITOR mode), so editing a commit
     /// message or crontab never restores or overwrites the project session.
     persist_session: bool,
+    /// Terminal capabilities this process was started with. Kept so that a
+    /// reattach can re-enter exactly the modes startup entered.
+    keyboard_caps: termide_keyboard::KeyboardCaps,
     /// Focus signature (group index, active panel name) from the previous
     /// input, used to detect when focus moves to a git panel so it can be
     /// refreshed automatically (no manual Ctrl+R).
@@ -88,6 +91,7 @@ impl App {
     /// Create a new application
     pub fn new() -> Self {
         let mut state = AppState::new();
+        state.detach_available = Self::detect_detach_available();
 
         // Get project root from current working directory
         let project_root = std::env::current_dir().unwrap_or_else(|_| {
@@ -154,6 +158,7 @@ impl App {
             title_click_tracker: ClickTracker::new(),
             command_palette_actions: None,
             normalizer: termide_keyboard::KeyNormalizer::default(),
+            keyboard_caps: termide_keyboard::KeyboardCaps::default(),
             persist_session: true,
             last_focus_sig: None,
         }
@@ -176,6 +181,7 @@ impl App {
         let theme = Theme::get_by_name(&config.general.theme);
         let mut state = AppState::with_config_and_theme(config, global_baseline, theme);
         state.update_terminal_size(width, height);
+        state.detach_available = Self::detect_detach_available();
 
         // Get project root from current working directory
         let project_root = std::env::current_dir()
@@ -239,9 +245,101 @@ impl App {
             title_click_tracker: ClickTracker::new(),
             command_palette_actions: None,
             normalizer: termide_keyboard::KeyNormalizer::new(caps),
+            keyboard_caps: caps,
             persist_session: true,
             last_focus_sig: None,
         }
+    }
+
+    /// Re-establish the terminal after a client attached to this detached
+    /// session.
+    ///
+    /// The client's terminal is a different terminal than the one this process
+    /// started on: it has none of the modes switched on, its screen is blank,
+    /// and it may not even be the same kind of terminal. Everything that was
+    /// negotiated at startup is negotiated again here, against the terminal
+    /// that is actually looking at the session now.
+    #[cfg(unix)]
+    pub(super) fn handle_reattach(&mut self) {
+        // The client reports what its terminal is and what it can do. Both
+        // have to be adopted before the modes are re-entered: `$TERM` drives
+        // colour detection and every shell spawned from here on, and the
+        // keyboard capabilities decide whether the Kitty protocol is pushed —
+        // without which no `Alt+<letter>` binding fires on macOS.
+        if let Some(client) = termide_detach::adopt_client_terminal() {
+            let caps = termide_core::refresh_terminal_caps();
+            termide_theme::set_ansi16_mode(caps.needs_color_adaptation());
+
+            self.keyboard_caps = termide_keyboard::KeyboardCaps::from_probe(
+                client.kitty,
+                self.state.config.general.report_all_keys,
+                client.via_ssh,
+            );
+            self.normalizer = termide_keyboard::KeyNormalizer::new(self.keyboard_caps);
+            // Matching depends on the capabilities, so the cached table built
+            // against the old ones has to go.
+            self.state.cache.hotkey_table = None;
+
+            log::info!(
+                "Reattached from a {} terminal (kitty: {}, ssh: {})",
+                client.term,
+                client.kitty,
+                client.via_ssh
+            );
+        }
+
+        if let Err(e) = termide_core::enter_terminal_modes(&self.keyboard_caps, None) {
+            log::warn!("Failed to re-enter terminal modes after reattach: {e}");
+        }
+        self.update_terminal_title();
+        self.state.needs_redraw = true;
+    }
+
+    /// Whether this termide can be detached from — that is, whether it is
+    /// hosted in a detachable session at all.
+    ///
+    /// A process already bound to the terminal's PTY cannot be moved into
+    /// another one, so detaching is only ever possible when the host was
+    /// created at startup (`--detached`, or `general.always_detachable`).
+    pub(super) fn detach_available(&self) -> bool {
+        self.state.detach_available
+    }
+
+    /// Probe the environment once, at construction.
+    fn detect_detach_available() -> bool {
+        #[cfg(unix)]
+        {
+            termide_detach::hosted_session_id().is_some()
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
+    /// Detach this session from its client, leaving everything running.
+    ///
+    /// Reports through the status line rather than failing: outside a detached
+    /// session the action is meaningless, and the user needs to be told that
+    /// rather than left wondering why nothing happened.
+    pub(super) fn handle_detach_session(&mut self) {
+        let t = termide_i18n::t();
+
+        #[cfg(unix)]
+        match termide_detach::request_detach_from_host() {
+            Ok(true) => {}
+            Ok(false) => self
+                .state
+                .set_info(t.detach_not_detached_session().to_string()),
+            Err(e) => {
+                log::warn!("Detach request failed: {e:#}");
+                self.state.set_error(t.detach_failed().to_string());
+            }
+        }
+
+        #[cfg(not(unix))]
+        self.state
+            .set_info(t.detach_not_detached_session().to_string());
     }
 
     /// Enable or disable session persistence. Disabled for `$EDITOR`-style
@@ -643,7 +741,19 @@ impl App {
                     self.handle_coalesced_scroll(event, delta)?;
                     self.state.needs_redraw = true;
                 }
-                Event::Tick => self.poll_background(),
+                Event::Tick => {
+                    // A client attaching to a detached session raises a flag
+                    // from a signal handler; this is where it is acted on.
+                    // `clear()` is what makes the repaint whole: the new
+                    // client's screen is blank, but ratatui still believes the
+                    // previous frame is on it and would send only a diff.
+                    #[cfg(unix)]
+                    if termide_detach::take_reattach_request() {
+                        self.handle_reattach();
+                        let _ = terminal.clear();
+                    }
+                    self.poll_background()
+                }
             }
 
             // Check and close panels that should auto-close

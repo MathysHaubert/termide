@@ -728,3 +728,47 @@ impl Config {
         self.terminal.keybindings.with_defaults();
     }
 }
+
+#[cfg(test)]
+mod keybinding_default_tests {
+    use super::*;
+    use crate::KeyBinding;
+
+    /// A config saved by an older version materialises the whole
+    /// `[general.keybindings]` table, so every binding that existed then is
+    /// present and any binding added later is absent. `normalize()` has to
+    /// fill the new one in, or the feature it belongs to is unreachable for
+    /// every existing user while working fine on a fresh install.
+    #[test]
+    fn a_binding_added_later_is_filled_into_an_older_saved_config() {
+        let toml = r#"
+[general]
+language = "ru"
+
+[general.keybindings]
+quit = "Alt+Q"
+new_terminal = "Alt+T"
+next_group = ["Alt+Right", "Alt+D"]
+"#;
+        let mut config: Config = toml::from_str(toml).expect("config parses");
+        assert!(
+            config.general.keybindings.detach_session.is_none(),
+            "precondition: the saved file has no detach_session"
+        );
+
+        config.normalize();
+
+        let binding = config
+            .general
+            .keybindings
+            .detach_session
+            .expect("normalize fills in the new binding");
+        assert_eq!(binding, KeyBinding::Single("Alt+J".to_string()));
+
+        // Bindings the file did set must survive untouched.
+        assert_eq!(
+            config.general.keybindings.quit,
+            Some(KeyBinding::Single("Alt+Q".to_string()))
+        );
+    }
+}

@@ -28,10 +28,7 @@ use termide_ui_render::menu::{
     INDICATOR_DISK_INDEX, INDICATOR_NET_INDEX, INDICATOR_RAM_INDEX, MENU_TOTAL_COUNT,
     OPTIONS_MENU_INDEX, SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
-use termide_ui_render::{
-    OPTIONS_SUBMENU_HELP, OPTIONS_SUBMENU_LANGUAGE, OPTIONS_SUBMENU_PREFERENCES,
-    OPTIONS_SUBMENU_QUIT, OPTIONS_SUBMENU_THEMES,
-};
+use termide_ui_render::{OPTIONS_SUBMENU_LANGUAGE, OPTIONS_SUBMENU_THEMES};
 
 /// Result of generic submenu keyboard navigation.
 enum SubmenuNavAction {
@@ -259,14 +256,9 @@ impl App {
             return self.handle_nested_submenu_key(key);
         }
 
-        use termide_ui_render::OPTIONS_SUBMENU_ITEM_COUNT;
+        let item_count = termide_ui_render::get_options_items(self.detach_available()).len();
 
-        match navigate_submenu(
-            &key,
-            &mut self.state.ui.options_submenu,
-            OPTIONS_SUBMENU_ITEM_COUNT,
-            &[],
-        ) {
+        match navigate_submenu(&key, &mut self.state.ui.options_submenu, item_count, &[]) {
             SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_submenu_action()?,
             SubmenuNavAction::Right => {
@@ -287,9 +279,20 @@ impl App {
     }
 
     /// Execute action for selected Options submenu item
-    fn execute_submenu_action(&mut self) -> Result<()> {
-        match self.state.ui.options_submenu.selected {
-            OPTIONS_SUBMENU_THEMES => {
+    pub(in crate::app) fn execute_submenu_action(&mut self) -> Result<()> {
+        // Dispatch on the item's key, not its position: the Detach entry is
+        // only present in a detachable session, so a positional match would
+        // fire Quit where Detach was chosen.
+        let items = termide_ui_render::get_options_items(self.detach_available());
+        let Some(key) = items
+            .get(self.state.ui.options_submenu.selected)
+            .map(|item| item.key.clone())
+        else {
+            return Ok(());
+        };
+
+        match key.as_str() {
+            "themes" => {
                 let theme_names = Theme::all_theme_names();
                 let current_idx = theme_names
                     .iter()
@@ -298,21 +301,25 @@ impl App {
                 self.state.ui.theme_preview_original = Some(self.state.theme.name.to_string());
                 self.state.open_nested_submenu(current_idx);
             }
-            OPTIONS_SUBMENU_LANGUAGE => {
+            "language" => {
                 use termide_ui_render::find_current_language_index;
                 let current_idx = find_current_language_index();
                 self.state.ui.language_preview_original = Some(i18n::current_language());
                 self.state.open_nested_submenu(current_idx);
             }
-            OPTIONS_SUBMENU_PREFERENCES => {
+            "edit_preferences" => {
                 self.state.close_menu();
                 self.open_settings_modal();
             }
-            OPTIONS_SUBMENU_HELP => {
+            "help" => {
                 self.state.close_menu();
                 self.handle_new_help()?;
             }
-            OPTIONS_SUBMENU_QUIT => {
+            "detach_session" => {
+                self.state.close_menu();
+                self.handle_detach_session();
+            }
+            "quit" => {
                 self.state.close_menu();
                 if self.has_panels_requiring_confirmation() {
                     let t = i18n::t();

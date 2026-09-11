@@ -184,6 +184,24 @@ Option+Right  -> Alt+Char('f')      Option+Down -> Down (no ALT)
 `Alt+A` / `Alt+D` remain the alternatives that need no key-mapping work,
 once Option-as-Meta is on.
 
+### macOS: `Option+Z` cannot be bound
+
+`Alt+<letter>` is universal-tier and works on macOS once the Kitty protocol is
+active — with one exception. `Option+Z` is the only combination on the US
+layout that composes an **uppercase** glyph, `Ω` (U+03A9). The terminal
+classifies it as a shifted character and reports it as:
+
+```
+Char('Ω') + SHIFT      ← no ALT bit at all
+```
+
+where `Option+Q` and `Option+T` correctly report `Char('q') + ALT` and
+`Char('t') + ALT`. Canonicalization cannot recover this: the ALT bit never
+arrived, and mapping `Ω` back to `z` would misfire for anyone typing Greek.
+
+So an `Alt+Z` binding simply never matches on macOS. Pick another letter — this
+is why `detach_session` defaults to `Alt+J`.
+
 ### macOS reserves some function keys
 
 `F11` is bound to *Show Desktop* by macOS Mission Control and never

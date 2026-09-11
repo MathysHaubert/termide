@@ -66,6 +66,7 @@ pub(super) fn build_global_hotkey_table(kb: &GlobalKeybindings) -> HotkeyTable {
 
     // Application
     t.insert("quit", &kb.quit);
+    t.insert("detach_session", &kb.detach_session);
 
     // Clipboard (routed to the focused panel)
     t.insert("copy", &kb.copy);
@@ -247,6 +248,10 @@ impl App {
             self.handle_quit_request()?;
             return Ok(true);
         }
+        if table.matches("detach_session", key) {
+            self.handle_detach_session();
+            return Ok(true);
+        }
 
         // Clipboard — routed to the focused panel, which decides what to
         // copy/cut/paste. `Handled(false)` (or no clipboard support) lets the
@@ -325,6 +330,7 @@ impl App {
             "panel_grow_vertical" => self.handle_panel_resize_vertical(true),
             "panel_shrink_vertical" => self.handle_panel_resize_vertical(false),
             "quit" => self.handle_quit_request()?,
+            "detach_session" => self.handle_detach_session(),
             other => {
                 if let Some(key) = other.strip_prefix("run_command:") {
                     self.run_command_by_menu_key(key)?;

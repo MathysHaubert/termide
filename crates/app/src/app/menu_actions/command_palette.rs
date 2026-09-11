@@ -176,6 +176,14 @@ impl App {
                 },
             ),
             (
+                "detach_session",
+                CommandEntry {
+                    label: "Detach Session".into(),
+                    category: "Application",
+                    keybinding: kb_str(&kb.detach_session),
+                },
+            ),
+            (
                 "quit",
                 CommandEntry {
                     label: "Quit".into(),

@@ -2,17 +2,7 @@ mod ui;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::{
-    event::{
-        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-        EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    },
-    execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
-    },
-};
+use crossterm::{event::PopKeyboardEnhancementFlags, execute, terminal::enable_raw_mode};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
@@ -43,6 +33,23 @@ struct Cli {
     /// non-zero if any check failed.
     #[arg(long)]
     diagnostics: bool,
+
+    /// Start in a detached session and print its id. The session keeps
+    /// running — with every shell, LSP server and job inside it — after the
+    /// terminal that started it is closed.
+    #[cfg(unix)]
+    #[arg(long)]
+    detached: bool,
+
+    /// Attach to a detached session. Without an id, the most recent one.
+    #[cfg(unix)]
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
+    attach: Option<String>,
+
+    /// List detached sessions and exit.
+    #[cfg(unix)]
+    #[arg(long)]
+    list_sessions: bool,
 
     /// File(s) to open. Given a path, termide starts in a clean editor view
     /// (no session is restored or saved), so it works as $EDITOR for tools
@@ -137,16 +144,45 @@ fn run_diagnostics(custom_config: Option<&std::path::Path>) -> bool {
 /// Restore terminal to a usable state (raw mode off, alternate screen off, etc.).
 /// Called both on normal exit and from the panic handler.
 fn restore_terminal() {
-    let _ = disable_raw_mode();
-    let _ = execute!(
-        io::stdout(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        DisableFocusChange,
-        DisableBracketedPaste,
-        SetTitle("")
-    );
-    let _ = execute!(io::stdout(), crossterm::cursor::Show);
+    termide_core::leave_terminal_modes();
+}
+
+/// Handle `--list-sessions`, `--attach` and `--detached`.
+///
+/// Returns `Some(exit_code)` when one of them ran and the process should stop,
+/// `None` when this is an ordinary launch.
+#[cfg(unix)]
+fn handle_detached_session_cli(cli: &Cli) -> Result<Option<i32>> {
+    if cli.list_sessions {
+        print!("{}", termide_detach::format_session_list()?);
+        return Ok(Some(0));
+    }
+
+    if let Some(id) = &cli.attach {
+        // `--attach` with no value means "the most recent session".
+        let id = if id.is_empty() {
+            None
+        } else {
+            Some(id.clone())
+        };
+        return match termide_detach::client::attach(id) {
+            Ok(code) => Ok(Some(code)),
+            Err(e) => {
+                eprintln!("termide: {e:#}");
+                Ok(Some(1))
+            }
+        };
+    }
+
+    if cli.detached {
+        let project_root = std::env::current_dir()?;
+        let id = termide_detach::spawn_detached(&project_root, &cli.files)?;
+        println!("Detached session '{id}' started.");
+        println!("Attach with: termide --attach {id}");
+        return Ok(Some(0));
+    }
+
+    Ok(None)
 }
 
 fn main() -> Result<()> {
@@ -176,6 +212,15 @@ fn main() -> Result<()> {
     if cli.diagnostics {
         let ok = run_diagnostics(cli.config.as_deref());
         std::process::exit(if ok { 0 } else { 1 });
+    }
+
+    // Detached-session handling runs before anything else touches the
+    // terminal, the config or the logger. `--detached` forks, and fork only
+    // carries the calling thread into the child: a lock held by a thread that
+    // no longer exists would deadlock the daemon, so no thread may exist yet.
+    #[cfg(unix)]
+    if let Some(code) = handle_detached_session_cli(&cli)? {
+        std::process::exit(code);
     }
 
     // Install panic handler that restores terminal before printing the panic.
@@ -252,7 +297,7 @@ fn main() -> Result<()> {
 
     // Initialize terminal
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
+    let stdout = io::stdout();
 
     // Check if terminal supports enhanced keyboard protocol (kitty protocol).
     // This enables proper Alt+Cyrillic handling in modern terminals like Ghostty, Kitty, WezTerm.
@@ -270,52 +315,16 @@ fn main() -> Result<()> {
         )
     );
 
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableFocusChange,
-        EnableBracketedPaste,
-        SetTitle(title)
-    )?;
+    // Alternate screen, mouse, focus and paste reporting, plus the keyboard
+    // enhancement flags. Shared with the reattach path so a client that
+    // connects to a detached session gets exactly these modes and no other.
+    termide_core::enter_terminal_modes(&keyboard_caps, Some(&title))?;
 
-    if keyboard_enhanced {
-        // REPORT_EVENT_TYPES exposes `KeyEventState::CAPS_LOCK` on every key
-        // event, which the hotkey matcher uses to ignore the spurious Shift
-        // modifier that Caps Lock attaches to letters. `EventHandler` drops
-        // Release events so the rest of the app keeps its press-only
-        // assumption (Repeat is kept, for held-key auto-repeat).
-        //
-        // REPORT_ALTERNATE_KEYS is what makes shifted characters typable.
-        // Under REPORT_ALL_KEYS_AS_ESCAPE_CODES every key — including plain
-        // text — arrives as CSI-u, and the protocol's primary codepoint is the
-        // key *without* modifiers. Without the alternate codepoint crossterm
-        // reports `Shift+6` as `Char('6') + Shift`, so a Russian layout types
-        // `6` where the user pressed a comma, and a US layout types `1` for
-        // `!`. With the flag crossterm substitutes the shifted codepoint and
-        // clears the Shift bit, which is the correct character to insert.
-        //
-        // The cost is that a chord carrying Shift reaches the matcher in that
-        // same substituted shape — `Ctrl+Shift+S` as `Ctrl+Char('S')`.
-        // `ParsedKeyBinding::matches` accepts it; see the note there.
-        let mut flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-            | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
-
-        // REPORT_ALL_KEYS_AS_ESCAPE_CODES is what makes macOS `Option+<letter>`
-        // reach us as `Alt+<letter>`: without it the terminal composes text and
-        // sends the glyph (`Option+F` → `ƒ`) with no ALT bit, so ~25 `Alt+…`
-        // defaults are unreachable there. It also makes the terminal report
-        // standalone modifier-key presses, which `EventHandler` drops — that
-        // side effect, not the flag itself, is what once "broke Shift+Home".
-        // `KeyboardCaps::detect` restricts the flag to macOS and honours
-        // `general.report_all_keys`, because the flag also stops dead-key and
-        // IME composition from reaching the app.
-        if keyboard_caps.all_keys {
-            flags |= KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
-        }
-
-        execute!(stdout, PushKeyboardEnhancementFlags(flags))?;
+    // In a detached session, the daemon signals us when a client attaches.
+    // A no-op otherwise.
+    #[cfg(unix)]
+    if let Err(e) = termide_detach::install_reattach_handler() {
+        log::warn!("Could not install the reattach handler: {e:#}");
     }
 
     let backend = CrosstermBackend::new(stdout);

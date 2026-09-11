@@ -110,6 +110,13 @@ pub struct AppState {
     pub last_session_save: Option<std::time::Instant>,
     /// Flag indicating UI needs to be redrawn (for CPU optimization)
     pub needs_redraw: bool,
+
+    /// Whether this termide is hosted in a detachable session.
+    ///
+    /// Decided once at startup — a process cannot become detachable later —
+    /// and read by the menu, so that rendering, clicking and key handling all
+    /// agree on whether the Detach entry exists.
+    pub detach_available: bool,
     /// Last time spinner was updated (for throttling spinner animation)
     pub last_spinner_update: Option<std::time::Instant>,
     /// Last time LSP loading spinner was redrawn (for throttling to 125ms/8 FPS)
@@ -232,7 +239,8 @@ impl AppState {
             resource_modal_kind: None,
             last_resource_modal_refresh: None,
             last_session_save: None,
-            needs_redraw: true, // Initial draw needed
+            needs_redraw: true,
+            detach_available: false, // Initial draw needed
             last_spinner_update: None,
             last_lsp_loading_redraw: None,
             last_git_spinner_update: None,

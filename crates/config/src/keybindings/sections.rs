@@ -61,6 +61,9 @@ pub struct GlobalKeybindings {
 
     // Application
     pub quit: Option<KeyBinding>,
+    /// Detach from the attached client, leaving the session running.
+    /// Only meaningful when termide is hosted in a detached session.
+    pub detach_session: Option<KeyBinding>,
     pub open_command_palette: Option<KeyBinding>,
 
     // Clipboard (routed to the focused panel, which copies/cuts/pastes
@@ -426,6 +429,16 @@ impl GlobalKeybindings {
 
         // Application
         set_default!(quit, "Alt+Q");
+        // Universal tier on purpose: detaching matters most over SSH, where
+        // the terminal is least likely to speak the Kitty protocol that an
+        // `Alt+Shift+<letter>` default would require.
+        //
+        // The mnemonic letters are all taken — `D` by next_group, `S` by
+        // next_panel — and `Alt+Z` is unusable on macOS: `Option+Z` is the one
+        // combination on the US layout that composes an *uppercase* glyph
+        // (`Ω`), which the terminal then reports as `Shift+Ω` with no ALT bit
+        // at all. `J` is free in every section and arrives intact.
+        set_default!(detach_session, "Alt+J");
         set_default!(open_command_palette, "Ctrl+P");
 
         // Clipboard (routed to the focused panel)

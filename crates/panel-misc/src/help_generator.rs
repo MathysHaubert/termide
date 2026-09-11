@@ -121,6 +121,10 @@ impl HelpGenerator {
                 description: t.help_desc_quit().to_string(),
             },
             HelpEntry {
+                keys: Self::format_keys(&kb.detach_session),
+                description: t.help_desc_detach_session().to_string(),
+            },
+            HelpEntry {
                 keys: Self::format_keys(&kb.new_file_manager),
                 description: t.help_desc_new_file_manager().to_string(),
             },
