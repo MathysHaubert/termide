@@ -1,0 +1,23 @@
+[package]
+name = "termide-detach"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Detached (daemonised) session hosting for termide"
+
+[dependencies]
+anyhow.workspace = true
+dirs.workspace = true
+log.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+crossterm.workspace = true
+termide-core = { path = "../core" }
+portable-pty.workspace = true
+libc.workspace = true
+nix = { version = "0.29", features = ["signal", "process"] }
+
+[dev-dependencies]
+tempfile = "3.12"
