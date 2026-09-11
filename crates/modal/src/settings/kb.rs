@@ -25,7 +25,7 @@ macro_rules! kb_get {
         let kb = &$kb;
         let name = $name;
         $(if name == stringify!($field) {
-            kb.$field.as_ref().map(|b: &termide_config::KeyBinding| b.display().to_string()).unwrap_or_default()
+            kb.$field.as_ref().map(|b: &termide_config::KeyBinding| b.display_all()).unwrap_or_default()
         } else)* { String::new() }
     }};
 }
@@ -314,6 +314,21 @@ pub(super) fn get_kb_value(config: &Config, section: usize, name: &str) -> Strin
 }
 
 /// Set a binding.
+/// Read a binding as a value, not as text — Delete needs to remove one key
+/// from it and put the rest back.
+pub(super) fn get_kb_binding(config: &Config, section: usize, name: &str) -> Option<KeyBinding> {
+    let text = get_kb_value(config, section, name);
+    if text.is_empty() {
+        return None;
+    }
+    let keys: Vec<String> = text.split(", ").map(|s| s.to_string()).collect();
+    Some(if keys.len() == 1 {
+        KeyBinding::Single(keys.into_iter().next().unwrap_or_default())
+    } else {
+        KeyBinding::Multiple(keys)
+    })
+}
+
 pub(super) fn set_kb_value(config: &mut Config, section: usize, name: &str, value: KeyBinding) {
     match section {
         0 => kb_set!(

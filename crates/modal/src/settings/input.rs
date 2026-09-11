@@ -11,7 +11,7 @@ use super::fields::{
     apply_enum_value, cycle_enum_backward, cycle_enum_forward, enum_options, fields_for_tab,
     toggle_field, ContentRow, FieldType,
 };
-use super::kb::{format_key_event, kb_binding_names, set_kb_value, KB_SECTIONS};
+use super::kb::{format_key_event, get_kb_binding, kb_binding_names, set_kb_value, KB_SECTIONS};
 use super::{
     button_labels, EnumPicker, FocusArea, KbMode, LspMode, SettingsModal, SettingsResult,
     SettingsTab, SidebarRow, BUTTON_APPLY, BUTTON_PROJECT_OVERRIDE, BUTTON_RESET,
@@ -563,13 +563,24 @@ impl SettingsModal {
                     KeyCode::Enter => {
                         self.kb_mode = KbMode::Capturing;
                     }
+                    // Delete peels off one alternative at a time, so a
+                    // binding like `Alt+W, Alt+X, F10` can be trimmed instead
+                    // of only wiped. Shift+Delete clears the action outright.
                     KeyCode::Delete | KeyCode::Backspace => {
                         if self.kb_cursor < names.len() {
+                            let name = names[self.kb_cursor];
+                            let clear_all = key.modifiers.contains(KeyModifiers::SHIFT)
+                                || key.code == KeyCode::Backspace;
+                            let current = get_kb_binding(&self.config, self.kb_section, name);
+                            let next = match (clear_all, current) {
+                                (false, Some(binding)) => binding.without_last_key(),
+                                _ => None,
+                            };
                             set_kb_value(
                                 &mut self.config,
                                 self.kb_section,
-                                names[self.kb_cursor],
-                                KeyBinding::Single(String::new()),
+                                name,
+                                next.unwrap_or(KeyBinding::Single(String::new())),
                             );
                             self.mark_dirty();
                         }

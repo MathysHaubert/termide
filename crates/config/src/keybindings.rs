@@ -76,6 +76,44 @@ impl KeyBinding {
             KeyBinding::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
         }
     }
+
+    /// Every key this binding accepts, in order.
+    pub fn keys(&self) -> &[String] {
+        match self {
+            KeyBinding::Single(s) => std::slice::from_ref(s),
+            KeyBinding::Multiple(v) => v.as_slice(),
+        }
+    }
+
+    /// All keys as one string, for UI that must show what is actually bound
+    /// rather than only the first alternative.
+    pub fn display_all(&self) -> String {
+        self.keys()
+            .iter()
+            .filter(|k| !k.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Drop the last alternative, or `None` once nothing is left.
+    ///
+    /// Removing them one at a time is what makes a multi-key binding
+    /// editable at all: the capture dialog can only add.
+    pub fn without_last_key(&self) -> Option<KeyBinding> {
+        let mut keys: Vec<String> = self
+            .keys()
+            .iter()
+            .filter(|k| !k.is_empty())
+            .cloned()
+            .collect();
+        keys.pop();
+        match keys.len() {
+            0 => None,
+            1 => Some(KeyBinding::Single(keys.remove(0))),
+            _ => Some(KeyBinding::Multiple(keys)),
+        }
+    }
 }
 
 /// A parsed keybinding ready for runtime matching.
@@ -659,5 +697,50 @@ mod tests {
         // Latin letters are pass-through.
         assert_eq!(termide_keyboard::cyrillic_to_latin_opt('a'), None);
         assert_eq!(termide_keyboard::cyrillic_to_latin_opt('1'), None);
+    }
+}
+
+#[cfg(test)]
+mod key_list_tests {
+    use super::*;
+
+    /// The settings modal showed only the first alternative, so a binding like
+    /// `Alt+W, Alt+X, F10` looked like a single key — and deleting it removed
+    /// three bindings the user could not see.
+    #[test]
+    fn display_all_lists_every_alternative() {
+        let single = KeyBinding::Single("Alt+Q".to_string());
+        assert_eq!(single.display_all(), "Alt+Q");
+
+        let multi = KeyBinding::Multiple(vec![
+            "Alt+W".to_string(),
+            "Alt+X".to_string(),
+            "F10".to_string(),
+        ]);
+        assert_eq!(multi.display_all(), "Alt+W, Alt+X, F10");
+        assert_eq!(multi.display(), "Alt+W", "display() still yields the first");
+    }
+
+    /// An unbound action stores an empty string; it must not show up as a key.
+    #[test]
+    fn an_empty_binding_displays_as_nothing() {
+        assert_eq!(KeyBinding::Single(String::new()).display_all(), "");
+    }
+
+    #[test]
+    fn keys_come_off_one_at_a_time_until_none_are_left() {
+        let binding = KeyBinding::Multiple(vec![
+            "Alt+W".to_string(),
+            "Alt+X".to_string(),
+            "F10".to_string(),
+        ]);
+
+        let binding = binding.without_last_key().expect("two remain");
+        assert_eq!(binding.display_all(), "Alt+W, Alt+X");
+
+        let binding = binding.without_last_key().expect("one remains");
+        assert_eq!(binding, KeyBinding::Single("Alt+W".to_string()));
+
+        assert_eq!(binding.without_last_key(), None, "the last one clears it");
     }
 }
