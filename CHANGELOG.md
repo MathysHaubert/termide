@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.34.1] - 2026-09-11
+
 ### Added
 - **The hover popup's text can be copied.** `Ctrl+C` while the popup is open puts the symbol's type, signature or documentation on the clipboard instead of the editor selection — what a reader usually wants it for is pasting an unfamiliar signature or error into a search engine, and until now it could only be read and retyped. The copy carries the text as the language server sent it, not as the popup wrapped it.
 
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings showed only the first key of a multi-key binding.** `Close panel` answers to `Alt+W`, `Alt+X` and `F10`, but the list displayed `Alt+W` alone — and `Delete` then removed all three at once, two of them invisible. Every alternative is now listed, and `Delete` removes them one at a time (`Shift+Delete` clears the action outright), which also makes a multi-key binding editable at all: the capture dialog can only add.
 - **The theme could not be changed from Settings on a fresh install.** Cycling looked the current value up in the theme list by position, and the stock config ships `theme = "default"` — a fallback name rather than a theme — so it found nothing and silently did not move.
 - **A long field label ran into its own value.** The label column was fixed at 32 characters, which the longest English label already filled and a translated one overran.
+
+[0.34.1]: https://github.com/termide/termide/releases/tag/0.34.1
 
 [0.34.0]: https://github.com/termide/termide/releases/tag/0.34.0
 
