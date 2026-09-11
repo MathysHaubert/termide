@@ -127,7 +127,7 @@ impl SettingsModal {
                     match d.field_type {
                         FieldType::Bool => {
                             toggle_field(&mut self.config, self.active_tab, field_idx);
-                            self.dirty = true;
+                            self.mark_dirty();
                         }
                         FieldType::Enum => self.open_enum_picker(field_idx),
                         FieldType::Number | FieldType::OptionalText => {
@@ -198,7 +198,7 @@ impl SettingsModal {
                 picker.field_index,
                 &value,
             );
-            self.dirty = true;
+            self.mark_dirty();
         }
     }
 
@@ -304,7 +304,7 @@ impl SettingsModal {
                         let lang = self.lsp_server_keys[idx].clone();
                         self.config.lsp.servers.remove(&lang);
                         self.refresh_server_keys();
-                        self.dirty = true;
+                        self.mark_dirty();
                     }
                 }
             }
@@ -312,7 +312,7 @@ impl SettingsModal {
                 if let (Some(ContentRow::Field(field_idx)), Some(d)) = (current, field_desc) {
                     if d.field_type == FieldType::Enum {
                         cycle_enum_backward(&mut self.config, self.active_tab, field_idx);
-                        self.dirty = true;
+                        self.mark_dirty();
                     }
                 }
             }
@@ -320,7 +320,7 @@ impl SettingsModal {
                 if let (Some(ContentRow::Field(field_idx)), Some(d)) = (current, field_desc) {
                     if d.field_type == FieldType::Enum {
                         cycle_enum_forward(&mut self.config, self.active_tab, field_idx);
-                        self.dirty = true;
+                        self.mark_dirty();
                     }
                 }
             }
@@ -409,7 +409,7 @@ impl SettingsModal {
             },
         );
         self.refresh_server_keys();
-        self.dirty = true;
+        self.mark_dirty();
     }
 
     pub(super) fn handle_edit_key(
@@ -486,8 +486,13 @@ impl SettingsModal {
                 Box::new(self.config.clone()),
             )))),
             BUTTON_RESET => {
+                // Greyed out means inert: with nothing to reset, a click here
+                // should not mark the modal dirty over an unchanged config.
+                if !self.reset_available {
+                    return Ok(None);
+                }
                 self.config = Config::default();
-                self.dirty = true;
+                self.mark_dirty();
                 self.field_cursor = 0;
                 self.content_scroll = 0;
                 self.editing = false;
@@ -566,7 +571,7 @@ impl SettingsModal {
                                 names[self.kb_cursor],
                                 KeyBinding::Single(String::new()),
                             );
-                            self.dirty = true;
+                            self.mark_dirty();
                         }
                     }
                     KeyCode::Esc | KeyCode::BackTab => {
@@ -610,7 +615,7 @@ impl SettingsModal {
                             action,
                             KeyBinding::Single(binding_str),
                         );
-                        self.dirty = true;
+                        self.mark_dirty();
                         self.kb_capture_message = conflict_msg;
                     }
                 }

@@ -195,6 +195,12 @@ pub struct SettingsModal {
     /// Current edit buffer for text/number fields.
     edit_buffer: String,
 
+    /// Whether the config differs from the shipped defaults, i.e. whether
+    /// "Reset to Defaults" has anything to do. Cached because rendering must
+    /// not serialise the whole config on every frame; refreshed wherever the
+    /// config changes, through `mark_dirty`.
+    pub(super) reset_available: bool,
+
     /// Open enum dropdown, if any: which field it belongs to, and where the
     /// highlight sits. `area` is filled in by the renderer so clicks can be
     /// mapped back to entries.

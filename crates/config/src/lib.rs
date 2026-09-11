@@ -243,6 +243,22 @@ impl Config {
         Ok(())
     }
 
+    /// Whether this config holds anything other than the shipped defaults.
+    ///
+    /// What "Reset to Defaults" acts on, and therefore what decides whether
+    /// that button has any work to do. Deliberately not the same question as
+    /// "are there unsaved edits": a config saved months ago still differs from
+    /// the defaults, and resetting it is exactly what the button is for.
+    pub fn differs_from_defaults(&self) -> bool {
+        let Ok(actual) = toml::Value::try_from(self) else {
+            return false;
+        };
+        let Ok(baseline) = toml::Value::try_from(Config::default()) else {
+            return false;
+        };
+        crate::diff::diff_toml(&actual, &baseline).is_some()
+    }
+
     /// Save the user's global config: only fields differing from the
     /// built-in `Config::default()` are written.
     pub fn save_global(&self) -> Result<()> {

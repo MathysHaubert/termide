@@ -33,6 +33,7 @@ impl SettingsModal {
             content_scroll: 0,
             editing: false,
             edit_buffer: String::new(),
+            reset_available: false,
             enum_picker: None,
             lsp_mode: LspMode::Fields,
             lsp_edit_index: None,
@@ -53,6 +54,7 @@ impl SettingsModal {
             last_buttons_area: None,
         };
         m.field_cursor = m.first_selectable_row();
+        m.refresh_reset_available();
         m
     }
 
@@ -157,6 +159,22 @@ impl SettingsModal {
             }
             other => self.preview_sidebar_row(other),
         }
+    }
+
+    /// Recompute whether "Reset to Defaults" has anything to reset.
+    ///
+    /// Kept separate from `dirty`, which tracks unsaved edits: a config saved
+    /// long ago still differs from the defaults, and the button greying out in
+    /// that state is what made it look broken.
+    pub(super) fn refresh_reset_available(&mut self) {
+        self.reset_available = self.config.differs_from_defaults();
+    }
+
+    /// Record a config change: marks the modal dirty and refreshes what the
+    /// reset button is allowed to do.
+    pub(super) fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.refresh_reset_available();
     }
 
     /// Clamp sidebar scroll so `sidebar_cursor` is visible.
@@ -469,5 +487,48 @@ mod content_row_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod reset_availability_tests {
+    use super::*;
+
+    /// "Reset to Defaults" used to grey out whenever the modal had no unsaved
+    /// edits, which is the state it opens in — so a user who had configured
+    /// termide, saved, and come back found the button dead exactly when it had
+    /// the most to do.
+    #[test]
+    fn reset_is_offered_for_a_saved_non_default_config() {
+        let mut config = Config::default();
+        config.general.theme = "dracula".to_string();
+
+        let modal = SettingsModal::new(config, false);
+        assert!(!modal.dirty, "a freshly opened modal has no unsaved edits");
+        assert!(
+            modal.reset_available,
+            "but the config differs from the defaults, so reset has work to do"
+        );
+    }
+
+    #[test]
+    fn reset_is_inert_for_a_default_config() {
+        let modal = SettingsModal::new(Config::default(), false);
+        assert!(!modal.reset_available);
+    }
+
+    /// Editing a value makes reset available; resetting takes it away again.
+    #[test]
+    fn availability_follows_the_config() {
+        let mut modal = SettingsModal::new(Config::default(), false);
+        assert!(!modal.reset_available);
+
+        modal.config.general.vim_mode = true;
+        modal.mark_dirty();
+        assert!(modal.reset_available);
+
+        modal.config = Config::default();
+        modal.mark_dirty();
+        assert!(!modal.reset_available);
     }
 }

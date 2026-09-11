@@ -141,7 +141,7 @@ impl SettingsModal {
 
         for (i, label) in labels.iter().enumerate() {
             let is_selected = self.focus == FocusArea::Buttons && self.selected_button == i;
-            let style = if i == BUTTON_RESET && !self.dirty && !is_selected {
+            let style = if i == BUTTON_RESET && !self.reset_available && !is_selected {
                 Style::default().fg(theme.disabled)
             } else {
                 button_style(is_selected, theme)
