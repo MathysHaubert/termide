@@ -475,6 +475,18 @@ pub const COMMAND_ADD_NEW: &str = "__add_command__";
 pub const COMMAND_MANAGE: &str = "__manage_commands__";
 
 /// Get commands submenu items from CommandsRegistry
+/// A command's own shortcut, shown in the same column as every other menu
+/// entry's. It used to be glued onto the label as ` [Ctrl+K]`, which put the
+/// keys in a different place and a different style from the rest of the menus.
+fn command_shortcut(command: &termide_config::commands::CommandItem) -> Option<String> {
+    command
+        .metadata
+        .as_ref()
+        .and_then(|m| m.key.as_deref())
+        .filter(|k| !k.is_empty())
+        .map(|k| k.to_string())
+}
+
 /// Format command label with type icon prefix (when terminal supports emoji).
 /// 💻 = runs in terminal panel, ⚙ = background, 📋 = background with result modal
 fn command_label(command: &termide_config::commands::CommandItem) -> String {
@@ -486,22 +498,15 @@ fn command_label(command: &termide_config::commands::CommandItem) -> String {
         .and_then(|m| m.display_name.as_deref())
         .unwrap_or(&command.name);
 
-    let key_hint = command
-        .metadata
-        .as_ref()
-        .and_then(|m| m.key.as_deref())
-        .map(|k| format!(" [{}]", k))
-        .unwrap_or_default();
-
     if termide_core::use_emoji_icons() {
         let icon = match command.mode {
             CommandMode::Report => "📋",
             CommandMode::Background => "⚙",
             CommandMode::Terminal => "💻",
         };
-        format!("{} {}{}", icon, display_name, key_hint)
+        format!("{icon} {display_name}")
     } else {
-        format!("{}{}", display_name, key_hint)
+        display_name.to_string()
     }
 }
 
@@ -528,6 +533,7 @@ pub fn get_commands_items(
                 command_label(command),
                 encode_command_menu_key(CommandMenuKeyKind::Command, &command.name, true),
             )
+            .with_shortcut(command_shortcut(command))
             .with_project(),
         );
     }
@@ -549,10 +555,13 @@ pub fn get_commands_items(
 
     // Global commands
     for command in registry.root_items.iter().filter(|s| !s.is_project) {
-        items.push(DropdownItem::new(
-            command_label(command),
-            encode_command_menu_key(CommandMenuKeyKind::Command, &command.name, false),
-        ));
+        items.push(
+            DropdownItem::new(
+                command_label(command),
+                encode_command_menu_key(CommandMenuKeyKind::Command, &command.name, false),
+            )
+            .with_shortcut(command_shortcut(command)),
+        );
     }
     for group in registry.groups.iter().filter(|g| !g.is_project) {
         items.push(
@@ -593,7 +602,8 @@ pub fn get_commands_group_items(
                             &command.name,
                             command.is_project,
                         ),
-                    );
+                    )
+                    .with_shortcut(command_shortcut(command));
                     if command.is_project {
                         item = item.with_project();
                     }
@@ -1104,6 +1114,47 @@ mod menu_shortcut_tests {
         assert!(get_options_items(true, None)
             .iter()
             .all(|i| i.shortcut.is_none()));
+    }
+
+    /// A command's own hotkey used to be glued onto its label as ` [Ctrl+K]`,
+    /// so the Commands menu showed keys in a different place and a different
+    /// colour from every other menu.
+    #[test]
+    fn command_hotkeys_move_out_of_the_label() {
+        use termide_config::commands::{CommandItem, CommandMetadata, CommandMode};
+
+        let command = CommandItem {
+            name: "deploy".to_string(),
+            command: Some("make deploy".to_string()),
+            mode: CommandMode::Terminal,
+            is_project: false,
+            metadata: Some(CommandMetadata {
+                key: Some("Ctrl+Shift+D".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let label = command_label(&command);
+        assert!(
+            !label.contains('['),
+            "the hotkey must not be part of the label: {label}"
+        );
+        assert!(label.contains("deploy"));
+        assert_eq!(command_shortcut(&command).as_deref(), Some("Ctrl+Shift+D"));
+    }
+
+    #[test]
+    fn a_command_without_a_hotkey_has_no_shortcut() {
+        use termide_config::commands::{CommandItem, CommandMode};
+
+        let command = CommandItem {
+            name: "build".to_string(),
+            command: Some("make".to_string()),
+            mode: CommandMode::Background,
+            is_project: false,
+            metadata: None,
+        };
+        assert_eq!(command_shortcut(&command), None);
     }
 
     /// The row must be wide enough for the longest label and the longest
