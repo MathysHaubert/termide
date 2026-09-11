@@ -250,20 +250,30 @@ impl Config {
     /// "are there unsaved edits": a config saved months ago still differs from
     /// the defaults, and resetting it is exactly what the button is for.
     pub fn differs_from_defaults(&self) -> bool {
+        let mut defaults = Config::default();
+        defaults.normalize();
         let Ok(actual) = toml::Value::try_from(self) else {
             return false;
         };
-        let Ok(baseline) = toml::Value::try_from(Config::default()) else {
+        let Ok(baseline) = toml::Value::try_from(defaults) else {
             return false;
         };
         crate::diff::diff_toml(&actual, &baseline).is_some()
     }
 
     /// Save the user's global config: only fields differing from the
-    /// built-in `Config::default()` are written.
+    /// built-in defaults are written.
+    ///
+    /// The baseline is normalised first. `Config::default()` derives its
+    /// keybindings, so every one of them is `None` there, while the running
+    /// config has them all filled in — diffing against the raw default wrote
+    /// the entire binding table into the user's file on the first save. Once
+    /// written, those values stop being defaults: a binding added in a later
+    /// version then collides with the frozen copy instead of appearing.
     pub fn save_global(&self) -> Result<()> {
         let path = Self::config_file_path()?;
-        let default = Config::default();
+        let mut default = Config::default();
+        default.normalize();
         self.save_to(&path, &default)
     }
 
@@ -311,5 +321,62 @@ impl Config {
             std::fs::create_dir_all(themes_dir)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod save_baseline_tests {
+    use super::*;
+
+    /// Saving must not write out settings the user never touched.
+    ///
+    /// `Config::default()` derives its keybindings, so they are all `None`
+    /// there while the running config has them filled in by `normalize()`.
+    /// Diffing against the raw default therefore wrote the entire binding
+    /// table into the user's file on the very first save — and a binding
+    /// frozen that way stops tracking the defaults, so a later version that
+    /// adds or moves one collides with the copy instead of applying it.
+    #[test]
+    fn saving_an_untouched_config_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = Config::default();
+        config.normalize();
+
+        let mut baseline = Config::default();
+        baseline.normalize();
+        config.save_to(&path, &baseline).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("quit"),
+            "default bindings must not be frozen into the file:\n{written}"
+        );
+        assert!(
+            written.trim().is_empty(),
+            "an untouched config should write an empty file, got:\n{written}"
+        );
+    }
+
+    /// What the user did change still round-trips.
+    #[test]
+    fn saving_keeps_the_settings_that_differ() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = Config::default();
+        config.normalize();
+        config.general.theme = "dracula".to_string();
+
+        let mut baseline = Config::default();
+        baseline.normalize();
+        config.save_to(&path, &baseline).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("dracula"), "got:\n{written}");
+
+        let reloaded = Config::load_from(&path).unwrap();
+        assert_eq!(reloaded.general.theme, "dracula");
     }
 }
