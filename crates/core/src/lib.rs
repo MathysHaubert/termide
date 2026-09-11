@@ -15,6 +15,7 @@ pub mod key_chord;
 pub mod panel;
 pub mod scrollbar;
 pub mod terminal_caps;
+pub mod terminal_modes;
 pub mod util;
 
 pub use command::{CommandResult, PanelCommand};
@@ -30,9 +31,10 @@ pub use panel::{
 };
 pub use scrollbar::{ScrollAxis, ScrollBarGeometry, ScrollBars};
 pub use terminal_caps::{
-    get_terminal_caps, init_icon_mode, init_terminal_caps, use_emoji_icons, ColorDepth,
-    TerminalCaps,
+    get_terminal_caps, init_icon_mode, init_terminal_caps, refresh_terminal_caps, use_emoji_icons,
+    ColorDepth, TerminalCaps,
 };
+pub use terminal_modes::{enter_terminal_modes, leave_terminal_modes};
 // Re-export keyboard primitives so panels can stay on `termide_core` as
 // their dependency surface.
 pub use termide_keyboard::{KeyNormalizer, KeyboardCaps};

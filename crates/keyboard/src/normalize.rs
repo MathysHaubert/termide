@@ -80,6 +80,23 @@ impl KeyboardCaps {
             };
         }
         let supported = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        Self::from_probe(supported, request_all_keys, false)
+    }
+
+    /// Build capabilities from an already-known probe result.
+    ///
+    /// A termide hosted in a detached session cannot run the probe itself:
+    /// the other end of its PTY is the session daemon, which does not answer
+    /// a capability query, so every probe there reports "unsupported" and all
+    /// ~25 `Alt+<letter>` bindings silently stop working on macOS. The attach
+    /// client probes its own terminal instead and hands the answer over.
+    pub fn from_probe(supported: bool, request_all_keys: bool, via_ssh: bool) -> Self {
+        if via_ssh {
+            return Self {
+                via_ssh: true,
+                ..Self::default()
+            };
+        }
         Self {
             kitty_full: supported,
             event_types: supported,
