@@ -172,11 +172,23 @@ The Structure panel also recognizes Alatyr `.al` files. It lists bindings and
 classifies `fn`, `struct`, `enum`, `union`, `mod`, and `brand` right-hand-side
 introducers, including declarations inside inline `mod { ... }` values.
 
+## Hover Documentation
+
+`Ctrl+K` (or `Ctrl`+click on a symbol) asks the language server what it knows
+about the symbol under the cursor — its type, signature and doc comment — and
+shows the answer in a popup. Long content scrolls; `Esc` or moving the cursor
+closes it.
+
+**`Ctrl+C` while the popup is open copies its text** rather than the editor
+selection. What lands in the clipboard is the text as the server sent it, not
+as the popup wrapped it, so a signature pasted into a search engine or a chat
+arrives in one piece.
+
 ## Clipboard
 
 | Shortcut           | Action                                     |
 |-------------------|--------------------------------------------|
-| `Ctrl+C`          | Copy selected text                         |
+| `Ctrl+C`          | Copy selected text (or the hover popup, when one is open) |
 | `Ctrl+X`          | Cut selected text                          |
 | `Ctrl+V`          | Paste from system clipboard                |
 

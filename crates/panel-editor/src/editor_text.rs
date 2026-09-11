@@ -55,6 +55,28 @@ impl Editor {
         Ok(())
     }
 
+    /// Copy the open hover popup's text, if one is showing.
+    ///
+    /// Returns whether it handled the copy, so the caller can fall through to
+    /// the selection when no popup is up.
+    pub(crate) fn copy_hover_to_clipboard(&mut self) -> bool {
+        let Some(text) = self
+            .lsp
+            .hover_popup
+            .as_ref()
+            .map(|popup| popup.text().to_string())
+        else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+
+        let result = clipboard::copy_to_clipboard(Some(text));
+        self.status_message = Some(result.status_message);
+        true
+    }
+
     /// Cut selected text to clipboard
     pub(crate) fn cut_to_clipboard(&mut self) -> Result<()> {
         let selected_text = self.get_selected_text();

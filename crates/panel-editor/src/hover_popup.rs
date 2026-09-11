@@ -21,6 +21,10 @@ const MIN_POPUP_WIDTH: u16 = 20;
 pub struct HoverPopup {
     /// Parsed hover content lines.
     lines: Vec<String>,
+    /// The same content before word wrapping, kept for copying: pasting a
+    /// signature or an error message into a search engine should not carry
+    /// the popup's line breaks.
+    raw_text: String,
     /// Scroll offset for long content.
     scroll_offset: usize,
 }
@@ -30,19 +34,27 @@ impl HoverPopup {
     ///
     /// Returns None if hover contents are empty.
     pub fn from_hover(hover: Hover) -> Option<Self> {
+        let raw_text = Self::extract_raw_text(&hover.contents)?;
         let lines = Self::extract_lines(&hover.contents)?;
         if lines.is_empty() {
             return None;
         }
         Some(Self {
             lines,
+            raw_text,
             scroll_offset: 0,
         })
     }
 
+    /// The hover text as the server sent it, unwrapped.
+    pub fn text(&self) -> &str {
+        &self.raw_text
+    }
+
     /// Extract lines from hover contents with word wrapping.
-    fn extract_lines(contents: &HoverContents) -> Option<Vec<String>> {
-        let raw_text = match contents {
+    /// Flatten hover contents into plain text, before any wrapping.
+    fn extract_raw_text(contents: &HoverContents) -> Option<String> {
+        match contents {
             HoverContents::Scalar(marked) => Self::marked_string_to_text(marked),
             HoverContents::Markup(markup) => Some(markup.value.clone()),
             HoverContents::Array(arr) => {
@@ -54,7 +66,11 @@ impl HoverPopup {
                     Some(texts.join("\n\n"))
                 }
             }
-        }?;
+        }
+    }
+
+    fn extract_lines(contents: &HoverContents) -> Option<Vec<String>> {
+        let raw_text = Self::extract_raw_text(contents)?;
 
         // Apply word wrap to fit within popup width (minus padding)
         let wrap_width = (MAX_POPUP_WIDTH - 2) as usize;
@@ -393,5 +409,50 @@ mod tests {
 
         popup.scroll_up(10);
         assert_eq!(popup.scroll_offset, 0);
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use lsp_types::{MarkupContent, MarkupKind};
+
+    fn hover_with(text: &str) -> Hover {
+        Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: text.to_string(),
+            }),
+            range: None,
+        }
+    }
+
+    /// The popup wraps its text to fit the window; copying must hand back what
+    /// the server sent, or a pasted signature arrives full of line breaks that
+    /// were never in it.
+    #[test]
+    fn copied_text_is_not_the_wrapped_text() {
+        let long = "fn example<T: Iterator<Item = String>>(argument: T, another: usize) -> Result<Vec<String>, std::io::Error>";
+        let popup = HoverPopup::from_hover(hover_with(long)).expect("popup");
+
+        assert_eq!(popup.text(), long);
+        assert!(
+            popup.lines.len() > 1,
+            "precondition: this text is long enough to wrap"
+        );
+        assert!(!popup.text().contains('\n'));
+    }
+
+    #[test]
+    fn multiple_sections_are_joined_for_copying() {
+        let hover = Hover {
+            contents: HoverContents::Array(vec![
+                MarkedString::String("first".to_string()),
+                MarkedString::String("second".to_string()),
+            ]),
+            range: None,
+        };
+        let popup = HoverPopup::from_hover(hover).expect("popup");
+        assert_eq!(popup.text(), "first\n\nsecond");
     }
 }

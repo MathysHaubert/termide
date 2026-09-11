@@ -726,7 +726,13 @@ impl Panel for Editor {
                 }
             }
             PanelCommand::Copy => {
-                if self.selection.is_some() {
+                // An open hover popup takes the copy: its text — a signature,
+                // a doc comment, an error message — is otherwise readable but
+                // unreachable, and retyping it into a search engine is exactly
+                // what people were doing instead.
+                if self.copy_hover_to_clipboard() {
+                    CommandResult::Handled(true)
+                } else if self.selection.is_some() {
                     if let Err(e) = self.copy_to_clipboard() {
                         log::error!("Editor copy failed: {}", e);
                     }

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The hover popup's text can be copied.** `Ctrl+C` while the popup is open puts the symbol's type, signature or documentation on the clipboard instead of the editor selection — what a reader usually wants it for is pasting an unfamiliar signature or error into a search engine, and until now it could only be read and retyped. The copy carries the text as the language server sent it, not as the popup wrapped it.
+
 
 ## [0.34.0] - 2026-09-11
 
