@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Keybindings group in Settings starts expanded.** It holds nine sections, and collapsing it by default hid every binding behind a step users have no reason to expect.
 
 ### Fixed
+- The Settings buttons that write a per-project config now read **Apply to Project** / **Remove from Project**, next to **Apply & Save**. "Create project override" named the file being written rather than what pressing it does.
 - **Clicking a control in Settings now operates it.** A click only moved the cursor; the switch stayed put, which reads as an ignored click. Clicking and pressing Enter now run the same code.
 - **"Reset to Defaults" was greyed out exactly when it had the most to do.** It keyed off whether the modal had unsaved edits — which is the state it opens in — so a user who had configured termide, saved, and reopened Settings found the button dead, while a single unrelated edit lit it up. It now asks whether the config differs from the shipped defaults, which is what the button actually resets.
 - **Saving froze the entire keybinding table into `config.toml`.** Settings you never touched were written out on the first save, because the diff ran against a baseline whose bindings were all unset. A binding frozen that way stops tracking the defaults: a later version that adds or moves one collides with the copy instead of applying it.
