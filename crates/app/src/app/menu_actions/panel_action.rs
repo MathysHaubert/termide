@@ -67,7 +67,11 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        items.extend(get_panel_action_menu_items(group_count, current_group_len));
+        items.extend(get_panel_action_menu_items(
+            group_count,
+            current_group_len,
+            Some(&self.state.config.general.keybindings),
+        ));
         items
     }
 

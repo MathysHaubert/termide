@@ -213,7 +213,7 @@ impl App {
     /// Returns true if click was handled
     pub(in crate::app) fn handle_sessions_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
         let menu_x = get_menu_item_x_position(SESSIONS_MENU_INDEX);
-        let items = get_sessions_items();
+        let items = get_sessions_items(Some(&self.state.config.general.keybindings));
         if let Some(index) = hit_dropdown_item(x, y, menu_x, 1, &items) {
             self.state.ui.sessions_submenu.selected = index;
             self.execute_sessions_submenu_action()?;
@@ -227,7 +227,7 @@ impl App {
     /// Returns true if click was handled
     pub(in crate::app) fn handle_tools_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
         let menu_x = get_menu_item_x_position(WINDOWS_MENU_INDEX);
-        let items = get_tools_items();
+        let items = get_tools_items(Some(&self.state.config.general.keybindings));
 
         // If shell picker nested submenu is open, check clicks on it first
         if self.state.ui.tools_nested.open {
@@ -361,8 +361,11 @@ impl App {
         x: u16,
         y: u16,
     ) -> Result<bool> {
-        let bookmarks_items =
-            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let bookmarks_items = get_bookmarks_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
+        );
 
         // If nested submenu is open, handle clicks on it first
         if self.state.ui.bookmarks_nested.open {

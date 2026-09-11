@@ -15,6 +15,7 @@ impl App {
         let items = termide_ui_render::get_bookmarks_items(
             &self.state.bookmarks,
             self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
         );
         let sel = self.state.ui.bookmarks_submenu.selected;
         if let Some(item) = items.get(sel) {
@@ -111,8 +112,11 @@ impl App {
         }
 
         use termide_ui_render::get_bookmarks_items;
-        let items =
-            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let items = get_bookmarks_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
+        );
         let item_count = items.len();
         let separators: Vec<usize> = items
             .iter()
@@ -134,6 +138,7 @@ impl App {
                 let items = get_bookmarks_items(
                     &self.state.bookmarks,
                     self.state.project_bookmarks.as_ref(),
+                    Some(&self.state.config.general.keybindings),
                 );
                 let sel = self.state.ui.bookmarks_submenu.selected;
                 if items.get(sel).is_some_and(|i| i.has_submenu) {
@@ -167,8 +172,11 @@ impl App {
 
         // Build the same item list as the dropdown to match indices
         use termide_ui_render::get_bookmarks_items;
-        let items =
-            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let items = get_bookmarks_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
+        );
 
         if let Some(item) = items.get(selected) {
             if item.is_separator || item.key.is_empty() {
@@ -271,8 +279,11 @@ impl App {
     /// Edit selected bookmark from main bookmarks submenu (F4)
     fn edit_selected_bookmark(&mut self) -> Result<()> {
         use termide_ui_render::get_bookmarks_items;
-        let items =
-            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let items = get_bookmarks_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
+        );
         let sel = self.state.ui.bookmarks_submenu.selected;
         self.open_edit_bookmark_modal(items.get(sel))
     }
@@ -345,8 +356,11 @@ impl App {
     /// Delete selected bookmark from main bookmarks submenu
     fn delete_selected_bookmark(&mut self) -> Result<()> {
         use termide_ui_render::get_bookmarks_items;
-        let items =
-            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let items = get_bookmarks_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            Some(&self.state.config.general.keybindings),
+        );
         let sel = self.state.ui.bookmarks_submenu.selected;
         self.confirm_delete_bookmark_item(items.get(sel), None, sel)
     }
@@ -468,8 +482,11 @@ impl App {
 
         if let Some(group_name) = group {
             // Find the group's index in the current items list
-            let items =
-                get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+            let items = get_bookmarks_items(
+                &self.state.bookmarks,
+                self.state.project_bookmarks.as_ref(),
+                Some(&self.state.config.general.keybindings),
+            );
             let group_idx = items
                 .iter()
                 .position(|i| i.has_submenu && i.key == group_name && i.is_project == is_project)

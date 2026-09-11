@@ -307,11 +307,13 @@ impl<'a> Dropdown<'a> {
 }
 
 /// Get sessions submenu items
-pub fn get_sessions_items() -> Vec<DropdownItem> {
+pub fn get_sessions_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();
+    let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     vec![
-        DropdownItem::new(t.sessions_new(), "new_session"),
-        DropdownItem::new(t.sessions_switch(), "switch_session"),
+        DropdownItem::new(t.sessions_new(), "new_session").with_shortcut(shortcut("new_session")),
+        DropdownItem::new(t.sessions_switch(), "switch_session")
+            .with_shortcut(shortcut("switch_session")),
         DropdownItem::new(t.sessions_change_root(), "change_root"),
     ]
 }
@@ -325,20 +327,23 @@ pub const SESSIONS_SUBMENU_SWITCH: usize = 1;
 pub const SESSIONS_SUBMENU_CHANGE_ROOT: usize = 2;
 
 /// Get tools submenu items
-pub fn get_tools_items() -> Vec<DropdownItem> {
+pub fn get_tools_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();
+    let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     vec![
         DropdownItem::new(t.tools_open(), "open"),
-        DropdownItem::separator(),
-        DropdownItem::new(t.tools_terminal(), "terminal").with_submenu(),
-        DropdownItem::new(t.tools_files(), "files"),
-        DropdownItem::new(t.tools_editor(), "editor"),
-        DropdownItem::new(t.tools_git_status(), "git_status"),
-        DropdownItem::new(t.tools_git_log(), "git_log"),
-        DropdownItem::new(t.tools_journal(), "journal"),
-        DropdownItem::new(t.tools_diagnostics(), "diagnostics"),
+        DropdownItem::new(t.tools_terminal(), "terminal")
+            .with_submenu()
+            .with_shortcut(shortcut("terminal")),
+        DropdownItem::new(t.tools_files(), "files").with_shortcut(shortcut("files")),
+        DropdownItem::new(t.tools_editor(), "editor").with_shortcut(shortcut("editor")),
+        DropdownItem::new(t.tools_git_status(), "git_status").with_shortcut(shortcut("git_status")),
+        DropdownItem::new(t.tools_git_log(), "git_log").with_shortcut(shortcut("git_log")),
+        DropdownItem::new(t.tools_journal(), "journal").with_shortcut(shortcut("journal")),
+        DropdownItem::new(t.tools_diagnostics(), "diagnostics")
+            .with_shortcut(shortcut("diagnostics")),
         DropdownItem::new(t.tools_operations(), "operations"),
-        DropdownItem::new(t.tools_outline(), "outline"),
+        DropdownItem::new(t.tools_outline(), "outline").with_shortcut(shortcut("outline")),
     ]
 }
 
@@ -407,6 +412,12 @@ pub fn menu_shortcut(kb: &termide_config::GlobalKeybindings, key: &str) -> Optio
         "outline" => &kb.open_outline,
         // Bookmarks
         BOOKMARK_ADD_CURRENT => &kb.open_bookmark_add,
+        // Panel action menu. Only the actions that have a global binding;
+        // moving a panel up or down has none, and inventing one here would
+        // advertise a key that does nothing.
+        PANEL_ACTION_CLOSE => &kb.close_panel,
+        PANEL_ACTION_MOVE_LEFT => &kb.swap_left,
+        PANEL_ACTION_MOVE_RIGHT => &kb.swap_right,
         _ => return None,
     };
     // Only the primary key: a menu row is a reminder, and "Alt+H, F1" costs
@@ -610,10 +621,12 @@ fn bookmark_label(bookmark: &termide_config::Bookmark) -> String {
 pub fn get_bookmarks_items(
     config: &termide_config::BookmarksConfig,
     project_config: Option<&termide_config::BookmarksConfig>,
+    kb: Option<&termide_config::GlobalKeybindings>,
 ) -> Vec<DropdownItem> {
     let t = i18n::t();
     let mut items = vec![
-        DropdownItem::new(t.bookmarks_add_bookmark(), BOOKMARK_ADD_CURRENT),
+        DropdownItem::new(t.bookmarks_add_bookmark(), BOOKMARK_ADD_CURRENT)
+            .with_shortcut(kb.and_then(|kb| menu_shortcut(kb, BOOKMARK_ADD_CURRENT))),
         DropdownItem::separator(),
     ];
 
@@ -727,8 +740,10 @@ pub const PANEL_ACTION_MOVE_DOWN: &str = "__panel_action_move_down__";
 pub fn get_panel_action_menu_items(
     group_count: usize,
     current_group_len: usize,
+    kb: Option<&termide_config::GlobalKeybindings>,
 ) -> Vec<DropdownItem> {
     let t = termide_i18n::t();
+    let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     let mut items = Vec::new();
 
     if current_group_len > 1 {
@@ -743,14 +758,14 @@ pub fn get_panel_action_menu_items(
     }
 
     if group_count > 1 {
-        items.push(DropdownItem::new(
-            t.panel_action_move_left(),
-            PANEL_ACTION_MOVE_LEFT,
-        ));
-        items.push(DropdownItem::new(
-            t.panel_action_move_right(),
-            PANEL_ACTION_MOVE_RIGHT,
-        ));
+        items.push(
+            DropdownItem::new(t.panel_action_move_left(), PANEL_ACTION_MOVE_LEFT)
+                .with_shortcut(shortcut(PANEL_ACTION_MOVE_LEFT)),
+        );
+        items.push(
+            DropdownItem::new(t.panel_action_move_right(), PANEL_ACTION_MOVE_RIGHT)
+                .with_shortcut(shortcut(PANEL_ACTION_MOVE_RIGHT)),
+        );
     }
 
     if current_group_len > 1 {
@@ -765,10 +780,10 @@ pub fn get_panel_action_menu_items(
         ));
     }
 
-    items.push(DropdownItem::new(
-        t.panel_action_close(),
-        PANEL_ACTION_CLOSE,
-    ));
+    items.push(
+        DropdownItem::new(t.panel_action_close(), PANEL_ACTION_CLOSE)
+            .with_shortcut(shortcut(PANEL_ACTION_CLOSE)),
+    );
 
     items
 }
@@ -1012,6 +1027,60 @@ mod menu_shortcut_tests {
         assert_eq!(menu_shortcut(&kb, "themes"), None);
         assert_eq!(menu_shortcut(&kb, "language"), None);
         assert_eq!(menu_shortcut(&kb, "nonexistent"), None);
+    }
+
+    /// Every menu that has bindable entries must annotate them — the point is
+    /// that the menus agree with each other, not that one of them is special.
+    #[test]
+    fn every_menu_annotates_the_entries_that_have_bindings() {
+        let kb = defaults();
+
+        let sessions = get_sessions_items(Some(&kb));
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|i| i.key == "new_session")
+                .unwrap()
+                .shortcut
+                .as_deref(),
+            Some("Alt+N")
+        );
+
+        let tools = get_tools_items(Some(&kb));
+        for key in ["terminal", "files", "editor", "git_status", "outline"] {
+            assert!(
+                tools
+                    .iter()
+                    .find(|i| i.key == key)
+                    .unwrap()
+                    .shortcut
+                    .is_some(),
+                "Tools entry {key} should show its shortcut"
+            );
+        }
+
+        let panel = get_panel_action_menu_items(2, 2, Some(&kb));
+        assert_eq!(
+            panel
+                .iter()
+                .find(|i| i.key == PANEL_ACTION_CLOSE)
+                .unwrap()
+                .shortcut
+                .as_deref(),
+            Some("Alt+W")
+        );
+
+        let bookmarks =
+            get_bookmarks_items(&termide_config::BookmarksConfig::default(), None, Some(&kb));
+        assert_eq!(
+            bookmarks
+                .iter()
+                .find(|i| i.key == BOOKMARK_ADD_CURRENT)
+                .unwrap()
+                .shortcut
+                .as_deref(),
+            Some("Alt+B")
+        );
     }
 
     /// Options entries carry their shortcuts through to the dropdown, and the

@@ -41,7 +41,7 @@ fn render_dropdowns_and_modals(
         let dropdown_y = 1_u16; // Below menu bar
 
         // Render Sessions submenu
-        let sessions_items = get_sessions_items();
+        let sessions_items = get_sessions_items(Some(&state.config.general.keybindings));
         let dropdown = Dropdown::new(
             &sessions_items,
             state.ui.sessions_submenu.selected,
@@ -62,7 +62,7 @@ fn render_dropdowns_and_modals(
         let dropdown_y = 1_u16; // Below menu bar
 
         // Render Tools submenu
-        let tools_items = get_tools_items();
+        let tools_items = get_tools_items(Some(&state.config.general.keybindings));
         let dropdown = Dropdown::new(
             &tools_items,
             state.ui.tools_submenu.selected,
@@ -156,8 +156,11 @@ fn render_dropdowns_and_modals(
         let dropdown_y = 1_u16; // Below menu bar
 
         // Render Bookmarks submenu
-        let bookmarks_items =
-            get_bookmarks_items(&state.bookmarks, state.project_bookmarks.as_ref());
+        let bookmarks_items = get_bookmarks_items(
+            &state.bookmarks,
+            state.project_bookmarks.as_ref(),
+            Some(&state.config.general.keybindings),
+        );
         let dropdown = Dropdown::new(
             &bookmarks_items,
             state.ui.bookmarks_submenu.selected,
@@ -238,6 +241,7 @@ fn render_dropdowns_and_modals(
         items.extend(termide_ui_render::get_panel_action_menu_items(
             group_count,
             current_group_len,
+            Some(&state.config.general.keybindings),
         ));
 
         if !items.is_empty() {
