@@ -8,12 +8,14 @@ use termide_config::{Config, KeyBinding, LspServerSettings};
 use crate::ModalResult;
 
 use super::fields::{
-    cycle_enum_backward, cycle_enum_forward, fields_for_tab, toggle_field, ContentRow, FieldType,
+    apply_enum_value, cycle_enum_backward, cycle_enum_forward, enum_options, fields_for_tab,
+    toggle_field, ContentRow, FieldType,
 };
 use super::kb::{format_key_event, kb_binding_names, set_kb_value, KB_SECTIONS};
 use super::{
-    button_labels, FocusArea, KbMode, LspMode, SettingsModal, SettingsResult, SettingsTab,
-    SidebarRow, BUTTON_APPLY, BUTTON_PROJECT_OVERRIDE, BUTTON_RESET,
+    button_labels, EnumPicker, FocusArea, KbMode, LspMode, SettingsModal, SettingsResult,
+    SettingsTab, SidebarRow, BUTTON_APPLY, BUTTON_PROJECT_OVERRIDE, BUTTON_RESET,
+    ENUM_PICKER_MAX_VISIBLE,
 };
 
 impl SettingsModal {
@@ -107,6 +109,151 @@ impl SettingsModal {
         Ok(None)
     }
 
+    /// Act on the focused row: toggle a switch, cycle an enum, start editing
+    /// a value, or open an LSP server form.
+    ///
+    /// Shared by Enter/Space and by a mouse click, so that clicking a checkbox
+    /// does what pressing Enter on it does — previously a click only moved the
+    /// cursor, and the switch stayed put.
+    pub(super) fn activate_current_row(&mut self) {
+        let field_desc = match self.current_row() {
+            Some(ContentRow::Field(i)) => fields_for_tab(self.active_tab).get(i).copied(),
+            _ => None,
+        };
+
+        match self.current_row() {
+            Some(ContentRow::Field(field_idx)) => {
+                if let Some(d) = field_desc {
+                    match d.field_type {
+                        FieldType::Bool => {
+                            toggle_field(&mut self.config, self.active_tab, field_idx);
+                            self.dirty = true;
+                        }
+                        FieldType::Enum => self.open_enum_picker(field_idx),
+                        FieldType::Number | FieldType::OptionalText => {
+                            self.start_edit();
+                        }
+                    }
+                }
+            }
+            Some(ContentRow::LspAddServer) => {
+                self.lsp_edit_fields = Default::default();
+                self.lsp_edit_index = None;
+                self.lsp_edit_cursor = 0;
+                self.lsp_mode = LspMode::ServerEdit;
+            }
+            Some(ContentRow::LspServer(idx)) => {
+                if idx < self.lsp_server_keys.len() {
+                    let lang = self.lsp_server_keys[idx].clone();
+                    if let Some(srv) = self.config.lsp.servers.get(&lang) {
+                        self.lsp_edit_fields = [
+                            lang,
+                            srv.command.clone(),
+                            srv.args.join(", "),
+                            srv.root_markers.join(", "),
+                        ];
+                        self.lsp_edit_index = Some(idx);
+                        self.lsp_edit_cursor = 0;
+                        self.lsp_mode = LspMode::ServerEdit;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Open the dropdown for an enum field, highlighting its current value.
+    pub(super) fn open_enum_picker(&mut self, field_index: usize) {
+        let Some(options) = enum_options(&self.config, self.active_tab, field_index) else {
+            return;
+        };
+        // With nothing matching, start at the top rather than nowhere.
+        let cursor = options.current.unwrap_or(0);
+        let scroll = cursor.saturating_sub(ENUM_PICKER_MAX_VISIBLE.saturating_sub(1));
+        self.enum_picker = Some(EnumPicker {
+            field_index,
+            cursor,
+            scroll,
+            area: None,
+        });
+    }
+
+    pub(super) fn close_enum_picker(&mut self) {
+        self.enum_picker = None;
+    }
+
+    /// Store the highlighted choice and close.
+    pub(super) fn commit_enum_picker(&mut self) {
+        let Some(picker) = self.enum_picker.take() else {
+            return;
+        };
+        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+            return;
+        };
+        if let Some(value) = options.values.get(picker.cursor) {
+            let value = value.clone();
+            apply_enum_value(
+                &mut self.config,
+                self.active_tab,
+                picker.field_index,
+                &value,
+            );
+            self.dirty = true;
+        }
+    }
+
+    /// Scroll-wheel entry point for the dropdown highlight.
+    pub(super) fn move_enum_cursor_public(&mut self, forward: bool) {
+        self.move_enum_cursor(forward);
+    }
+
+    /// Move the highlight, keeping it inside the visible window.
+    fn move_enum_cursor(&mut self, forward: bool) {
+        let Some(picker) = self.enum_picker.as_ref() else {
+            return;
+        };
+        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+            return;
+        };
+        let len = options.values.len();
+        if len == 0 {
+            return;
+        }
+
+        let Some(picker) = self.enum_picker.as_mut() else {
+            return;
+        };
+        picker.cursor = if forward {
+            (picker.cursor + 1) % len
+        } else {
+            (picker.cursor + len - 1) % len
+        };
+
+        let visible = ENUM_PICKER_MAX_VISIBLE.min(len);
+        if picker.cursor < picker.scroll {
+            picker.scroll = picker.cursor;
+        } else if picker.cursor >= picker.scroll + visible {
+            picker.scroll = picker.cursor + 1 - visible;
+        }
+    }
+
+    /// Keys belonging to an open dropdown. Returns `true` when consumed.
+    fn handle_enum_picker_key(&mut self, key: KeyEvent) -> bool {
+        if self.enum_picker.is_none() {
+            return false;
+        }
+        match key.code {
+            KeyCode::Up => self.move_enum_cursor(false),
+            KeyCode::Down => self.move_enum_cursor(true),
+            KeyCode::Enter | KeyCode::Char(' ') => self.commit_enum_picker(),
+            KeyCode::Esc => self.close_enum_picker(),
+            // Anything else closes the list rather than falling through to the
+            // form underneath, where it would edit a field the user cannot see.
+            _ => self.close_enum_picker(),
+        }
+        true
+    }
+
     pub(super) fn handle_content_key(
         &mut self,
         key: KeyEvent,
@@ -114,6 +261,11 @@ impl SettingsModal {
         // LSP server edit form mode
         if self.active_tab == SettingsTab::Lsp && self.lsp_mode == LspMode::ServerEdit {
             return self.handle_lsp_edit_key(key);
+        }
+
+        // An open dropdown owns the keyboard until it closes.
+        if self.handle_enum_picker_key(key) {
+            return Ok(None);
         }
 
         let current = self.current_row();
@@ -145,48 +297,7 @@ impl SettingsModal {
                     Box::new(self.config.clone()),
                 ))));
             }
-            KeyCode::Enter | KeyCode::Char(' ') => match current {
-                Some(ContentRow::Field(field_idx)) => {
-                    if let Some(d) = field_desc {
-                        match d.field_type {
-                            FieldType::Bool => {
-                                toggle_field(&mut self.config, self.active_tab, field_idx);
-                                self.dirty = true;
-                            }
-                            FieldType::Enum => {
-                                cycle_enum_forward(&mut self.config, self.active_tab, field_idx);
-                                self.dirty = true;
-                            }
-                            FieldType::Number | FieldType::OptionalText => {
-                                self.start_edit();
-                            }
-                        }
-                    }
-                }
-                Some(ContentRow::LspAddServer) => {
-                    self.lsp_edit_fields = Default::default();
-                    self.lsp_edit_index = None;
-                    self.lsp_edit_cursor = 0;
-                    self.lsp_mode = LspMode::ServerEdit;
-                }
-                Some(ContentRow::LspServer(idx)) => {
-                    if idx < self.lsp_server_keys.len() {
-                        let lang = self.lsp_server_keys[idx].clone();
-                        if let Some(srv) = self.config.lsp.servers.get(&lang) {
-                            self.lsp_edit_fields = [
-                                lang,
-                                srv.command.clone(),
-                                srv.args.join(", "),
-                                srv.root_markers.join(", "),
-                            ];
-                            self.lsp_edit_index = Some(idx);
-                            self.lsp_edit_cursor = 0;
-                            self.lsp_mode = LspMode::ServerEdit;
-                        }
-                    }
-                }
-                _ => {}
-            },
+            KeyCode::Enter | KeyCode::Char(' ') => self.activate_current_row(),
             KeyCode::Delete => {
                 if let Some(ContentRow::LspServer(idx)) = current {
                     if idx < self.lsp_server_keys.len() {

@@ -5,16 +5,21 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
+    widgets::{Block, Borders, Clear, Widget},
 };
 use termide_i18n as i18n;
 use termide_theme::Theme;
+use unicode_width::UnicodeWidthStr;
 
 use crate::base::button_style;
 
-use super::fields::{fields_for_tab, get_field_value, ContentRow, FieldDescriptor, FieldType};
+use super::fields::{
+    enum_options, fields_for_tab, get_field_value, ContentRow, FieldDescriptor, FieldType,
+};
 use super::kb::{get_kb_value, kb_binding_names, KB_SECTIONS};
 use super::{
-    button_labels, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab, SidebarRow, BUTTON_RESET,
+    button_labels, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab, SidebarRow,
+    BUTTON_RESET, ENUM_PICKER_MAX_VISIBLE,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, safe for UTF-8 slicing.
@@ -522,6 +527,97 @@ impl SettingsModal {
                 hint,
                 Style::default().fg(theme.disabled),
             );
+        }
+    }
+}
+
+impl SettingsModal {
+    /// Draw the open enum dropdown over the form.
+    ///
+    /// Anchored under the field it belongs to, and flipped above it when there
+    /// is no room below, so the list never runs off the modal.
+    pub(super) fn render_enum_picker(&mut self, content: Rect, buf: &mut Buffer, theme: &Theme) {
+        let Some(picker) = self.enum_picker.clone() else {
+            return;
+        };
+        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+            self.enum_picker = None;
+            return;
+        };
+        let Some(inner) = self.last_content_area else {
+            return;
+        };
+
+        // Row the field occupies on screen, so the list can hang off it.
+        let row_index = self
+            .content_rows()
+            .iter()
+            .position(|row| matches!(row, ContentRow::Field(i) if *i == picker.field_index));
+        let Some(row_index) = row_index else {
+            return;
+        };
+        let field_y = inner.y as usize + row_index.saturating_sub(self.content_scroll);
+
+        let visible = ENUM_PICKER_MAX_VISIBLE.min(options.labels.len());
+        let height = visible as u16 + 2; // borders
+        let width = options
+            .labels
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(10)
+            .max(12) as u16
+            + 4;
+        let width = width.min(inner.width.max(12));
+
+        // Below the field if it fits, above it otherwise.
+        let below_y = field_y as u16 + 1;
+        let y = if below_y + height <= content.y + content.height {
+            below_y
+        } else {
+            (field_y as u16).saturating_sub(height)
+        };
+        // Aligned with the value column the form uses, so the list drops out
+        // of the value it replaces rather than out of the label.
+        const VALUE_COLUMN: u16 = 2 + 32;
+        let x = inner.x + VALUE_COLUMN.min(inner.width.saturating_sub(width));
+        let rect = Rect::new(x, y, width, height);
+
+        Clear.render(rect, buf);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.accented_fg))
+            .style(Style::default().bg(theme.bg));
+        let list_area = block.inner(rect);
+        block.render(rect, buf);
+
+        for (line, option_index) in (picker.scroll..options.labels.len())
+            .take(visible)
+            .enumerate()
+        {
+            let selected = option_index == picker.cursor;
+            let is_current = options.current == Some(option_index);
+            let style = if selected {
+                Style::default().fg(theme.bg).bg(theme.accented_fg)
+            } else {
+                Style::default().fg(theme.fg).bg(theme.bg)
+            };
+            // A dot marks the value actually stored, which is not the same as
+            // the one under the cursor while the user is browsing.
+            let marker = if is_current { "●" } else { " " };
+            let label = format!(" {marker} {}", options.labels[option_index]);
+            let padded = format!("{label:<width$}", width = list_area.width as usize);
+            buf.set_stringn(
+                list_area.x,
+                list_area.y + line as u16,
+                padded,
+                list_area.width as usize,
+                style,
+            );
+        }
+
+        if let Some(picker) = self.enum_picker.as_mut() {
+            picker.area = Some(rect);
         }
     }
 }

@@ -195,6 +195,11 @@ pub struct SettingsModal {
     /// Current edit buffer for text/number fields.
     edit_buffer: String,
 
+    /// Open enum dropdown, if any: which field it belongs to, and where the
+    /// highlight sits. `area` is filled in by the renderer so clicks can be
+    /// mapped back to entries.
+    pub(super) enum_picker: Option<EnumPicker>,
+
     // --- LSP server management ---
     lsp_mode: LspMode,
     /// Index of the server being edited (None = adding new).
@@ -240,6 +245,20 @@ pub struct SettingsModal {
 // ---------------------------------------------------------------------------
 // Modal trait implementation
 // ---------------------------------------------------------------------------
+
+/// State of an open enum dropdown.
+#[derive(Debug, Clone)]
+pub(super) struct EnumPicker {
+    /// Index into `fields_for_tab(active_tab)`.
+    pub field_index: usize,
+    pub cursor: usize,
+    pub scroll: usize,
+    /// Where it was last drawn; `None` until the first render.
+    pub area: Option<Rect>,
+}
+
+/// How many entries an open dropdown shows before it scrolls.
+pub(super) const ENUM_PICKER_MAX_VISIBLE: usize = 12;
 
 impl Modal for SettingsModal {
     type Result = SettingsResult;
@@ -288,6 +307,9 @@ impl Modal for SettingsModal {
 
         self.render_content(content, buf, theme);
         self.render_buttons(buttons, buf, theme);
+
+        // Last, so the list sits above the form it belongs to.
+        self.render_enum_picker(content, buf, theme);
     }
 
     fn handle_key(
@@ -319,6 +341,40 @@ impl Modal for SettingsModal {
         mouse: MouseEvent,
         modal_area: Rect,
     ) -> Result<Option<ModalResult<SettingsResult>>> {
+        // An open dropdown is on top, so it gets first refusal on every event.
+        if let Some(picker) = self.enum_picker.clone() {
+            if let Some(rect) = picker.area {
+                let inside = rect.contains((mouse.column, mouse.row).into());
+                match mouse.kind {
+                    MouseEventKind::ScrollUp if inside => {
+                        self.move_enum_cursor_public(false);
+                        return Ok(None);
+                    }
+                    MouseEventKind::ScrollDown if inside => {
+                        self.move_enum_cursor_public(true);
+                        return Ok(None);
+                    }
+                    MouseEventKind::Down(_) if inside => {
+                        // -1 for the top border.
+                        let row = mouse.row.saturating_sub(rect.y + 1) as usize;
+                        let index = picker.scroll + row;
+                        if let Some(p) = self.enum_picker.as_mut() {
+                            p.cursor = index;
+                        }
+                        self.commit_enum_picker();
+                        return Ok(None);
+                    }
+                    // A click anywhere else dismisses the list without
+                    // choosing, the way a dropdown is expected to behave.
+                    MouseEventKind::Down(_) => {
+                        self.close_enum_picker();
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         if mouse.kind == MouseEventKind::ScrollUp {
             if self.focus == FocusArea::Content && self.content_scroll > 0 {
                 self.content_scroll -= 1;
@@ -376,6 +432,10 @@ impl Modal for SettingsModal {
                     let rows = self.content_rows();
                     if idx < rows.len() && rows[idx].is_selectable() {
                         self.field_cursor = idx;
+                        // Clicking a control operates it, the way Enter does.
+                        // Moving the cursor and leaving the switch alone looks
+                        // like the click was ignored.
+                        self.activate_current_row();
                     }
                 }
                 return Ok(None);

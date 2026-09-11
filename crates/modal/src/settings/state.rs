@@ -24,12 +24,16 @@ impl SettingsModal {
             active_tab: SettingsTab::General,
             sidebar_cursor: 0,
             sidebar_scroll: 0,
-            keybindings_expanded: false,
+            // Expanded from the start: the group holds nine sections, and
+            // leaving it collapsed hides every keybinding behind a step users
+            // have no reason to expect.
+            keybindings_expanded: true,
             focus: FocusArea::Sidebar,
             field_cursor: 0,
             content_scroll: 0,
             editing: false,
             edit_buffer: String::new(),
+            enum_picker: None,
             lsp_mode: LspMode::Fields,
             lsp_edit_index: None,
             lsp_server_keys,

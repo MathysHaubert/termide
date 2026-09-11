@@ -298,6 +298,83 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
     }
 }
 
+/// The choices behind an enum field: what to store and what to show.
+///
+/// Cycling through variants with Left/Right is fine for three of them and
+/// unusable for twenty-five themes, so the same list also backs a dropdown.
+pub(super) struct EnumOptions {
+    /// Values as they are written into the config.
+    pub values: Vec<String>,
+    /// Labels as they are shown to the user.
+    pub labels: Vec<String>,
+    /// Index of the value currently held by the config, or `None` when the
+    /// config holds something the list does not offer.
+    ///
+    /// That is not hypothetical: the stock config ships `theme = "default"`,
+    /// which is a fallback name rather than a theme in `all_theme_names()`.
+    /// Cycling with Left/Right silently did nothing in that state, because it
+    /// looked the current value up by position and found none.
+    pub current: Option<usize>,
+}
+
+/// Enumerate the choices for an enum field, or `None` if it is not one.
+pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> Option<EnumOptions> {
+    let (values, labels, current_value) = match (tab, index) {
+        (SettingsTab::General, 1) => {
+            let names: Vec<String> = Theme::all_theme_names();
+            (names.clone(), names, config.general.theme.clone())
+        }
+        (SettingsTab::General, 2) => {
+            let langs = i18n::get_language_list();
+            (
+                langs.iter().map(|(c, _)| c.to_string()).collect(),
+                langs.iter().map(|(_, n)| n.to_string()).collect(),
+                config.general.language.clone(),
+            )
+        }
+        (SettingsTab::General, 3) => {
+            let values: Vec<String> = ["auto", "emoji", "unicode"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let current = format!("{:?}", config.general.icon_mode).to_lowercase();
+            (values.clone(), values, current)
+        }
+        (SettingsTab::Logging, 1) => {
+            let values: Vec<String> = ["trace", "debug", "info", "warn", "error"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            (values.clone(), values, config.logging.min_level.clone())
+        }
+        _ => return None,
+    };
+
+    let current = values.iter().position(|v| *v == current_value);
+    Some(EnumOptions {
+        values,
+        labels,
+        current,
+    })
+}
+
+/// Store the value chosen in the dropdown.
+pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usize, value: &str) {
+    match (tab, index) {
+        (SettingsTab::General, 1) => config.general.theme = value.to_string(),
+        (SettingsTab::General, 2) => config.general.language = value.to_string(),
+        (SettingsTab::General, 3) => {
+            config.general.icon_mode = match value {
+                "emoji" => termide_config::IconMode::Emoji,
+                "unicode" => termide_config::IconMode::Unicode,
+                _ => termide_config::IconMode::Auto,
+            }
+        }
+        (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
+        _ => {}
+    }
+}
+
 /// Cycle an enum field to the next variant.
 pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: usize) {
     match tab {
@@ -427,5 +504,85 @@ mod field_index_tests {
             config.general.bell_on_operation_complete,
             Config::default().general.bell_on_operation_complete
         );
+    }
+}
+
+#[cfg(test)]
+mod enum_option_tests {
+    use super::*;
+
+    /// Every field declared as an enum must be able to list its choices —
+    /// otherwise its dropdown opens empty and the value becomes uneditable
+    /// from the UI.
+    #[test]
+    fn every_enum_field_can_enumerate_its_choices() {
+        let config = Config::default();
+        let tabs = [
+            SettingsTab::General,
+            SettingsTab::Editor,
+            SettingsTab::FileManager,
+            SettingsTab::Terminal,
+            SettingsTab::Lsp,
+            SettingsTab::Logging,
+            SettingsTab::Vfs,
+        ];
+
+        for tab in tabs {
+            for (index, desc) in fields_for_tab(tab).iter().enumerate() {
+                if desc.field_type != FieldType::Enum {
+                    assert!(
+                        enum_options(&config, tab, index).is_none(),
+                        "{tab:?} field {index} is not an enum but offers choices"
+                    );
+                    continue;
+                }
+                let options = enum_options(&config, tab, index)
+                    .unwrap_or_else(|| panic!("{tab:?} field {index} lists no choices"));
+                assert!(!options.values.is_empty());
+                assert_eq!(options.values.len(), options.labels.len());
+                if let Some(current) = options.current {
+                    assert!(current < options.values.len());
+                }
+            }
+        }
+    }
+
+    /// Choosing from the dropdown and cycling with Left/Right must write the
+    /// same field, or the two ways of setting a value would disagree.
+    #[test]
+    fn applying_a_choice_matches_what_the_getter_reports() {
+        let mut config = Config::default();
+        let options = enum_options(&config, SettingsTab::Logging, 1).unwrap();
+
+        for (index, value) in options.values.iter().enumerate() {
+            apply_enum_value(&mut config, SettingsTab::Logging, 1, value);
+            let back = enum_options(&config, SettingsTab::Logging, 1).unwrap();
+            assert_eq!(back.current, Some(index), "round trip failed for {value}");
+            assert_eq!(get_field_value(&config, SettingsTab::Logging, 1), *value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod unlisted_value_tests {
+    use super::*;
+
+    /// The stock config names a theme that is not in the theme list, and the
+    /// dropdown must still open on it — marking nothing as current rather than
+    /// pointing at an unrelated entry.
+    #[test]
+    fn a_value_outside_the_list_marks_nothing_as_current() {
+        let mut config = Config::default();
+        config.general.theme = "no-such-theme".to_string();
+
+        let options = enum_options(&config, SettingsTab::General, 1).unwrap();
+        assert!(!options.values.is_empty());
+        assert_eq!(options.current, None);
+
+        // Choosing from the list still lands somewhere real.
+        let first = options.values[0].clone();
+        apply_enum_value(&mut config, SettingsTab::General, 1, &first);
+        let after = enum_options(&config, SettingsTab::General, 1).unwrap();
+        assert_eq!(after.current, Some(0));
     }
 }
