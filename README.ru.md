@@ -411,6 +411,7 @@ vim_mode = false
 session_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
+always_detachable = false  # сессия переживает закрытие терминала (Unix)
 resource_monitor_interval = 1000
 
 [editor]

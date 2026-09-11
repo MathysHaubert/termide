@@ -217,6 +217,7 @@ session_moved = "सत्र स्थानांतरित किया ग
 detach_session = "सत्र अलग करें"
 detach_not_detached_session = "अलग करने योग्य सत्र में नहीं चल रहा है"
 detach_failed = "सत्र डेमॉन से संपर्क नहीं हो सका"
+settings_general_always_detachable = "हमेशा अलग करने योग्य (Unix)"
 help_desc_detach_session = "सत्र अलग करें (चलता रहेगा)"
 directory_picker_create = "बनाएं"
 directory_picker_move = "स्थानांतरित करें"

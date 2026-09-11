@@ -281,6 +281,24 @@ fn main() -> Result<()> {
         config.general.theme = "norton-commander".to_string();
     }
 
+    // `general.always_detachable`: put this session in a host of its own and
+    // attach to it, so that it is the host — not this process — that dies with
+    // the terminal. Must happen before anything spawns a thread, because the
+    // host is created by fork.
+    //
+    // Skipped with file arguments: `git commit` and friends wait for the editor
+    // to exit, and a detach would tell them the edit finished when it had not.
+    // Skipped inside a session for the obvious reason.
+    #[cfg(unix)]
+    if config.general.always_detachable
+        && cli.files.is_empty()
+        && std::env::var_os(termide_detach::SOCKET_ENV).is_none()
+    {
+        let id = termide_detach::spawn_detached(&project_root, &[])?;
+        let code = termide_detach::client::attach(Some(id))?;
+        std::process::exit(code);
+    }
+
     // Initialize icon mode based on config + terminal capabilities
     init_icon_mode(config.general.icon_mode);
 

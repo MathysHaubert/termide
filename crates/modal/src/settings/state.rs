@@ -196,6 +196,9 @@ impl SettingsModal {
                 Header("Performance"),
                 Field(6), // session_retention
                 Field(8), // resource_monitor_interval
+                Spacer,
+                Header("Session"),
+                Field(9), // always_detachable
             ],
             SettingsTab::Editor => vec![
                 Header("Typing"),

@@ -381,6 +381,7 @@ vim_mode = false
 session_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
+always_detachable = false  # 会话在终端关闭后继续运行（仅限 Unix）
 resource_monitor_interval = 1000
 
 [editor]

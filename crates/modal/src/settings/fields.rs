@@ -92,6 +92,10 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
                 label: t.settings_general_resource_interval(),
                 field_type: FieldType::Number,
             },
+            FieldDescriptor {
+                label: t.settings_general_always_detachable(),
+                field_type: FieldType::Bool,
+            },
         ],
         SettingsTab::Editor => vec![
             FieldDescriptor {
@@ -196,6 +200,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             6 => config.general.session_retention_days.to_string(),
             7 => bool_str(config.general.bell_on_operation_complete),
             8 => config.general.resource_monitor_interval.to_string(),
+            9 => bool_str(config.general.always_detachable),
             _ => String::new(),
         },
         SettingsTab::Editor => match index {
@@ -267,6 +272,7 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
                 config.general.bell_on_operation_complete =
                     !config.general.bell_on_operation_complete
             }
+            9 => config.general.always_detachable = !config.general.always_detachable,
             _ => {}
         },
         SettingsTab::Editor => match index {
@@ -376,5 +382,50 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod field_index_tests {
+    use super::*;
+
+    /// The descriptor list, the value getter and the toggle each match on the
+    /// same bare index, in three separate `match` arms. Nothing checks that
+    /// they agree, so a field added at the wrong index reads one setting and
+    /// writes another. This pins the newest one down end to end.
+    #[test]
+    fn always_detachable_reads_and_writes_the_same_field() {
+        let index = 9;
+        let mut config = Config::default();
+
+        let fields = fields_for_tab(SettingsTab::General);
+        assert_eq!(fields.len(), index + 1, "always_detachable must be last");
+        assert!(matches!(fields[index].field_type, FieldType::Bool));
+
+        assert!(!config.general.always_detachable);
+        assert_eq!(
+            get_field_value(&config, SettingsTab::General, index),
+            bool_str(false)
+        );
+
+        toggle_field(&mut config, SettingsTab::General, index);
+        assert!(
+            config.general.always_detachable,
+            "toggling index {index} must flip always_detachable, not a neighbour"
+        );
+        assert_eq!(
+            get_field_value(&config, SettingsTab::General, index),
+            bool_str(true)
+        );
+
+        // Neighbours must be untouched by that toggle.
+        assert_eq!(
+            config.general.resource_monitor_interval,
+            Config::default().general.resource_monitor_interval
+        );
+        assert_eq!(
+            config.general.bell_on_operation_complete,
+            Config::default().general.bell_on_operation_complete
+        );
     }
 }

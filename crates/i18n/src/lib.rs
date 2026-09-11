@@ -526,6 +526,7 @@ pub trait Translation: Send + Sync {
     fn detach_session(&self) -> &str;
     fn detach_not_detached_session(&self) -> &str;
     fn detach_failed(&self) -> &str;
+    fn settings_general_always_detachable(&self) -> &str;
     fn help_desc_detach_session(&self) -> &str;
 
     // Directory picker

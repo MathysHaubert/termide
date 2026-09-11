@@ -30,6 +30,35 @@ A session is named after the project directory it was started in, so starting
 one in `~/src/my-project` gives you `my-project`. Start a second session in the
 same directory and it becomes `my-project-2`.
 
+## Making every session detachable
+
+Remembering `--detached` at launch is the whole catch: a termide started
+normally cannot be detached later. A running process is bound to its
+terminal's PTY — file descriptors are open, children inherited them, the
+controlling terminal is assigned — and nothing can move it into another one.
+This is the same reason `tmux` cannot adopt a program that is already running.
+
+If you work this way most of the time, turn it on permanently:
+
+```toml
+[general]
+always_detachable = true
+```
+
+or tick **Always detachable (Unix)** in Settings (`Alt+P`) → General. Every
+`termide` then starts in a host of its own, and `Alt+J` works everywhere.
+
+Worth knowing before you enable it:
+
+- **Closing a terminal stops meaning "stop termide".** The session survives,
+  and so do its LSP servers, watchers and shells. That is the point over SSH,
+  and a surprise locally — check `--list-sessions` occasionally.
+- **`$EDITOR` launches are exempt.** With file arguments (`EDITOR=termide git
+  commit`) the option is ignored: git waits for the editor to exit, and a
+  detach would tell it the edit finished when it had not.
+- The extra PTY costs a little throughput on heavy output, the same way tmux
+  does.
+
 ## A typical remote workflow
 
 ```bash

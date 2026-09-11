@@ -379,6 +379,7 @@ impl Translation for RuntimeTranslation {
         detach_session,
         detach_not_detached_session,
         detach_failed,
+        settings_general_always_detachable,
         help_desc_detach_session,
         directory_picker_create,
         directory_picker_move,

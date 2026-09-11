@@ -174,6 +174,21 @@ pub struct GeneralSettings {
     #[serde(default = "default_true")]
     pub report_all_keys: bool,
 
+    /// Start every session in a detachable host, so that closing the
+    /// terminal leaves it running and `termide --attach` picks it back up
+    /// without having to remember `--detached` at launch.
+    ///
+    /// Off by default: it changes what closing a terminal means. A session
+    /// that outlives its window keeps its LSP servers, watchers and shells
+    /// alive, which is the point when working over SSH and a surprise
+    /// otherwise. Ignored when termide is launched with file arguments —
+    /// `git commit` and friends wait for the editor to exit, and a detach
+    /// would tell them the edit finished when it had not.
+    ///
+    /// Unix only; there is no session host on Windows.
+    #[serde(default)]
+    pub always_detachable: bool,
+
     /// Global keyboard shortcuts
     #[serde(default)]
     pub keybindings: GlobalKeybindings,
@@ -596,6 +611,7 @@ impl From<LegacyConfig> for Config {
                 icon_mode: IconMode::default(),
                 resource_monitor_interval: legacy.resource_monitor_interval,
                 report_all_keys: default_true(),
+                always_detachable: false,
                 keybindings: GlobalKeybindings::default(),
             },
             editor: EditorSettings {
@@ -647,6 +663,7 @@ impl Default for GeneralSettings {
             icon_mode: IconMode::default(),
             resource_monitor_interval: default_resource_monitor_interval(),
             report_all_keys: default_true(),
+            always_detachable: false,
             keybindings: GlobalKeybindings::default(),
         }
     }
