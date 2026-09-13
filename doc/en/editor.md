@@ -212,7 +212,7 @@ When word wrap is enabled (configurable in settings), long lines are automatical
 
 - **Cursor positioning**: Cursor navigation and display work correctly across wrapped lines
 - **Mouse selection**: Clicks and drags accurately select text even when lines span multiple visual rows
-- **Line numbers**: Displayed for logical lines, not visual rows
+- **Line numbers**: Displayed for logical lines, not visual rows; the gutter is only as wide as the last line number needs, so a short file gives the width back to the text
 - **Editing operations**: All editing commands (cut, copy, paste, undo/redo) work seamlessly with wrapped content
 
 Enable/disable word wrap in your configuration file (`~/.config/termide/config.toml`):

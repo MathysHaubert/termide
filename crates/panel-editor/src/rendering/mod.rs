@@ -50,10 +50,6 @@ pub(crate) fn itoa_right_align(n: usize, width: usize, buf: &mut [u8; 20]) -> &s
     }
 }
 
-/// Minimum number of digit cells reserved for the line number, so the gutter
-/// keeps a stable width for ordinary files instead of jittering per buffer.
-pub const LINE_NUMBER_MIN_DIGITS: usize = 4;
-
 /// Gutter cells that follow the digits: LSP marker + separator space.
 pub const LINE_NUMBER_MARKER_CELLS: usize = 2;
 
@@ -68,15 +64,16 @@ fn decimal_digits(n: usize) -> usize {
     digits
 }
 
-/// Digit cells reserved for line numbers in a buffer of `total_lines` lines.
+/// Digit cells reserved for line numbers in a buffer of `total_lines` lines:
+/// exactly what the last line number needs. Nothing is held back for growth,
+/// so the content shifts one column when a buffer crosses 9, 99, 999 lines —
+/// a rare moment, against a gutter that otherwise wastes width on every
+/// short file.
 pub fn line_number_digits(total_lines: usize) -> usize {
-    decimal_digits(total_lines).max(LINE_NUMBER_MIN_DIGITS)
+    decimal_digits(total_lines)
 }
 
 /// Width of the line number column (digits + LSP marker + separator).
-///
-/// Grows past the 4-digit default so buffers with 10k+ lines still show the
-/// full number instead of overrunning the marker column.
 pub fn line_number_width(total_lines: usize) -> usize {
     line_number_digits(total_lines) + LINE_NUMBER_MARKER_CELLS
 }
@@ -233,8 +230,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn line_number_width_keeps_four_digit_default() {
-        assert_eq!(line_number_width(1), 6);
+    fn line_number_width_is_exactly_what_the_last_line_needs() {
+        // digits + marker + separator
+        assert_eq!(line_number_width(1), 3);
+        assert_eq!(line_number_width(3), 3);
+        assert_eq!(line_number_width(9), 3);
+        assert_eq!(line_number_width(10), 4);
+        assert_eq!(line_number_width(99), 4);
+        assert_eq!(line_number_width(100), 5);
         assert_eq!(line_number_width(9_999), 6);
     }
 
@@ -249,8 +252,8 @@ mod tests {
     fn content_width_shrinks_as_gutter_grows() {
         let (small, _) = calculate_content_dimensions(80, 24, 500);
         let (large, _) = calculate_content_dimensions(80, 24, 250_000);
-        assert_eq!(small, 74);
-        assert_eq!(large, 74 - 2);
+        assert_eq!(small, 80 - 5, "3 digits + marker + separator");
+        assert_eq!(large, 80 - 8, "6 digits + marker + separator");
     }
 
     #[test]
