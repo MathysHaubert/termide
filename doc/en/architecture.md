@@ -600,7 +600,7 @@ lives.
 | Git status / log panel refresh        | `crates/panel-git-status/src/lib.rs`, `panel-git-log/src/lib.rs`| `poll_refresh` in each panel's `tick`                                              |
 | Git submodule discovery (RepoManager) | `crates/git/src/repo_manager.rs` (`spawn_submodule_walk`)       | `RepoManager::poll` from git panel `tick`                                          |
 | Session restore — panels in parallel  | `crates/app/src/layout_session.rs` (`construct_panel` per panel)| Joined synchronously after spawn so the slowest panel still gates the first frame  |
-| Watcher repo registration             | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` in app main loop; inotify installs chunked at `INSTALL_CHUNK`/tick  |
+| Watcher repo registration             | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` in app main loop; inotify installs chunked at `INSTALL_CHUNK`/tick, FSEvents (macOS) one recursive root watch with `.gitignore` filtering on delivery |
 | Directory size walk (wide-view)       | `crates/panel-file-manager/src/utils.rs` (`shared_dir_size_cache`) | Per-frame `try_recv` against shared cache; budget enforced per walk             |
 
 The SFTP/FTP backend uses a different pattern — a dedicated tokio
