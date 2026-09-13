@@ -13,6 +13,7 @@
 - [远程文件系统（VFS）](vfs.md) - 通过 SFTP / FTP / FTPS 浏览和传输文件
 - [数据库查看器](database.md) - 只读浏览 SQLite / PostgreSQL / MySQL 表
 - [终端](terminal.md) - 使用集成终端
+- [可分离会话](detached-sessions.md) - 在 SSH 断开后保持会话存活
 - [文本编辑器](editor.md) - 使用语法高亮编辑文件
 - [Markdown 预览](markdown.md) - 渲染 `.md` 预览，`Ctrl+E` 切换源码
 - [Mermaid 图表](mermaid.md) - `.mmd` 图表查看器及嵌入的 ```mermaid``` 块

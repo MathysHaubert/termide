@@ -6,15 +6,25 @@
 
 ### 前置条件
 
-- **Rust 1.70+**（stable 工具链）
+- **Rust**——版本固定在 `rust-toolchain.toml` 中；在检出目录里第一次执行
+  `cargo` 命令时，rustup 会自动安装并选用该版本
 - **Git** 版本控制
+- **C 编译器**，用于编译 `build.rs` 构建的 tree-sitter 语法：Linux 上为 gcc 或
+  clang，macOS 上为 Xcode 命令行工具（`xcode-select --install`），Windows 上为 MSVC
 - **可选：** 启用 flakes 的 Nix，用于可重复构建
+
+除此之外无需其他依赖。整个工作区端到端都是纯 Rust——FTPS 使用 rustls 与
+webpki-roots，SFTP 使用 russh，因此无需安装 OpenSSL 或 libssh2——这也是完全静态的
+musl 构建得以实现的原因。
 
 ### 获取源代码
 
 ```bash
 git clone https://github.com/termide/termide.git
 cd termide
+
+# 启用随仓库版本化的 git 钩子（每个克隆一次）
+git config core.hooksPath .githooks
 ```
 
 ### 构建
@@ -47,6 +57,16 @@ nix build
 # 运行检查
 nix flake check
 ```
+
+开发 shell 从 `rust-toolchain.toml` 读取编译器版本，与 rustup 和 CI 使用同一个
+文件，因此 Nix 与非 Nix 检出使用相同的编译器构建。
+
+#### 平台说明
+
+CI 在 Linux 和 macOS 上运行 fmt / check / clippy / test 门禁；Windows 和交叉编译
+目标在发布时构建。使用平台设施的代码需要为每个平台写一个分支——现有的例子有进程
+自省（Linux 上的 `/proc`、macOS 上的 libproc、Windows 上的 ToolHelp 快照）、挂载表
+（`/proc/mounts` 与 `getmntinfo`）以及键盘增强标志。
 
 ### 运行测试
 
@@ -99,7 +119,7 @@ termide/
 │   ├── core/                 # 核心 Panel trait 和共享类型
 │   ├── file-ops/             # 文件操作（复制、移动、删除、上传、下载）
 │   ├── git/                  # Git 集成（状态、差异、日志）
-│   ├── highlight/            # 语法高亮（tree-sitter，15+ 种语言）
+│   ├── highlight/            # 语法高亮（tree-sitter，22 种语言）
 │   ├── i18n/                 # 国际化（15 种语言）
 │   ├── keyboard/             # 键盘处理和布局翻译
 │   ├── layout/               # 面板组、拆分布局、全屏预设

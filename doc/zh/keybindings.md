@@ -52,6 +52,159 @@ termide 自带的增强层默认值(`toggle_comment` 和 `switch_directory` 的
 中的事实标准。在不支持 Kitty 协议的终端上,termide 在启动时记录
 警告,列出受影响的绑定;用户可通过设置 → 键绑定重新绑定。
 
+## macOS: Option 不是 Alt
+
+在 macOS 上,所有终端默认都把 `Option` 当作**文本组合**修饰符——Ghostty
+`macos-option-as-alt=false`,kitty `macos_option_as_alt no`,iTerm2
+Option=Normal,Terminal.app 的 "Use Option as Meta key" 关闭。因此 `Option+F`
+以组合后的字形 `ƒ` 到达,不带 ALT 位,所有 `Alt+<字母>` 默认值(约 25 个
+全局动作)都无法触发。波及范围取决于终端:在 Ghostty 上,不产生文本的按键
+保留 ALT 位,所以 `Option+F9`、`Option+Up/Down` 和 `Option+Backspace` 仍然
+可用,而 Terminal.app 连这些键的修饰符也会剥离,只送出一个裸 `Up`。
+
+Termide 的补救措施是 Kitty 的 `REPORT_ALL_KEYS_AS_ESCAPE_CODES` 标志,它让
+终端在系统仍在组合字符的同时把 `Option+F` 上报为 `Alt+F`。该标志仅在 macOS
+上、在公布 Kitty 键盘协议的终端上于启动时推送,由以下选项控制:
+
+```toml
+[general]
+report_all_keys = true  # 默认
+```
+
+该标志有一个代价:死键和输入法组合不再到达 termide,因此 `Option+E` `E` → `é`
+在应用内失效。需要组合输入的用户应设置 `report_all_keys = false`,然后要么重新
+绑定受影响的动作,要么在终端自身中把 `Option` 切换为 `Alt`(Ghostty
+`macos-option-as-alt = true`,Terminal.app "Use Option as Meta key")。该标志还会
+让终端上报单独按下的修饰键;这些事件在事件边界被丢弃。
+
+当 `Alt+<键>` 绑定无法触发时,termide 会在启动时向日志记录一条警告,指出针对
+当前终端的补救办法。
+
+### Ghostty 重新绑定了 Option+Left / Option+Right
+
+与上述组合问题无关,Ghostty 自带以下 macOS 默认配置:
+
+```
+keybind = alt+arrow_left=esc:b
+keybind = alt+arrow_right=esc:f
+```
+
+它们实现了 readline 的按词移动约定,并且在按键到达 termide 之前就已触发:
+`Option+Left` 以两个字节 `ESC b` 到达,被解析为 `Alt+B`,`Option+Right` 则成为
+`Alt+F`。因此在 Ghostty 上,这两个和弦不只是无法到达 `prev_group` /
+`next_group`——它们会触发绑定到 `Alt+B` 和 `Alt+F` 的任何动作,默认分别是
+*添加书签*和*新建文件管理器*。
+
+termide 无法撤销这一点:Ghostty 在键盘协议介入之前就应用了该 keybind,因此
+`Option+Left` 以两个字节 `ESC b` 到达,与真正的 `Alt+B` 无法区分。Ghostty 的
+keybind 前缀(`global:`、`all:`、`unconsumed:`、`performable:`)和键表都无法把
+绑定限定在某个应用上。
+
+Termide 曾为这两个动作提供 `Alt+A` / `Alt+D` 作为备选,从而在不改动 Ghostty
+的情况下绕过该问题。它们后来被移除,让位于用 `Alt+D` 分离会话和用 `Alt+W`
+关闭面板——这是用户最先想到的字母——因此修复现在应放在 Ghostty 的配置中。
+
+要恢复 `Option+Left` / `Option+Right`,在 `~/.config/ghostty/config` 中清除这
+两个绑定:
+
+```
+keybind = alt+arrow_left=unbind
+keybind = alt+arrow_right=unbind
+```
+
+用 `Cmd+Shift+,` 重新加载或重启 Ghostty。注意这是终端全局的设置,因此也会移除
+您 shell 中 readline 的按词移动。可在 shell 一侧恢复——zsh 在 `~/.zshrc` 中:
+
+```zsh
+bindkey "^[[1;3D" backward-word   # Option+Left
+bindkey "^[[1;3C" forward-word    # Option+Right
+```
+
+bash 则在 `~/.inputrc` 中:
+
+```
+"\e[1;3D": backward-word
+"\e[1;3C": forward-word
+```
+
+这些是 Ghostty 在自身绑定移除后为 `Alt+Left` / `Alt+Right` 发送的标准 xterm
+序列;运行 `cat -v` 再按键可以确认您的终端实际发出的内容。
+
+`Option+Up` / `Option+Down` 没有这样的 Ghostty 绑定,能正常到达 `prev_panel` /
+`next_panel`。
+
+### Alt+Shift+= 和 Alt+Shift+- 在 macOS 上无法到达 termide
+
+`panel_grow_vertical` 和 `panel_shrink_vertical` 是 macOS 上唯一一对无法触发的
+默认值。Option 把 `Option+Shift+=` 组合成单个字形——拉丁布局下是 `±`,俄语布局下
+是 `«`——终端上报的是该字形而不是按键。这种映射依赖布局,因此无法像其他平台上
+`+` → `Shift+=` 那样逆向还原。
+
+请用鼠标进行垂直调整,或通过设置 → 键绑定把这两个动作重新绑定到不含 `Shift`
+的和弦。
+
+### Terminal.app 完全无法使用该补救措施
+
+Terminal.app 不实现 Kitty 键盘协议,因此 `report_all_keys` 无从生效,所有
+`Alt+<字母>` 绑定都无法触发,直到启用 **Settings → Profiles → Keyboard → "Use
+Option as Meta key"**。开启后,`Option+F` 以 `Alt+F` 到达 termide。
+
+即便如此,它的方向键仍需单独处理。Terminal.app 自带的配置文件按键映射会为
+`Option+Left` / `Option+Right` 发送 `ESC b` / `ESC f`——与 Ghostty 相同的冲突,
+以 `Alt+B` / `Alt+F` 到达——并且会完全丢弃 `Option+Up` / `Option+Down` 的修饰符,
+使其以裸 `Up` / `Down` 到达。两者都可在同一 Keyboard 标签页的按键映射列表中
+编辑。在 macOS 26.5 上的实测:
+
+```
+Option+Left   -> Alt+Char('b')      Option+Up   -> Up   (no ALT)
+Option+Right  -> Alt+Char('f')      Option+Down -> Down (no ALT)
+```
+
+一旦开启 Option-as-Meta,`Option+Up` / `Option+Down` 会原样到达 termide;只有
+水平方向的一对需要上述 Ghostty 式的解绑。
+
+### macOS: `Option+Z` 无法绑定
+
+`Alt+<字母>` 属于通用层,在 macOS 上一旦 Kitty 协议激活即可工作——只有一个例外。
+`Option+Z` 是 US 布局上唯一组合出**大写**字形 `Ω`(U+03A9)的组合。终端将其归类
+为移位字符并上报为:
+
+```
+Char('Ω') + SHIFT      ← no ALT bit at all
+```
+
+而 `Option+Q` 和 `Option+T` 则正确地上报为 `Char('q') + ALT` 和
+`Char('t') + ALT`。规范化无法挽回这一点:ALT 位从未到达,而把 `Ω` 映射回 `z`
+会误伤输入希腊文的用户。
+
+因此 `Alt+Z` 绑定在 macOS 上永远不会匹配。请选择另一个字母——这正是
+`detach_session` 默认为 `Alt+D` 的原因。
+
+### macOS 保留了部分功能键
+
+`F11` 被 macOS 的 Mission Control 绑定为*显示桌面*,永远不会到达终端,因此
+*切换堆叠*的 `F11` 备选项开箱即用时不工作;请使用 `Alt+Backspace`。
+
+更广泛地说,除非启用 **系统设置 → 键盘 → "将 F1、F2 等键用作标准功能键"**,
+F 键行发送的是媒体键,任何 `F<n>` 绑定都无法到达。对大多数全局动作而言,这只
+损失一对绑定中的 F 键那一半——`F9` 不工作时 `Alt+M` 仍能打开菜单。但以下默认值
+只绑定到功能键而没有其他备选,在该设置开启之前确实无法触发:
+
+| 动作 | 绑定 | 节 |
+|---|---|---|
+| 切换手风琴 / 拆分 | `Alt+F11` | `general` |
+| 删除行 | `F8` | `editor` |
+| 查找下一个 | `F3` | `editor` |
+| 查找上一个 | `Shift+F3` | `editor` |
+| 转到定义 | `F12` | `editor` |
+| 查找引用 | `Shift+F12`、`F24` | `editor` |
+| 重命名符号 | `F4` | `editor` |
+| 查看文件 | `F3` | `git_status` |
+| 编辑文件 | `F4` | `git_status` |
+
+termide 在 macOS 上启动时会记录一条列出这些绑定的警告。请启用该设置,或通过
+设置 → 键绑定重新绑定这些动作。
+
 ## 终端兼容性 (2026)
 
 | 终端 | Kitty 键盘协议 |

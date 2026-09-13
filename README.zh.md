@@ -317,6 +317,39 @@ nix build github:termide/termide#termide-static
   - Rust 1.70+（stable）
   - Nix 用户：需启用 flakes 的 Nix
 
+### 命令行选项
+
+```
+termide [OPTIONS] [FILE]...
+
+参数:
+  [FILE]...            要打开的文件。给定路径时，TermIDE 以干净的编辑器视图启动
+                       （不恢复/保存会话），因此可作为 git、crontab、visudo 等的
+                       $EDITOR 使用。
+
+选项:
+  --log-level <LEVEL>  设置日志级别（trace、debug、info、warn、error）
+  --no-lsp             禁用 LSP 语言服务器
+  --config <FILE>      使用自定义配置文件路径
+  --diagnostics        运行启动前诊断并退出（无 UI）
+  --detached           启动一个在终端关闭后仍继续运行的可分离会话，并打印其 ID
+                       （仅限 Unix）
+  --attach [<ID>]      接入某个可分离会话，省略时接入最近的一个
+  --list-sessions      列出可分离会话并退出
+  --completions <SHELL>
+                       打印补全脚本（bash、zsh、fish）并退出
+  --install-completions [<SHELL>]
+                       为 $SHELL 或指定的 shell 安装补全脚本
+  -h, --help           打印帮助
+  -V, --version        打印版本
+```
+
+用作您的编辑器：
+
+```sh
+export EDITOR=termide   # git commit, crontab -e, visudo, ...
+```
+
 ## 使用方法
 
 ### 快速开始

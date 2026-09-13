@@ -184,6 +184,49 @@ cargo build --release
 nix build
 ```
 
+## Shell 补全
+
+`termide --completions <shell>` 会为 bash、zsh 或 fish 打印补全脚本。加载后，它可以
+补全 `--` 选项、`--log-level` 和 `--completions` 接受的值、`--config` 之后的路径，
+以及——在有多个可分离会话的服务器上最实用的部分——`--attach` 之后的会话 ID，这些
+ID 在按下 Tab 的那一刻从 `termide --list-sessions` 读取。
+
+最快的方式是让 termide 自行放置文件：
+
+```bash
+termide --install-completions          # 用于 $SHELL 中的 shell
+termide --install-completions fish     # 或指定一个
+```
+
+bash 和 fish 会自行扫描每用户目录——`~/.local/share/bash-completion/completions/`
+（需安装 `bash-completion` 包）和 `~/.config/fish/completions/`——因此对它们而言这
+就是全部安装步骤。zsh 没有这样的目录：脚本会写入 `~/.zfunc/_termide`，termide 会
+打印需要在 `compinit` 之前加入 `~/.zshrc`（或加入 `~/.zshenv`）的那一行。如果这些
+文件中没有任何地方运行 `compinit`，它也会指出：那是 zsh 中开启补全的开关，没有它
+任何命令都不会补全。termide 从不自行编辑 rc 文件。
+
+```zsh
+fpath=(~/.zfunc $fpath)
+```
+
+脚本也可以打印出来手动放置，dotfiles 仓库或没有 `bash-completion` 的 shell 需要
+这样做：
+
+```bash
+# bash：写入 ~/.bashrc
+eval "$(termide --completions bash)"
+
+# zsh：放入 $fpath 中的某个目录，然后 compinit
+termide --completions zsh > ~/.zfunc/_termide
+
+# fish
+termide --completions fish > ~/.config/fish/completions/termide.fish
+```
+
+同样的三个文件也位于仓库的 `completions/` 目录和发布 tarball 中。`.deb`、`.rpm`
+和 AUR 包会将它们安装到系统范围，因此使用包安装时无需在 shell rc 文件中添加任何
+内容。
+
 ## 平台特定说明
 
 ### Linux
