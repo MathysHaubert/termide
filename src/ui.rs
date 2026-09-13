@@ -18,7 +18,7 @@ use termide_ui_render::{
     get_tools_items, render_collapsed_panel, render_dividers, render_expanded_panel, render_menu,
     render_v_divider_ghost, Dropdown, ExpandedPanelParams, LanguageDropdown, MenuRenderParams,
     ThemeDropdown, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX,
-    SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    SESSIONS_MENU_INDEX, TOOLS_SUBMENU_TERMINAL, WINDOWS_MENU_INDEX,
 };
 
 use termide_ui_render::{StatusBar, StatusBarParams};
@@ -73,7 +73,7 @@ fn render_dropdowns_and_modals(
         dropdown.render(frame.buffer_mut());
 
         // Render shell picker nested submenu if open (Terminal selected)
-        if state.ui.tools_nested.open && state.ui.tools_submenu.selected == 0 {
+        if state.ui.tools_nested.open && state.ui.tools_submenu.selected == TOOLS_SUBMENU_TERMINAL {
             let shell_items = get_shell_items(
                 &state.cache.shells,
                 state.config.terminal.default_shell.as_deref(),

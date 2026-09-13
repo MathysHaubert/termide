@@ -330,8 +330,13 @@ pub const SESSIONS_SUBMENU_CHANGE_ROOT: usize = 2;
 pub fn get_tools_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();
     let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
+    // The row order is the contract behind the TOOLS_SUBMENU_* indices
+    // below: the action dispatcher, keyboard navigation and mouse hit-testing
+    // all address rows by those constants, so a row added or removed here
+    // without moving them opens the neighbour of what was clicked.
     vec![
         DropdownItem::new(t.tools_open(), "open"),
+        DropdownItem::separator(),
         DropdownItem::new(t.tools_terminal(), "terminal")
             .with_submenu()
             .with_shortcut(shortcut("terminal")),
@@ -1028,6 +1033,34 @@ mod menu_shortcut_tests {
             menu_shortcut(&kb, "help").as_deref(),
             Some("Alt+H"),
             "only the primary key, not the whole `Alt+H, F1` list"
+        );
+    }
+
+    /// The TOOLS_SUBMENU_* indices address rows of `get_tools_items`; the two
+    /// drifted once (the separator row was dropped from the list but not from
+    /// the indices) and every entry from Terminal on opened its neighbour.
+    #[test]
+    fn tools_items_sit_at_their_index_constants() {
+        let items = get_tools_items(Some(&defaults()));
+        assert_eq!(items.len(), TOOLS_SUBMENU_ITEM_COUNT);
+        assert!(items[TOOLS_SUBMENU_SEPARATOR].is_separator);
+        for (index, key) in [
+            (TOOLS_SUBMENU_OPEN, "open"),
+            (TOOLS_SUBMENU_TERMINAL, "terminal"),
+            (TOOLS_SUBMENU_FILES, "files"),
+            (TOOLS_SUBMENU_EDITOR, "editor"),
+            (TOOLS_SUBMENU_GIT_STATUS, "git_status"),
+            (TOOLS_SUBMENU_GIT_LOG, "git_log"),
+            (TOOLS_SUBMENU_JOURNAL, "journal"),
+            (TOOLS_SUBMENU_DIAGNOSTICS, "diagnostics"),
+            (TOOLS_SUBMENU_OPERATIONS, "operations"),
+            (TOOLS_SUBMENU_OUTLINE, "outline"),
+        ] {
+            assert_eq!(items[index].key, key, "row {index} should be `{key}`");
+        }
+        assert!(
+            items[TOOLS_SUBMENU_TERMINAL].has_submenu,
+            "Terminal opens the shell picker"
         );
     }
 
