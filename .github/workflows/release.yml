@@ -144,6 +144,7 @@ jobs:
           mkdir -p package
           cp target/${{ matrix.target }}/release/termide package/
           cp README.md LICENSE package/
+          cp -r completions package/
           cd package
           tar czvf ../termide-${{ github.ref_name }}-${{ matrix.target }}.tar.gz *
           cd ..

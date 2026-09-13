@@ -186,6 +186,52 @@ cargo build --release
 nix build
 ```
 
+## Shell Completions
+
+`termide --completions <shell>` prints a completion script for bash, zsh or
+fish. Once loaded, it completes the `--` options, the values `--log-level` and
+`--completions` take, paths after `--config`, and — the useful part on a server
+with several detached sessions — the session ids after `--attach`, read from
+`termide --list-sessions` at the moment Tab is pressed.
+
+The quick way is to let termide place the file:
+
+```bash
+termide --install-completions          # for the shell in $SHELL
+termide --install-completions fish     # or name one
+```
+
+bash and fish scan a per-user directory on their own —
+`~/.local/share/bash-completion/completions/` (with the `bash-completion`
+package installed) and `~/.config/fish/completions/` — so for them that is the
+whole installation. zsh has no such directory: the script goes to
+`~/.zfunc/_termide` and termide prints the one line to add to `~/.zshrc`
+before `compinit`, or to `~/.zshenv`. If nothing in those files runs
+`compinit`, it says so too: that is what switches completion on in zsh, and
+without it no command completes. It never edits an rc file itself.
+
+```zsh
+fpath=(~/.zfunc $fpath)
+```
+
+The script can also be printed and placed by hand, which is what a dotfiles
+repository or a shell without `bash-completion` needs:
+
+```bash
+# bash: in ~/.bashrc
+eval "$(termide --completions bash)"
+
+# zsh: into a directory on $fpath, then compinit
+termide --completions zsh > ~/.zfunc/_termide
+
+# fish
+termide --completions fish > ~/.config/fish/completions/termide.fish
+```
+
+The same three files live in the repository's `completions/` directory and in
+the release tarballs. The `.deb`, `.rpm` and AUR packages install them
+system-wide, so with a package nothing needs adding to a shell rc file.
+
 ## Platform-Specific Notes
 
 ### Linux

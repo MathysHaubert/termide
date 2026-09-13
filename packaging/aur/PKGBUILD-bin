@@ -22,4 +22,9 @@ package() {
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/termide/README.md"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/termide/LICENSE"
+
+    # Install shell completions (shipped in the release tarball)
+    install -Dm644 completions/termide.bash "$pkgdir/usr/share/bash-completion/completions/termide"
+    install -Dm644 completions/_termide "$pkgdir/usr/share/zsh/site-functions/_termide"
+    install -Dm644 completions/termide.fish "$pkgdir/usr/share/fish/vendor_completions.d/termide.fish"
 }

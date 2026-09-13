@@ -187,6 +187,53 @@ cargo build --release
 nix build
 ```
 
+## Автодополнение в оболочке
+
+`termide --completions <shell>` печатает скрипт автодополнения для bash, zsh
+или fish. После загрузки он дополняет опции `--`, значения `--log-level` и
+`--completions`, пути после `--config` и, что полезнее всего на сервере с
+несколькими отсоединёнными сессиями, идентификаторы сессий после `--attach`,
+получая их из `termide --list-sessions` в момент нажатия Tab.
+
+Проще всего поручить размещение файла самому termide:
+
+```bash
+termide --install-completions          # для оболочки из $SHELL
+termide --install-completions fish     # или назвать её явно
+```
+
+bash и fish сами просматривают пользовательский каталог:
+`~/.local/share/bash-completion/completions/` (при установленном пакете
+`bash-completion`) и `~/.config/fish/completions/`, так что для них на этом
+установка заканчивается. У zsh такого каталога нет: скрипт записывается в
+`~/.zfunc/_termide`, а termide печатает единственную строку, которую нужно
+добавить в `~/.zshrc` до вызова `compinit` или в `~/.zshenv`. Если в этих
+файлах `compinit` не вызывается вовсе, termide скажет и об этом: именно он
+включает дополнение в zsh, без него не дополняется ни одна команда. Сам
+rc-файл termide никогда не правит.
+
+```zsh
+fpath=(~/.zfunc $fpath)
+```
+
+Скрипт можно и напечатать, чтобы разместить вручную: так удобнее для
+репозитория с dotfiles или для bash без пакета `bash-completion`:
+
+```bash
+# bash: в ~/.bashrc
+eval "$(termide --completions bash)"
+
+# zsh: в каталог из $fpath, затем compinit
+termide --completions zsh > ~/.zfunc/_termide
+
+# fish
+termide --completions fish > ~/.config/fish/completions/termide.fish
+```
+
+Те же три файла лежат в каталоге `completions/` репозитория и в архивах
+релизов. Пакеты `.deb`, `.rpm` и AUR устанавливают их в систему, так что при
+установке из пакета в rc-файл оболочки добавлять ничего не нужно.
+
 ## Особенности для различных платформ
 
 ### Linux

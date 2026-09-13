@@ -92,6 +92,9 @@ assets = [
     ["target/release/termide", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/termide/", "644"],
     ["LICENSE", "usr/share/doc/termide/", "644"],
+    ["completions/termide.bash", "usr/share/bash-completion/completions/termide", "644"],
+    ["completions/_termide", "usr/share/zsh/vendor-completions/", "644"],
+    ["completions/termide.fish", "usr/share/fish/vendor_completions.d/", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -102,6 +105,9 @@ assets = [
     { source = "target/release/termide", dest = "/usr/bin/termide", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/termide/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/termide/LICENSE", mode = "644", doc = true },
+    { source = "completions/termide.bash", dest = "/usr/share/bash-completion/completions/termide", mode = "644" },
+    { source = "completions/_termide", dest = "/usr/share/zsh/site-functions/_termide", mode = "644" },
+    { source = "completions/termide.fish", dest = "/usr/share/fish/vendor_completions.d/termide.fish", mode = "644" },
 ]
 auto-req = "no"
 

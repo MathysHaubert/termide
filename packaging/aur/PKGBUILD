@@ -39,4 +39,9 @@ package() {
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    # Install shell completions
+    install -Dm644 completions/termide.bash "$pkgdir/usr/share/bash-completion/completions/$pkgname"
+    install -Dm644 completions/_termide "$pkgdir/usr/share/zsh/site-functions/_termide"
+    install -Dm644 completions/termide.fish "$pkgdir/usr/share/fish/vendor_completions.d/$pkgname.fish"
 }

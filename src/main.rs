@@ -1,3 +1,5 @@
+#[cfg(unix)]
+mod completions;
 mod ui;
 
 use anyhow::Result;
@@ -50,6 +52,21 @@ struct Cli {
     #[cfg(unix)]
     #[arg(long)]
     list_sessions: bool,
+
+    /// Print a completion script for the given shell and exit. Load it with
+    /// `eval "$(termide --completions bash)"` in ~/.bashrc, or write it into
+    /// the shell's completions directory; `--attach` then completes session
+    /// ids from `--list-sessions`.
+    #[cfg(unix)]
+    #[arg(long, value_name = "SHELL", value_parser = completions::SHELLS)]
+    completions: Option<String>,
+
+    /// Write the completion script where the shell loads it from and exit:
+    /// bash and fish pick it up on their own, for zsh the line to add to
+    /// ~/.zshrc is printed. Without a shell name, `$SHELL` decides.
+    #[cfg(unix)]
+    #[arg(long, value_name = "SHELL", num_args = 0..=1, value_parser = completions::SHELLS)]
+    install_completions: Option<Option<String>>,
 
     /// File(s) to open. Given a path, termide starts in a clean editor view
     /// (no session is restored or saved), so it works as $EDITOR for tools
@@ -205,6 +222,27 @@ fn main() -> Result<()> {
 
     // Parse CLI arguments
     let cli = Cli::parse();
+
+    // `--completions` only prints a script; like the other pre-UI options
+    // it must stay plain stdout so `eval "$(termide --completions bash)"`
+    // and shell redirects capture it.
+    #[cfg(unix)]
+    if let Some(shell) = &cli.completions {
+        print!("{}", completions::script(shell));
+        return Ok(());
+    }
+    #[cfg(unix)]
+    if let Some(shell) = &cli.install_completions {
+        let env = completions::Env::from_process()?;
+        match completions::install(shell.as_deref(), &env) {
+            Ok(report) => print!("{report}"),
+            Err(e) => {
+                eprintln!("termide: {e:#}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
 
     // --diagnostics short-circuits before terminal init so output
     // is plain stdout, capturable by scripts and visible if termide
@@ -466,5 +504,84 @@ mod cli_tests {
             cli.files,
             vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod completion_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    const SCRIPTS: [(&str, &str); 3] = [
+        ("bash", include_str!("../completions/termide.bash")),
+        ("zsh", include_str!("../completions/_termide")),
+        ("fish", include_str!("../completions/termide.fish")),
+    ];
+
+    /// `--install-completions [SHELL]` takes its value optionally: bare, it
+    /// must parse as "use $SHELL" rather than swallow the next word.
+    #[test]
+    fn install_completions_value_is_optional() {
+        let cli = Cli::try_parse_from(["termide", "--install-completions"]).unwrap();
+        assert_eq!(cli.install_completions, Some(None));
+        let cli = Cli::try_parse_from(["termide", "--install-completions", "fish"]).unwrap();
+        assert_eq!(cli.install_completions, Some(Some("fish".to_string())));
+        assert!(Cli::try_parse_from(["termide", "--install-completions", "tcsh"]).is_err());
+        let cli =
+            Cli::try_parse_from(["termide", "--install-completions", "--", "notes.md"]).unwrap();
+        assert_eq!(cli.install_completions, Some(None));
+        assert_eq!(cli.files, vec![std::path::PathBuf::from("notes.md")]);
+    }
+
+    /// The completion scripts spell out option names by hand, so a new clap
+    /// option has to be added to each of them; this is what notices when it
+    /// is not.
+    #[test]
+    fn completion_scripts_cover_every_option() {
+        let mut cmd = Cli::command();
+        cmd.build();
+        let longs: Vec<String> = cmd
+            .get_arguments()
+            .filter_map(|arg| arg.get_long())
+            .map(|long| format!("--{long}"))
+            .collect();
+        assert!(
+            longs.contains(&"--help".to_string()),
+            "clap's built-ins must be part of the check"
+        );
+
+        for (shell, script) in SCRIPTS {
+            // bash and zsh name options as `--long`; fish declares them as
+            // `-l long`.
+            let spelled = |long: &str| match shell {
+                "fish" => format!("-l {}", long.trim_start_matches("--")),
+                _ => long.to_string(),
+            };
+            let missing: Vec<&str> = longs
+                .iter()
+                .filter(|long| !script.contains(&spelled(long)))
+                .map(String::as_str)
+                .collect();
+            assert!(missing.is_empty(), "{shell} completion lacks {missing:?}");
+        }
+    }
+
+    /// Every script accepts the shells `--completions` accepts, and each one
+    /// asks termide for the session list rather than guessing ids.
+    #[test]
+    fn completion_scripts_agree_with_the_cli() {
+        for (shell, script) in SCRIPTS {
+            for name in completions::SHELLS {
+                assert!(
+                    script.contains(name),
+                    "{shell} completion does not offer {name} for --completions"
+                );
+            }
+            assert!(
+                script.contains("--list-sessions 2>/dev/null"),
+                "{shell} completion does not query --list-sessions"
+            );
+            assert_eq!(completions::script(shell), script);
+        }
     }
 }

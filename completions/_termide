@@ -1,0 +1,38 @@
+#compdef termide
+# Zsh completion for termide.
+#
+# Install by writing it into a directory on $fpath, then running compinit:
+#   termide --completions zsh > ~/.zfunc/_termide
+#   fpath=(~/.zfunc $fpath); autoload -Uz compinit; compinit   # in ~/.zshrc
+# or system-wide: termide --completions zsh > /usr/share/zsh/site-functions/_termide
+#
+# Option names are spelled out by hand; src/main.rs has a test that fails
+# when a clap option is missing here.
+
+# Detached sessions as `id:project` pairs from the `--list-sessions` table,
+# header dropped. Falls back to files when nothing is running, because
+# `--attach` takes an optional id and the next word may be a file to open.
+_termide_sessions() {
+  local -a sessions
+  sessions=(${(f)"$(termide --list-sessions 2>/dev/null |
+    awk 'NR > 1 { gsub(/:/, "\\:", $5); print $1 ":" $5 }')"})
+  if (( ${#sessions} )); then
+    _describe -t sessions 'detached session' sessions
+  else
+    _files
+  fi
+}
+
+_arguments \
+  '--log-level[Minimum log level]:level:(trace debug info warn error)' \
+  '--no-lsp[Disable LSP support]' \
+  '--config[Path to config file]:path:_files' \
+  '--diagnostics[Run pre-flight diagnostics and exit]' \
+  '--detached[Start a detached session and print its id]' \
+  '--attach[Attach to a detached session, the most recent without an id]::session:_termide_sessions' \
+  '--list-sessions[List detached sessions and exit]' \
+  '--completions[Print a shell completion script and exit]:shell:(bash zsh fish)' \
+  '--install-completions[Install the completion script for a shell, $SHELL by default]::shell:(bash zsh fish)' \
+  '(- *)'{-h,--help}'[Print help]' \
+  '(- *)'{-V,--version}'[Print version]' \
+  '*:file:_files'

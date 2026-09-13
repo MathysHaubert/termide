@@ -340,6 +340,10 @@ Options:
                        closing, and print its id (Unix only)
   --attach [<ID>]      Attach to a detached session, most recent if omitted
   --list-sessions      List detached sessions and exit
+  --completions <SHELL>
+                       Print a completion script (bash, zsh, fish) and exit
+  --install-completions [<SHELL>]
+                       Install the completion script for $SHELL, or the named one
   -h, --help           Print help
   -V, --version        Print version
 ```

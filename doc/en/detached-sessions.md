@@ -118,6 +118,10 @@ the way it does in a local session.
 `--list-sessions` also cleans up after sessions whose host process is gone, so
 a crash never leaves a phantom entry behind.
 
+With shell completion loaded (`termide --completions <shell>`, see
+[Installation](installation.md#shell-completions)), Tab after `--attach`
+offers the ids from this table.
+
 ## Detaching
 
 | Way | When to use it |
