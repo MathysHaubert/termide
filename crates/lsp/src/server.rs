@@ -53,12 +53,7 @@ pub enum ServerStatus {
 type PendingRequests = Arc<Mutex<HashMap<RequestId, mpsc::Sender<Value>>>>;
 
 /// LSP server instance
-#[allow(dead_code)] // Fields used once didOpen/didChange/completion are wired up
 pub struct LspServer {
-    /// Language ID
-    language_id: String,
-    /// Workspace root
-    workspace_root: PathBuf,
     /// Server process
     process: Child,
     /// Next request ID
@@ -166,8 +161,6 @@ impl LspServer {
         };
 
         let mut server = Self {
-            language_id,
-            workspace_root: workspace_root.clone(),
             process,
             next_id: AtomicU64::new(1),
             pending,

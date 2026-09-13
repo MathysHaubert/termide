@@ -65,10 +65,6 @@ pub enum FmCommand {
     GoToPath,
     /// Open directory switcher modal (Ctrl+/)
     SwitchDirectory,
-    /// Cancel pending VFS operation (Escape during connection)
-    /// Note: Not yet mapped to any key, reserved for future use
-    #[allow(dead_code)]
-    CancelOperation,
 
     // Tree expand/collapse
     ExpandDir,

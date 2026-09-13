@@ -130,18 +130,6 @@ impl FileManager {
                     self.selection.clear();
                 }
             }
-            FmCommand::CancelOperation => {
-                // Explicitly cancel pending VFS operation
-                if let Some(message) = self.vfs.cancel_pending() {
-                    // Sync FileManager path with VfsState
-                    self.current_path = self.vfs.path_buf();
-                    let _ = self.load_directory();
-                    // Show cancellation modal
-                    let t = termide_i18n::t();
-                    self.show_info_modal(t.connection_cancelled_title(), &message);
-                    events.push(PanelEvent::ClearStatus);
-                }
-            }
             FmCommand::MoveUpWithSelection => self.move_up_with_selection(),
             FmCommand::MoveDownWithSelection => self.move_down_with_selection(),
             FmCommand::PageUpWithSelection => self.page_up_with_selection(),

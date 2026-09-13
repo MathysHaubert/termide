@@ -18,12 +18,6 @@ pub enum PendingVfsOperation {
     ListDir(VfsOperation<Vec<VfsEntry>>),
     /// Connection operation.
     Connect(VfsOperation<()>),
-    /// File read operation (infrastructure for future VFS operations).
-    #[allow(dead_code)]
-    ReadFile(VfsOperation<Vec<u8>>),
-    /// Generic operation (infrastructure for future VFS operations).
-    #[allow(dead_code)]
-    Generic(VfsOperation<()>),
     /// A remote file or directory being created. Its completion has to reach
     /// the FileManager so the listing reloads and the new entry is revealed.
     CreateEntry {
@@ -439,32 +433,6 @@ impl VfsState {
                     None => {
                         // Still connecting, put it back
                         self.pending_operation = Some(PendingVfsOperation::Connect(op));
-                        None
-                    }
-                }
-            }
-            PendingVfsOperation::ReadFile(op) => {
-                match op.try_recv() {
-                    Some(_result) => {
-                        // File read completed (caller handles result)
-                        None
-                    }
-                    None => {
-                        // Still pending
-                        self.pending_operation = Some(PendingVfsOperation::ReadFile(op));
-                        None
-                    }
-                }
-            }
-            PendingVfsOperation::Generic(op) => {
-                match op.try_recv() {
-                    Some(_result) => {
-                        // Operation completed
-                        None
-                    }
-                    None => {
-                        // Still pending
-                        self.pending_operation = Some(PendingVfsOperation::Generic(op));
                         None
                     }
                 }
