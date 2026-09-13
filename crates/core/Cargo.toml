@@ -12,6 +12,7 @@ ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
+unicode-width.workspace = true
 
 # For Panel trait methods
 termide-theme = { path = "../theme" }

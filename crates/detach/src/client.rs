@@ -121,15 +121,20 @@ pub fn attach(id: Option<String>) -> Result<i32> {
 fn probe_terminal() -> ClientCaps {
     let via_ssh =
         std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+    // The width probe has a bounded wait of its own and is answered by any
+    // terminal that answers cursor-position reports, SSH or not.
+    let vs16_wide = termide_core::probe_variation_selector_width().unwrap_or(false);
     if via_ssh {
         return ClientCaps {
             kitty: false,
             via_ssh: true,
+            vs16_wide,
         };
     }
     ClientCaps {
         kitty: crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false),
         via_ssh: false,
+        vs16_wide,
     }
 }
 

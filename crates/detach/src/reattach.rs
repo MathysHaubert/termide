@@ -80,6 +80,8 @@ pub struct ClientTerminal {
     pub kitty: bool,
     /// The client is on the far side of an SSH connection.
     pub via_ssh: bool,
+    /// The client's terminal widens a text-presentation emoji after U+FE0F.
+    pub vs16_wide: bool,
 }
 
 /// Adopt the terminal facts reported by the client that just attached.
@@ -105,10 +107,12 @@ pub fn adopt_client_terminal() -> Option<ClientTerminal> {
 
     let mut kitty = false;
     let mut via_ssh = false;
+    let mut vs16_wide = false;
     for line in lines {
         match line.split_once('=') {
             Some(("kitty", v)) => kitty = v.trim() == "1",
             Some(("ssh", v)) => via_ssh = v.trim() == "1",
+            Some(("vs16", v)) => vs16_wide = v.trim() == "1",
             _ => {}
         }
     }
@@ -121,5 +125,6 @@ pub fn adopt_client_terminal() -> Option<ClientTerminal> {
         term,
         kitty,
         via_ssh,
+        vs16_wide,
     })
 }

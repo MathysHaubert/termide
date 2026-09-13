@@ -63,17 +63,20 @@ pub struct ClientCaps {
     pub kitty: bool,
     /// The client is running over SSH, where the probe is skipped entirely.
     pub via_ssh: bool,
+    /// The terminal widens a text-presentation emoji after U+FE0F.
+    pub vs16_wide: bool,
 }
 
 impl ClientCaps {
     fn to_bits(self) -> u8 {
-        u8::from(self.kitty) | (u8::from(self.via_ssh) << 1)
+        u8::from(self.kitty) | (u8::from(self.via_ssh) << 1) | (u8::from(self.vs16_wide) << 2)
     }
 
     fn from_bits(bits: u8) -> Self {
         Self {
-            kitty: bits & 0b01 != 0,
-            via_ssh: bits & 0b10 != 0,
+            kitty: bits & 0b001 != 0,
+            via_ssh: bits & 0b010 != 0,
+            vs16_wide: bits & 0b100 != 0,
         }
     }
 }
@@ -247,6 +250,7 @@ mod tests {
                 caps: ClientCaps {
                     kitty: true,
                     via_ssh: false,
+                    vs16_wide: true,
                 },
             },
             ClientFrame::Input(vec![0x1b, b'[', b'A']),
@@ -312,14 +316,17 @@ mod tests {
             ClientCaps {
                 kitty: true,
                 via_ssh: false,
+                vs16_wide: false,
             },
             ClientCaps {
                 kitty: false,
                 via_ssh: true,
+                vs16_wide: false,
             },
             ClientCaps {
                 kitty: true,
                 via_ssh: true,
+                vs16_wide: true,
             },
         ] {
             let mut buf = Vec::new();

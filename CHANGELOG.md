@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Leftover fragments on panel borders and inside TUI applications.** The workspace's `unicode-width` fork had dropped the emoji sequence rules, so `✔️`, `⚠️`, `❤️`, skin-tone and ZWJ emoji counted as one column while every terminal draws them in two. ratatui's frame diff then shifted the rest of the row by a column and never repainted it, leaving pieces of a previous frame — a border line through `pi`'s editor, a stray cell on a panel border — until something else touched those cells. The fork now carries the upstream tables and state machine again, keeping only the Bengali spacing-mark override it was created for. Variation selectors are the one place terminals disagree — Ghostty, WezTerm and iTerm2 make `⏱️` two columns while `wcwidth` terminals such as alacritty and foot leave it at one — so termide asks the host terminal at startup (the attach client asks for a detached session) and follows its answer; the Journal records it, and `TERMIDE_VS16_WIDE=0|1` overrides it. ratatui's frame diff has its own workaround for such emoji — it writes the cell after them as an explicit blank, assuming the terminal kept them narrow — which on a terminal that widens puts that blank one column too far and shifts the rest of the row (`twoocolumnsswide`); termide now flags those cells as skipped before the diff runs.
+
 
 ## [0.34.1] - 2026-09-11
 

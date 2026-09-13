@@ -348,9 +348,10 @@ fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
             let _ = std::fs::write(
                 paths::term_path(&session.id)?,
                 format!(
-                    "{term}\nkitty={}\nssh={}\n",
+                    "{term}\nkitty={}\nssh={}\nvs16={}\n",
                     u8::from(caps.kitty),
-                    u8::from(caps.via_ssh)
+                    u8::from(caps.via_ssh),
+                    u8::from(caps.vs16_wide)
                 ),
             );
             let _ = registry::set_attached(&session.id, true);

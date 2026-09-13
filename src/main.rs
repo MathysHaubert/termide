@@ -338,6 +338,21 @@ fn main() -> Result<()> {
     // connects to a detached session gets exactly these modes and no other.
     termide_core::enter_terminal_modes(&keyboard_caps, Some(&title))?;
 
+    // Whether `⏱️`-style emoji take one column or two is the host terminal's
+    // call, and the frame diff must agree with it. A hosted session has the
+    // daemon at the other end of its PTY, which answers no query: there the
+    // attach client probes its own terminal and hands the answer over.
+    #[cfg(unix)]
+    let hosted = std::env::var_os(termide_detach::SOCKET_ENV).is_some();
+    #[cfg(not(unix))]
+    let hosted = false;
+    let vs16_probe = if hosted {
+        None
+    } else {
+        Some(termide_core::probe_variation_selector_width())
+    };
+    let vs16_wide = termide_core::adopt_variation_selector_width(vs16_probe.flatten());
+
     // In a detached session, the daemon signals us when a client attaches.
     // A no-op otherwise.
     #[cfg(unix)]
@@ -358,6 +373,18 @@ fn main() -> Result<()> {
     let mut app = App::new_with_config(config, global_baseline, width, height, keyboard_caps);
 
     // Re-emit any deferred startup warnings now that the logger is up
+    match vs16_probe {
+        Some(Some(answer)) => log::info!(
+            "Host terminal makes emoji + VS16 (⏱️) {} wide; frame diff follows it",
+            if answer { "two columns" } else { "one column" }
+        ),
+        Some(None) => log::warn!(
+            "Host terminal did not answer the VS16 width probe; assuming {} (set {}=0|1 to override)",
+            if vs16_wide { "two columns" } else { "one column" },
+            termide_core::VS16_WIDTH_ENV
+        ),
+        None => log::info!("Hosted session: VS16 width comes from the attach client"),
+    }
     // — these end up in the Journal panel where users actually look.
     if let Some(msg) = config_load_warning {
         log::warn!("{}", msg);

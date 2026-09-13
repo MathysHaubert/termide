@@ -180,6 +180,31 @@ pub use tables::UNICODE_VERSION;
 
 mod tables;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether U+FE0E / U+FE0F change the width of the character before them.
+///
+/// Terminals disagree here. Ghostty (grapheme clustering on, its default),
+/// WezTerm and iTerm2 follow UAX #11 and make `⏱️` two columns; `wcwidth`
+/// based terminals such as alacritty and foot keep the base character's
+/// width and only change its glyph. A TUI whose frame diff assumes the wrong
+/// answer shifts the rest of the row on screen, so termide probes the host
+/// terminal at startup and sets this. The default is upstream's UAX #11
+/// behaviour, so the fork stays a drop-in replacement until told otherwise.
+static VARIATION_SELECTORS_CHANGE_WIDTH: AtomicBool = AtomicBool::new(true);
+
+/// Tell the width tables whether the host terminal widens a text-presentation
+/// emoji after U+FE0F (and narrows an emoji after U+FE0E).
+pub fn set_variation_selectors_change_width(enabled: bool) {
+    VARIATION_SELECTORS_CHANGE_WIDTH.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether variation selectors currently change widths (see
+/// [`set_variation_selectors_change_width`]).
+pub fn variation_selectors_change_width() -> bool {
+    VARIATION_SELECTORS_CHANGE_WIDTH.load(Ordering::Relaxed)
+}
+
 mod private {
     pub trait Sealed {}
     #[cfg(not(feature = "cjk"))]

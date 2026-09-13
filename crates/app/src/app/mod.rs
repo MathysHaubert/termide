@@ -276,6 +276,15 @@ impl App {
                 client.via_ssh,
             );
             self.normalizer = termide_keyboard::KeyNormalizer::new(self.keyboard_caps);
+            let vs16_wide = termide_core::adopt_variation_selector_width(Some(client.vs16_wide));
+            log::info!(
+                "Client terminal makes emoji + VS16 {} wide",
+                if vs16_wide {
+                    "two columns"
+                } else {
+                    "one column"
+                }
+            );
             // Matching depends on the capabilities, so the cached table built
             // against the old ones has to go.
             self.state.cache.hotkey_table = None;
@@ -763,6 +772,9 @@ impl App {
             if self.state.needs_redraw {
                 terminal.draw(|frame| {
                     render_fn(frame, &mut self.state, &mut self.layout_manager);
+                    // Keep the frame diff from emitting the spacer after a
+                    // VS16-widened emoji, which shifts the row on Ghostty.
+                    termide_core::mark_variation_selector_tails(frame.buffer_mut());
                 })?;
                 self.state.needs_redraw = false;
             }

@@ -7,15 +7,19 @@
 //! agree exactly, which is easiest to guarantee when they are the same code.
 
 use crossterm::{
+    cursor::{self, MoveToColumn},
     event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
+    style::Print,
+    terminal::{
+        disable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    },
 };
-use std::io;
+use std::io::{self, IsTerminal};
 
 use termide_keyboard::KeyboardCaps;
 
@@ -63,6 +67,61 @@ pub fn enter_terminal_modes(caps: &KeyboardCaps, title: Option<&str>) -> io::Res
     }
 
     Ok(())
+}
+
+/// `TERMIDE_VS16_WIDE=1|0` pins the answer of [`probe_variation_selector_width`]
+/// for terminals that answer it wrongly or not at all.
+pub const VS16_WIDTH_ENV: &str = "TERMIDE_VS16_WIDE";
+
+/// The user's override of the variation-selector width, if set.
+pub fn variation_selector_width_override() -> Option<bool> {
+    match std::env::var(VS16_WIDTH_ENV).ok()?.trim() {
+        "1" | "true" | "wide" => Some(true),
+        "0" | "false" | "narrow" => Some(false),
+        _ => None,
+    }
+}
+
+/// Ask the host terminal whether U+FE0F widens the emoji before it.
+///
+/// `⏱️` is two columns in Ghostty, WezTerm and iTerm2 and one in `wcwidth`
+/// terminals such as alacritty and foot; ratatui's frame diff and the
+/// terminal panel's grid both have to agree with whichever terminal is
+/// looking at us, or every row holding such an emoji is shifted by a column
+/// and keeps stale cells. The glyph is drawn at the cursor, the cursor
+/// position is read back, and the line is cleared from where the probe
+/// started. Returns `None` when the terminal did not answer (not a tty, or a
+/// relay that swallows queries). [`VS16_WIDTH_ENV`] short-circuits the probe.
+pub fn probe_variation_selector_width() -> Option<bool> {
+    if let Some(forced) = variation_selector_width_override() {
+        return Some(forced);
+    }
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return None;
+    }
+    let mut stdout = io::stdout();
+    let (start_col, _) = cursor::position().ok()?;
+    execute!(stdout, Print("\u{23F1}\u{FE0F}")).ok()?;
+    let (end_col, _) = cursor::position().ok()?;
+    let _ = execute!(
+        stdout,
+        MoveToColumn(start_col),
+        Clear(ClearType::UntilNewLine)
+    );
+    Some(end_col.saturating_sub(start_col) >= 2)
+}
+
+/// Make every width computation in the process follow the host terminal's
+/// answer to [`probe_variation_selector_width`]. An unanswered probe keeps
+/// the UAX #11 default (wide), which is what upstream `unicode-width` and
+/// most modern terminals do. Returns the value in effect; callers log it
+/// once the logger exists (at startup the probe runs before it does).
+pub fn adopt_variation_selector_width(widens: Option<bool>) -> bool {
+    let widens = variation_selector_width_override()
+        .or(widens)
+        .unwrap_or(true);
+    unicode_width::set_variation_selectors_change_width(widens);
+    widens
 }
 
 /// Put the terminal back the way it was found.
