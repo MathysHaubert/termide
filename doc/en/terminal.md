@@ -6,6 +6,7 @@ The terminal panel provides a full-featured terminal emulator with pseudotermina
 
 - **Interactive Shell**: Launches the default system shell (`fish`, `zsh`, `bash`, etc.) for command execution
 - **Compatibility**: Supports `xterm-256color` and most standard ANSI control sequences, ensuring correct display of colors and text styles
+- **Wide and combining characters**: CJK text, emoji and emoji sequences (skin tones, ZWJ) take the two columns the host terminal gives them, and combining accents attach to the character before them instead of taking a cell. Whether a variation selector widens a symbol (`⏱️`) is probed from the host terminal at startup, because terminals differ on it. Full-screen applications and coding agents such as `pi` keep their layout, erase the right rows, and place the cursor where they expect
 - **Modern TUI Compatibility**: Responds to common terminal capability queries and supports negotiated keyboard/focus reporting used by applications such as `vim`, `neovim`, `yazi`, `htop`, and `lazygit`
 - **Process Management**: When closing a terminal panel with running processes, the application will request confirmation before terminating them
 - **Panel Title**: Shows `user@host/<directory> (<foreground command>)`. The directory is read from the running shell, so it follows a `cd` inside the panel; a panel started with a fixed command (for example an SSH session) is titled with that command instead

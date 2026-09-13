@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use termide_core::{PanelEvent, Searchable};
 use termide_modal::{FindBar, FindBarAction, FindBarBtn, FindBarConfig, FindField};
 
-use super::terminal::TerminalScreen;
+use super::terminal::{Cell, TerminalScreen};
 use super::{Terminal, TerminalSearchState};
 
 impl Terminal {
@@ -49,14 +49,36 @@ impl Terminal {
                 continue;
             };
 
-            // Extract text from cells
-            let line_text: String = row.iter().map(|c| c.ch).collect();
+            // Extract text from cells. A wide character's continuation cell
+            // adds nothing and an attached mark adds bytes, so keep a byte
+            // offset -> grid column map to place the highlight.
+            let mut line_text = String::with_capacity(row.len());
+            let mut cell_at_byte: Vec<usize> = Vec::with_capacity(row.len());
+            for (col, cell) in row.iter().enumerate() {
+                let before = line_text.len();
+                cell.push_text(&mut line_text);
+                for _ in before..line_text.len() {
+                    cell_at_byte.push(col);
+                }
+            }
+            let to_cells = |start: usize, end: usize| -> Option<(usize, usize)> {
+                let first = *cell_at_byte.get(start)?;
+                let last = *cell_at_byte.get(end.checked_sub(1)?)?;
+                let after = if row.get(last + 1).is_some_and(Cell::is_continuation) {
+                    last + 2
+                } else {
+                    last + 1
+                };
+                Some((first, after.checked_sub(first)?))
+            };
 
             if let Some(re) = regex.as_ref() {
                 for m in re.find_iter(&line_text) {
                     // Skip zero-width matches (e.g. `a*`) — nothing to highlight.
                     if m.end() > m.start() {
-                        matches.push((abs_row, m.start(), m.end() - m.start()));
+                        if let Some((col, len)) = to_cells(m.start(), m.end()) {
+                            matches.push((abs_row, col, len));
+                        }
                     }
                 }
                 continue;
@@ -72,9 +94,11 @@ impl Terminal {
             // Find all occurrences in this line
             let mut start = 0;
             while let Some(pos) = search_text[start..].find(&query_lower) {
-                let col = start + pos;
-                matches.push((abs_row, col, query_lower.len()));
-                start = col + query_lower.len();
+                let byte = start + pos;
+                if let Some((col, len)) = to_cells(byte, byte + query_lower.len()) {
+                    matches.push((abs_row, col, len));
+                }
+                start = byte + query_lower.len();
                 if start >= search_text.len() {
                     break;
                 }

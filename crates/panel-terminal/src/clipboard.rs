@@ -48,11 +48,8 @@ pub fn get_selected_text(screen: &RwLock<TerminalScreen>) -> String {
         let line_start = result.len();
 
         for col_idx in col_start..=col_end {
-            if col_idx < row.len() {
-                let ch = row[col_idx].ch;
-                if ch != '\0' {
-                    result.push(ch);
-                }
+            if let Some(cell) = row.get(col_idx) {
+                cell.push_text(&mut result);
             }
         }
 

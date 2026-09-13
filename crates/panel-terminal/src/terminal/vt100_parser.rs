@@ -256,53 +256,31 @@ impl Perform for VtPerformer {
                         .copied()
                         .unwrap_or(0);
                     let (row, col) = screen.cursor;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let empty_cell = Cell::blank(screen.current_style);
 
                     match param {
                         0 => {
                             // Clear from cursor to end of screen
-                            let buffer = screen.active_buffer_mut();
-                            let buf_rows = buffer.len();
-
-                            // Clear rest of current line
-                            if row < buf_rows {
-                                let buf_cols = buffer[row].len();
-                                for i in col..buf_cols {
-                                    buffer[row][i] = empty_cell;
-                                }
-                            }
+                            let style = screen.current_style;
+                            screen.blank_cells(row, col, usize::MAX, style);
                             // Clear all lines below
-                            for r in (row + 1)..buf_rows {
-                                let buf_cols = buffer[r].len();
-                                for c in 0..buf_cols {
-                                    buffer[r][c] = empty_cell;
-                                }
+                            let buffer = screen.active_buffer_mut();
+                            for r in (row + 1)..buffer.len() {
+                                buffer[r].fill(empty_cell);
                             }
                             // Force cache invalidation to show cleared content immediately
                             screen.force_cache_invalidation = true;
                         }
                         1 => {
                             // Clear from start of screen to cursor
-                            let buffer = screen.active_buffer_mut();
-                            let buf_rows = buffer.len();
-
+                            let style = screen.current_style;
                             // Clear all lines above
-                            for r in 0..row.min(buf_rows) {
-                                let buf_cols = buffer[r].len();
-                                for c in 0..buf_cols {
-                                    buffer[r][c] = empty_cell;
-                                }
+                            let buffer = screen.active_buffer_mut();
+                            for r in 0..row.min(buffer.len()) {
+                                buffer[r].fill(empty_cell);
                             }
                             // Clear current line up to and including cursor
-                            if row < buf_rows {
-                                let buf_cols = buffer[row].len();
-                                for i in 0..=col.min(buf_cols.saturating_sub(1)) {
-                                    buffer[row][i] = empty_cell;
-                                }
-                            }
+                            screen.blank_cells(row, 0, col + 1, style);
                             // Force cache invalidation to show cleared content immediately
                             screen.force_cache_invalidation = true;
                         }
@@ -345,33 +323,16 @@ impl Perform for VtPerformer {
                         .copied()
                         .unwrap_or(0);
                     let (row, col) = screen.cursor;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let style = screen.current_style;
 
-                    let buffer = screen.active_buffer_mut();
-                    if row < buffer.len() {
-                        let buf_cols = buffer[row].len();
+                    if row < screen.active_buffer().len() {
                         match param {
-                            0 => {
-                                // From cursor to end of line
-                                for i in col..buf_cols {
-                                    buffer[row][i] = empty_cell;
-                                }
-                            }
-                            1 => {
-                                // From start of line to cursor (inclusive)
-                                for i in 0..=col.min(buf_cols.saturating_sub(1)) {
-                                    buffer[row][i] = empty_cell;
-                                }
-                            }
-                            2 => {
-                                // Entire line
-                                for i in 0..buf_cols {
-                                    buffer[row][i] = empty_cell;
-                                }
-                            }
+                            // From cursor to end of line
+                            0 => screen.blank_cells(row, col, usize::MAX, style),
+                            // From start of line to cursor (inclusive)
+                            1 => screen.blank_cells(row, 0, col + 1, style),
+                            // Entire line
+                            2 => screen.blank_cells(row, 0, usize::MAX, style),
                             _ => {}
                         }
                         // Force cache invalidation to show erased content immediately
@@ -388,22 +349,20 @@ impl Perform for VtPerformer {
                         .unwrap_or(1) as usize;
                     let (row, col) = screen.cursor;
                     let cols = screen.cols;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let style = screen.current_style;
 
-                    let buffer = screen.active_buffer_mut();
-                    if row < buffer.len() {
+                    if row < screen.active_buffer().len() {
+                        let n = n.min(cols.saturating_sub(col));
+                        // Cutting through a wide character removes both halves.
+                        screen.split_wide_at(row, col, style);
+                        screen.split_wide_at(row, col + n, style);
+                        let buffer = screen.active_buffer_mut();
                         // Shift characters left from deleted position using copy_within (3-5x faster)
                         if col + n < cols {
                             buffer[row].copy_within(col + n..cols, col);
                         }
-
                         // Fill freed space with blanks
-                        for i in (cols - n)..cols {
-                            buffer[row][i] = empty_cell;
-                        }
+                        buffer[row][cols - n..cols].fill(Cell::blank(style));
                     }
                     // Force cache invalidation after character deletion
                     screen.force_cache_invalidation = true;
@@ -417,18 +376,8 @@ impl Perform for VtPerformer {
                         .copied()
                         .unwrap_or(1) as usize;
                     let (row, col) = screen.cursor;
-                    let cols = screen.cols;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
-
-                    let buffer = screen.active_buffer_mut();
-                    if row < buffer.len() {
-                        for i in col..(col + n).min(cols) {
-                            buffer[row][i] = empty_cell;
-                        }
-                    }
+                    let style = screen.current_style;
+                    screen.blank_cells(row, col, col.saturating_add(n), style);
                     // Force cache invalidation after character erasure
                     screen.force_cache_invalidation = true;
                 }
@@ -442,22 +391,21 @@ impl Perform for VtPerformer {
                         .unwrap_or(1) as usize;
                     let (row, col) = screen.cursor;
                     let cols = screen.cols;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let style = screen.current_style;
 
-                    let buffer = screen.active_buffer_mut();
-                    if row < buffer.len() {
+                    if row < screen.active_buffer().len() {
+                        let n = n.min(cols.saturating_sub(col));
+                        // Inserting inside a wide character erases it, and a wide
+                        // character pushed past the right edge goes entirely.
+                        screen.split_wide_at(row, col, style);
+                        screen.split_wide_at(row, cols - n, style);
+                        let buffer = screen.active_buffer_mut();
                         // Shift characters right using copy_within (3-5x faster)
                         if col + n < cols {
                             buffer[row].copy_within(col..cols - n, col + n);
                         }
-
                         // Insert blanks at freed positions
-                        for i in col..(col + n).min(cols) {
-                            buffer[row][i] = empty_cell;
-                        }
+                        buffer[row][col..col + n].fill(Cell::blank(style));
                     }
                     // Force cache invalidation after character insertion
                     screen.force_cache_invalidation = true;
@@ -473,10 +421,7 @@ impl Perform for VtPerformer {
                     let row = screen.cursor.0;
                     let cols = screen.cols;
                     let bottom = screen.scroll_bottom;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let empty_cell = Cell::blank(screen.current_style);
 
                     // Only operate if cursor is within scroll region
                     if row <= bottom {
@@ -529,10 +474,7 @@ impl Perform for VtPerformer {
                     let row = screen.cursor.0;
                     let cols = screen.cols;
                     let bottom = screen.scroll_bottom;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let empty_cell = Cell::blank(screen.current_style);
 
                     // Only operate if cursor is within scroll region
                     if row <= bottom {
@@ -587,10 +529,7 @@ impl Perform for VtPerformer {
                     let cols = screen.cols;
                     let top = screen.scroll_top;
                     let bottom = screen.scroll_bottom;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let empty_cell = Cell::blank(screen.current_style);
 
                     let region_size = bottom.saturating_sub(top) + 1;
                     let effective_n = n.min(region_size);
@@ -647,10 +586,7 @@ impl Perform for VtPerformer {
                     let rows = screen.rows;
                     let top = screen.scroll_top;
                     let bottom = screen.scroll_bottom;
-                    let empty_cell = Cell {
-                        ch: ' ',
-                        style: screen.current_style,
-                    };
+                    let empty_cell = Cell::blank(screen.current_style);
 
                     let region_size = bottom.saturating_sub(top) + 1;
                     let effective_n = n.min(region_size);
@@ -818,6 +754,24 @@ mod tests {
         for byte in bytes {
             parser.advance(performer, *byte);
         }
+    }
+
+    fn row_text(screen: &Arc<RwLock<TerminalScreen>>, row: usize) -> String {
+        let s = screen.read().unwrap();
+        let mut text = String::new();
+        for cell in &s.active_buffer()[row] {
+            cell.push_text(&mut text);
+        }
+        text.trim_end().to_string()
+    }
+
+    #[test]
+    fn erase_in_line_removes_both_halves_of_a_wide_char() {
+        let (mut performer, _capture, screen) = performer();
+        feed(&mut performer, "中文x\x1b[2G\x1b[K".as_bytes());
+        assert_eq!(row_text(&screen, 0), "");
+        feed(&mut performer, "\x1b[1;1H中文x\x1b[4G\x1b[1X".as_bytes());
+        assert_eq!(row_text(&screen, 0), "中  x");
     }
 
     #[test]

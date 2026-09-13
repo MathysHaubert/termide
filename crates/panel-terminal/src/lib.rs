@@ -449,10 +449,7 @@ impl Terminal {
 
             // If size changed, resize in-place
             if screen.rows != new_rows || screen.cols != new_cols {
-                let empty_cell = Cell {
-                    ch: ' ',
-                    style: CellStyle::default(),
-                };
+                let empty_cell = Cell::blank(CellStyle::default());
 
                 // Adjust row count
                 while screen.lines.len() > new_rows {

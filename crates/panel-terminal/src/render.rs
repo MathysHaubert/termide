@@ -326,7 +326,25 @@ impl Terminal {
             // Use direct style value instead of Option for faster comparison
             let mut current_style = Style::default();
 
+            let mut prev_was_head = false;
             for (col_idx, cell) in row.iter().enumerate() {
+                // A wide character's right half is covered by its base cell.
+                // An orphaned marker (should not happen) still owns a column.
+                let orphan = Cell::blank(cell.style);
+                let (cell, is_wide) = if cell.is_continuation() {
+                    if prev_was_head {
+                        prev_was_head = false;
+                        continue;
+                    }
+                    (&orphan, false)
+                } else {
+                    (
+                        cell,
+                        row.get(col_idx + 1).is_some_and(Cell::is_continuation),
+                    )
+                };
+                prev_was_head = is_wide;
+
                 // Apply reverse if set
                 let (mut fg, mut bg) = if cell.style.reverse {
                     (cell.style.bg, cell.style.fg)
@@ -379,7 +397,10 @@ impl Terminal {
                 }
 
                 // If this is cursor position and needs showing, use inverse colors
-                if show_cursor_now && row_idx == cursor_pos.0 && col_idx == cursor_pos.1 {
+                let cursor_here = show_cursor_now
+                    && row_idx == cursor_pos.0
+                    && (col_idx == cursor_pos.1 || (is_wide && col_idx + 1 == cursor_pos.1));
+                if cursor_here {
                     // Flush accumulated text
                     if !current_text.is_empty() {
                         spans.push(Span::styled(
@@ -404,20 +425,18 @@ impl Terminal {
                         })
                         .add_modifier(Modifier::BOLD);
 
-                    let cursor_char = if cell.ch == ' ' || cell.ch == '\0' {
-                        ' '
-                    } else {
-                        cell.ch
-                    };
-                    let mut cursor_buf = [0u8; 4];
-                    let cursor_str = cursor_char.encode_utf8(&mut cursor_buf);
-                    spans.push(Span::styled(cursor_str.to_owned(), cursor_style));
+                    let mut cursor_text = String::with_capacity(8);
+                    cell.push_text(&mut cursor_text);
+                    if cursor_text.is_empty() {
+                        cursor_text.push(' ');
+                    }
+                    spans.push(Span::styled(cursor_text, cursor_style));
                     continue;
                 }
 
                 // Group characters with same style (no Option overhead)
                 if current_text.is_empty() || current_style == style {
-                    current_text.push(cell.ch);
+                    cell.push_text(&mut current_text);
                     current_style = style;
                 } else {
                     // Flush accumulated text with previous style
@@ -425,7 +444,7 @@ impl Terminal {
                         std::mem::take(&mut current_text),
                         current_style,
                     ));
-                    current_text.push(cell.ch);
+                    cell.push_text(&mut current_text);
                     current_style = style;
                 }
             }
