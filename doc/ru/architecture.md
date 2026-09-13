@@ -598,7 +598,7 @@ crates/i18n/
 | Обновление панелей Git status / log         | `crates/panel-git-status/src/lib.rs`, `panel-git-log/src/lib.rs`| `poll_refresh` в `tick` каждой панели                                                  |
 | Поиск сабмодулей (RepoManager)              | `crates/git/src/repo_manager.rs` (`spawn_submodule_walk`)       | `RepoManager::poll` из `tick` git-панели                                               |
 | Восстановление сессии — панели параллельно  | `crates/app/src/layout_session.rs` (`construct_panel` на панель)| Джойнятся синхронно после запуска, так что самая медленная панель гейтит первый кадр   |
-| Регистрация репозиториев вотчером           | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` в главном цикле; inotify ставится чанками по `INSTALL_CHUNK` за тик      |
+| Регистрация репозиториев вотчером           | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` в главном цикле; inotify ставится чанками по `INSTALL_CHUNK` за тик, FSEvents (macOS) — один рекурсивный вотч на корень с фильтрацией по `.gitignore` при доставке |
 | Обход размера каталогов (широкий вид)        | `crates/panel-file-manager/src/utils.rs` (`shared_dir_size_cache`) | Покадровый `try_recv` к общему кэшу; бюджет ограничен на каждый обход                |
 
 Бэкенд SFTP/FTP использует другую схему — выделенный tokio-рантайм владеет
