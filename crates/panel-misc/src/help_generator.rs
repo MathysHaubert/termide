@@ -868,10 +868,24 @@ impl HelpGenerator {
     }
 
     fn generate_image_section(t: &dyn termide_i18n::Translation) -> HelpSection {
-        let entries = vec![HelpEntry {
-            keys: "q".to_string(),
-            description: t.help_desc_close_image().to_string(),
-        }];
+        let entries = vec![
+            HelpEntry {
+                keys: "+ / -".to_string(),
+                description: t.help_desc_image_zoom().to_string(),
+            },
+            HelpEntry {
+                keys: "0".to_string(),
+                description: t.help_desc_image_fit().to_string(),
+            },
+            HelpEntry {
+                keys: "← ↑ → ↓".to_string(),
+                description: t.help_desc_image_pan().to_string(),
+            },
+            HelpEntry {
+                keys: "q".to_string(),
+                description: t.help_desc_close_image().to_string(),
+            },
+        ];
         HelpSection {
             header: t.help_section_image().to_string(),
             entries,

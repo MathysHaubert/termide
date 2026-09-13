@@ -271,6 +271,9 @@ pub trait Translation: Send + Sync {
     fn help_desc_navigate(&self) -> &str;
     fn help_desc_copy_name(&self) -> &str;
     fn help_desc_close_image(&self) -> &str;
+    fn help_desc_image_zoom(&self) -> &str;
+    fn help_desc_image_fit(&self) -> &str;
+    fn help_desc_image_pan(&self) -> &str;
     fn help_desc_vim_panel_nav(&self) -> &str;
     fn help_section_viewers(&self) -> &str;
     fn help_desc_viewer_toggle(&self) -> &str;

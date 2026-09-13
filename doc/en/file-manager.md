@@ -181,6 +181,8 @@ The file manager can preview images and videos using console image viewers.
 **Native Graphics:**
 termide automatically detects if the parent terminal supports graphics protocols (Kitty, Sixel, iTerm2). When supported, raster images are rendered directly in the ImagePanel without external tools.
 
+The image opens fitted to the panel: as large as the width or height allows, aspect ratio preserved, centred. `+` / `-` (or the mouse wheel over the panel) zoom in and out around the centre of the visible part, the arrow keys pan a zoomed image, and `0` returns to the fitted view. The status bar shows the image size and the current zoom as a percentage of the source pixels, with clickable `[−]`, `[+]` and `Fit` buttons.
+
 **Supported terminals:**
 - Kitty, WezTerm, iTerm2, Ghostty, foot - full graphics support
 - Other terminals - fallback to xdg-open
