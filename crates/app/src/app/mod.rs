@@ -819,9 +819,10 @@ impl App {
         if !is_scrolling && !is_dragging {
             // Single combined loop: terminal output + panel tick + FM spinner
             let mut all_panel_events = Vec::new();
-            for (panel, is_expanded) in self
+            let area_height = self.panel_area_height();
+            for (panel, is_visible) in self
                 .layout_manager
-                .iter_all_panels_with_expanded_state_mut()
+                .iter_all_panels_with_visibility_mut(area_height)
             {
                 // Terminal output check (always needed, even during idle)
                 // PTY must be drained to avoid buffer deadlock
@@ -839,8 +840,19 @@ impl App {
                     all_panel_events.extend(events);
                 }
 
-                // FileManager-specific: only check VFS for expanded panels
-                if is_expanded {
+                if is_visible {
+                    // A panel that became visible without taking focus — the
+                    // column was resized, the fullscreen preset was left —
+                    // catches up on what it skipped while collapsed. Cheap
+                    // when nothing is stale: the panel answers `None`.
+                    if panel
+                        .handle_command(PanelCommand::RefreshIfStale)
+                        .needs_redraw()
+                    {
+                        self.state.needs_redraw = true;
+                    }
+
+                    // FileManager-specific: only check VFS for visible panels
                     if let Some(fm) = panel.as_file_manager_mut() {
                         if fm.vfs_state().has_pending_operation() {
                             self.state.needs_redraw = true;

@@ -182,15 +182,22 @@ impl App {
     }
 
     /// Calculate panel rectangles for mouse hit testing.
+    /// Height of the area the panel columns share: the terminal minus the
+    /// menu bar above and the status bar below. Layout questions that need a
+    /// column height — which panels show content, where dividers sit — must
+    /// use this so they agree with what is drawn.
+    pub(in crate::app) fn panel_area_height(&self) -> u16 {
+        self.state.terminal.height.saturating_sub(2)
+    }
+
     /// Returns `Vec<(group_idx, panel_idx, rect, is_expanded)>`.
     pub(in crate::app) fn calculate_panel_rects(&self) -> Vec<(usize, usize, Rect, bool)> {
         let width = self.state.terminal.width;
-        let height = self.state.terminal.height;
         let main_area = Rect {
             x: 0,
             y: 1,
             width,
-            height: height.saturating_sub(2),
+            height: self.panel_area_height(),
         };
         termide_layout::calculate_panel_rects(&self.layout_manager.panel_groups, main_area)
     }

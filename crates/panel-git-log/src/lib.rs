@@ -42,6 +42,9 @@ pub struct GitLogPanel {
     repo_manager: RepoManager,
     /// Scrollbar drawn by the last render, for mouse thumb dragging.
     scrollbars: termide_core::ScrollBars,
+    /// A repo update arrived while the panel was collapsed to its title bar;
+    /// the log reloads once the panel shows content again.
+    is_stale: bool,
     /// Current section
     current_section: Section,
     /// Current branch name (HEAD)
@@ -132,6 +135,7 @@ impl GitLogPanel {
         let mut panel = Self {
             repo_manager,
             scrollbars: termide_core::ScrollBars::default(),
+            is_stale: false,
             current_section: Section::Commits,
             branch: None,
             branches: Vec::new(),
@@ -219,9 +223,27 @@ impl Panel for GitLogPanel {
 
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {
         match cmd {
-            PanelCommand::Reload | PanelCommand::RefreshIfStale => {
+            PanelCommand::Reload => {
+                self.is_stale = false;
                 self.refresh();
                 CommandResult::NeedsRedraw(true)
+            }
+            // Stale-on-collapse: while the panel is a bare title bar the app
+            // sends MarkStale instead of OnGitUpdate; the reload happens once
+            // the panel shows content again. Asked every tick, so it must be
+            // a no-op when nothing is stale.
+            PanelCommand::MarkStale => {
+                self.is_stale = true;
+                CommandResult::None
+            }
+            PanelCommand::RefreshIfStale => {
+                if self.is_stale {
+                    self.is_stale = false;
+                    self.refresh();
+                    CommandResult::NeedsRedraw(true)
+                } else {
+                    CommandResult::None
+                }
             }
             PanelCommand::UpdateRepoPaths { paths } => {
                 self.update_repos(&paths);

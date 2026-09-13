@@ -7,12 +7,13 @@ use crate::PanelExt;
 use super::App;
 
 impl App {
-    /// Poll LSP status for expanded editors and completion for active editor
+    /// Poll LSP status for visible editors and completion for active editor
     pub(super) fn poll_lsp_completion(&mut self) {
-        // Update LSP loading status for expanded editors only
-        // Collapsed editors will catch up when they are expanded again
+        // Update LSP loading status for editors showing content only;
+        // collapsed editors catch up when they grow again
         let mut any_loading = false;
-        for panel in self.layout_manager.iter_expanded_panels_mut() {
+        let area_height = self.panel_area_height();
+        for panel in self.layout_manager.iter_visible_panels_mut(area_height) {
             if let Some(editor) = panel.as_editor_mut() {
                 // Check if server loading status changed
                 if let Some(ref lsp_manager) = self.state.lsp_manager {

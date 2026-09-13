@@ -29,6 +29,9 @@ use termide_theme::Theme;
 pub struct GitDiffPanel {
     /// Scrollbar drawn by the last render, for mouse thumb dragging.
     scrollbars: termide_core::ScrollBars,
+    /// A repo update arrived while the panel was collapsed to its title bar;
+    /// the diff reloads once the panel shows content again.
+    is_stale: bool,
     /// Repository path
     repo_path: PathBuf,
     /// Commit hash (None = working directory changes, Some = specific commit)
@@ -123,6 +126,7 @@ impl GitDiffPanel {
             file_filter,
             diffs: Vec::new(),
             scrollbars: termide_core::ScrollBars::default(),
+            is_stale: false,
             scroll: 0,
             collapsed: HashSet::new(),
             selected_file: 0,
@@ -175,11 +179,27 @@ impl Panel for GitDiffPanel {
 
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {
         match cmd {
-            // Reloaded on focus gain (and Ctrl+R) so the diff picks up changes
-            // made outside the panel without a manual refresh.
-            PanelCommand::Reload | PanelCommand::RefreshIfStale => {
+            PanelCommand::Reload => {
+                self.is_stale = false;
                 self.refresh();
                 CommandResult::NeedsRedraw(true)
+            }
+            // Stale-on-collapse: while the panel is a bare title bar the app
+            // sends MarkStale instead of the live updates below; the reload
+            // happens once the panel shows content again. Asked every tick,
+            // so it must be a no-op when nothing is stale.
+            PanelCommand::MarkStale => {
+                self.is_stale = true;
+                CommandResult::None
+            }
+            PanelCommand::RefreshIfStale => {
+                if self.is_stale {
+                    self.is_stale = false;
+                    self.refresh();
+                    CommandResult::NeedsRedraw(true)
+                } else {
+                    CommandResult::None
+                }
             }
             // Live watcher updates: refresh an open diff as soon as something in
             // its repo changes (working-tree edit -> OnFsUpdate, commit/index ->

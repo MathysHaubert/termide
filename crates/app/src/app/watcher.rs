@@ -152,15 +152,17 @@ impl App {
             }
         }
 
-        // Process git events — expanded panels get the update, collapsed panels get marked stale
+        // Process git events — panels showing content get the update, panels
+        // collapsed to their title bar get marked stale
+        let area_height = self.panel_area_height();
         if !git_repos.is_empty() {
             let repo_paths: Vec<&std::path::Path> = git_repos.iter().map(|p| p.as_path()).collect();
 
-            for (panel, is_expanded) in self
+            for (panel, is_visible) in self
                 .layout_manager
-                .iter_all_panels_with_expanded_state_mut()
+                .iter_all_panels_with_visibility_mut(area_height)
             {
-                if is_expanded {
+                if is_visible {
                     if panel
                         .handle_command(PanelCommand::OnGitUpdate {
                             repo_paths: &repo_paths,
@@ -186,12 +188,12 @@ impl App {
         // for a fraction of the comparisons.
         termide_panel_file_manager::shared_dir_size_cache().invalidate_ancestors_of_all(&fanout);
 
-        // Process filesystem events — expanded panels get the update, collapsed panels get marked stale
-        for (panel, is_expanded) in self
+        // Process filesystem events — same split as for git events above
+        for (panel, is_visible) in self
             .layout_manager
-            .iter_all_panels_with_expanded_state_mut()
+            .iter_all_panels_with_visibility_mut(area_height)
         {
-            if is_expanded {
+            if is_visible {
                 for path in &fanout {
                     if panel
                         .handle_command(PanelCommand::OnFsUpdate { changed_path: path })

@@ -233,25 +233,31 @@ impl LayoutManager {
             .flat_map(|g| g.panels_mut().iter_mut())
     }
 
-    /// Iterator over all panels with their expanded state (mutable).
-    /// Returns `(panel, is_expanded)` for each panel.
-    pub fn iter_all_panels_with_expanded_state_mut(
+    /// Iterator over all panels with whether each one shows content
+    /// (mutable), for columns `area_height` rows tall. Returns
+    /// `(panel, is_visible)`.
+    ///
+    /// Visibility, not focus, is what decides whether a panel should take
+    /// an update now or be marked stale: with free heights every panel in a
+    /// column is on screen, and only one collapsed to its title bar — by the
+    /// fullscreen preset or a manual shrink — can afford to catch up later.
+    pub fn iter_all_panels_with_visibility_mut(
         &mut self,
+        area_height: u16,
     ) -> impl Iterator<Item = (&mut Box<dyn Panel>, bool)> {
-        self.panel_groups.iter_mut().flat_map(|g| {
-            let expanded = g.expanded_index();
-            g.panels_mut()
-                .iter_mut()
-                .enumerate()
-                .map(move |(idx, panel)| (panel, idx == expanded))
+        self.panel_groups.iter_mut().flat_map(move |g| {
+            let visible = g.content_visibility(area_height);
+            g.panels_mut().iter_mut().zip(visible)
         })
     }
 
-    /// Iterator over only expanded (visible) panels (mutable).
-    pub fn iter_expanded_panels_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn Panel>> {
-        self.panel_groups
-            .iter_mut()
-            .filter_map(|g| g.expanded_panel_mut())
+    /// Iterator over only the panels that show content (mutable).
+    pub fn iter_visible_panels_mut(
+        &mut self,
+        area_height: u16,
+    ) -> impl Iterator<Item = &mut Box<dyn Panel>> {
+        self.iter_all_panels_with_visibility_mut(area_height)
+            .filter_map(|(panel, is_visible)| is_visible.then_some(panel))
     }
 
     /// Close active panel.
@@ -782,5 +788,38 @@ mod tests {
         lm.add_panel(panel("a"), &config, 200);
         lm.set_focus(100); // out of bounds
         assert_eq!(lm.focus, 0); // unchanged
+    }
+
+    /// The update/stale split follows what is on screen, not focus: with free
+    /// heights every panel of a column shows content; the fullscreen preset
+    /// or a manual shrink to the title bar is what hides one.
+    #[test]
+    fn visibility_follows_content_height_not_focus() {
+        let config = make_config(200);
+        let mut lm = LayoutManager::new();
+        lm.add_panel(Box::new(MockPanel::new("a")), &config, 80);
+        lm.add_panel(Box::new(MockPanel::new("b")), &config, 80);
+        lm.add_panel(Box::new(MockPanel::new("c")), &config, 80);
+        assert_eq!(
+            lm.panel_groups.len(),
+            1,
+            "threshold forces one stacked column"
+        );
+        assert_eq!(lm.panel_groups[0].expanded_index(), 2);
+
+        let visible = |lm: &mut LayoutManager| -> Vec<bool> {
+            lm.iter_all_panels_with_visibility_mut(30)
+                .map(|(_, v)| v)
+                .collect()
+        };
+        assert_eq!(visible(&mut lm), vec![true, true, true]);
+
+        lm.panel_groups[0].toggle_fullscreen(30);
+        assert_eq!(visible(&mut lm), vec![false, false, true]);
+        lm.panel_groups[0].toggle_fullscreen(30);
+
+        lm.panel_groups[0].set_split_heights(vec![1, 14, 15]);
+        assert_eq!(visible(&mut lm), vec![false, true, true]);
+        assert_eq!(lm.iter_visible_panels_mut(30).count(), 2);
     }
 }

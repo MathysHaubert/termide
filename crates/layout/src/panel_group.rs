@@ -418,6 +418,17 @@ impl PanelGroup {
             .collect()
     }
 
+    /// Per panel: whether it shows content in a column `area_height` rows
+    /// tall, i.e. has at least one row below its title bar. A panel at
+    /// [`MIN_PANEL_HEIGHT`] — collapsed by the fullscreen preset or shrunk by
+    /// hand — is a bare header and can skip work until it grows again.
+    pub fn content_visibility(&self, area_height: u16) -> Vec<bool> {
+        self.effective_split_heights(area_height)
+            .into_iter()
+            .map(|h| h >= 2)
+            .collect()
+    }
+
     /// Whether the panel at `index` follows its `HeightMode` (false) or a
     /// height the user set by hand (true).
     pub fn is_height_pinned(&self, index: usize) -> bool {

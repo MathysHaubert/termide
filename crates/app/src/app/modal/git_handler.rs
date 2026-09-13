@@ -265,16 +265,17 @@ impl App {
     }
 
     /// Send git update event to refresh git panels.
-    /// Expanded panels get `OnGitUpdate`, collapsed panels get `MarkStale`
-    /// (consistent with `poll_watcher_events()`).
+    /// Panels showing content get `OnGitUpdate`, panels collapsed to their
+    /// title bar get `MarkStale` (consistent with `poll_watcher_events()`).
     pub(in crate::app) fn send_git_update(&mut self, repo_path: &std::path::Path) {
         use termide_core::PanelCommand;
         let repo_paths: Vec<&std::path::Path> = vec![repo_path];
-        for (panel, is_expanded) in self
+        let area_height = self.panel_area_height();
+        for (panel, is_visible) in self
             .layout_manager
-            .iter_all_panels_with_expanded_state_mut()
+            .iter_all_panels_with_visibility_mut(area_height)
         {
-            let result = if is_expanded {
+            let result = if is_visible {
                 panel.handle_command(PanelCommand::OnGitUpdate {
                     repo_paths: &repo_paths,
                 })
