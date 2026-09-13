@@ -6,13 +6,24 @@
 //! the fullscreen preset stashes the previous heights into
 //! `fullscreen_cache` so a subsequent toggle restores them. The preset
 //! follows focus — switching the focused panel re-applies the preset.
+//!
+//! A panel whose [`Panel::height_mode`] is [`HeightMode::FitContent`] is a
+//! fixed slot instead: it takes the rows it asks for (capped at
+//! [`FIT_MAX_SHARE`] of the column) and the free panels share the rest with
+//! their cached proportions. Its own cache entry is ignored until the user
+//! resizes it, which pins the panel to the cache like any other.
 
-use termide_core::{Panel, PanelCommand};
+use termide_core::{HeightMode, Panel, PanelCommand};
 
 /// Minimum height (rows) of a single panel — at least the header line
 /// must be visible. Going below this would hide the panel entirely and
 /// conflate it with removal.
 pub const MIN_PANEL_HEIGHT: u16 = 1;
+
+/// The largest part of a column a [`HeightMode::FitContent`] panel may
+/// claim, as a divisor: `1 / FIT_MAX_SHARE`. Beyond that the panel scrolls
+/// its content rather than squeezing the free panels.
+pub const FIT_MAX_SHARE: u16 = 2;
 
 /// Group of panels stacked vertically.
 pub struct PanelGroup {
@@ -33,6 +44,10 @@ pub struct PanelGroup {
     /// `split_heights` while in the preset hold `[1, …, area_height -
     /// (n - 1), …, 1]` with the maximum at `expanded_index`.
     fullscreen_cache: Option<Vec<u16>>,
+    /// Per panel: the user resized it by hand, so its `HeightMode` no
+    /// longer applies and the cached height does. Same length as `panels`;
+    /// not persisted — a restored panel starts unpinned.
+    height_pinned: Vec<bool>,
 }
 
 impl PanelGroup {
@@ -44,6 +59,7 @@ impl PanelGroup {
             width: None,
             split_heights: None,
             fullscreen_cache: None,
+            height_pinned: vec![false],
         }
     }
 
@@ -66,6 +82,7 @@ impl PanelGroup {
             width,
             split_heights: None,
             fullscreen_cache: None,
+            height_pinned: vec![false; n],
         };
         if n > 0 && group.expanded_index >= n {
             group.expanded_index = n - 1;
@@ -86,6 +103,7 @@ impl PanelGroup {
     /// Add panel to group.
     pub fn add_panel(&mut self, panel: Box<dyn Panel>) {
         self.panels.push(panel);
+        self.height_pinned.push(false);
         self.on_panels_changed_insert(self.panels.len() - 1);
     }
 
@@ -102,6 +120,7 @@ impl PanelGroup {
             }
             index
         };
+        self.height_pinned.insert(pos, false);
         self.on_panels_changed_insert(pos);
     }
 
@@ -124,6 +143,7 @@ impl PanelGroup {
             return None;
         }
         let panel = self.panels.remove(index);
+        self.height_pinned.remove(index);
 
         if self.panels.is_empty() {
             self.expanded_index = 0;
@@ -220,6 +240,7 @@ impl PanelGroup {
             return Err(anyhow::anyhow!("Panel index out of bounds"));
         }
         self.panels.swap(index - 1, index);
+        self.height_pinned.swap(index - 1, index);
         if self.expanded_index == index {
             self.expanded_index = index - 1;
         } else if self.expanded_index == index - 1 {
@@ -244,6 +265,7 @@ impl PanelGroup {
             return Ok(());
         }
         self.panels.swap(index, index + 1);
+        self.height_pinned.swap(index, index + 1);
         if self.expanded_index == index {
             self.expanded_index = index + 1;
         } else if self.expanded_index == index + 1 {
@@ -329,8 +351,99 @@ impl PanelGroup {
             Some(cached) if cached.len() == n => cached.clone(),
             _ => equal_heights(n, area_height),
         };
-        redistribute_proportionally(&mut heights, area_height, MIN_PANEL_HEIGHT);
+
+        let fits = self.fit_heights(area_height);
+        let free: Vec<usize> = (0..n).filter(|&i| fits[i].is_none()).collect();
+        if free.len() == n {
+            redistribute_proportionally(&mut heights, area_height, MIN_PANEL_HEIGHT);
+            return heights;
+        }
+
+        // Fit panels are fixed slots; the free ones share what is left with
+        // their cached proportions. `fit_heights` already left MIN for each
+        // free panel, so the remainder is never short.
+        let fit_total: u16 = fits.iter().flatten().sum();
+        let mut free_heights: Vec<u16> = free.iter().map(|&i| heights[i]).collect();
+        redistribute_proportionally(
+            &mut free_heights,
+            area_height.saturating_sub(fit_total),
+            MIN_PANEL_HEIGHT,
+        );
+        let mut free_heights = free_heights.into_iter();
+        for (i, slot) in heights.iter_mut().enumerate() {
+            *slot = match fits[i] {
+                Some(fit) => fit,
+                None => free_heights.next().unwrap_or(MIN_PANEL_HEIGHT),
+            };
+        }
         heights
+    }
+
+    /// The fixed height of every [`HeightMode::FitContent`] panel that is
+    /// not pinned, `None` for the free ones. A lone panel is always free —
+    /// there is nobody to leave the rest of the column to. Each fit panel
+    /// is capped at `1 / FIT_MAX_SHARE` of the column, and all of them
+    /// together at what leaves the free panels [`MIN_PANEL_HEIGHT`] each.
+    fn fit_heights(&self, area_height: u16) -> Vec<Option<u16>> {
+        let n = self.panels.len();
+        if n < 2 {
+            return vec![None; n];
+        }
+        let wanted: Vec<Option<u16>> = self
+            .panels
+            .iter()
+            .zip(&self.height_pinned)
+            .map(|(panel, &pinned)| match panel.height_mode() {
+                HeightMode::FitContent(rows) if !pinned => Some(rows),
+                _ => None,
+            })
+            .collect();
+        let free_count = wanted.iter().filter(|w| w.is_none()).count() as u16;
+        if free_count == 0 {
+            return vec![None; n];
+        }
+        let cap = (area_height / FIT_MAX_SHARE).max(MIN_PANEL_HEIGHT);
+        let mut budget = area_height.saturating_sub(free_count * MIN_PANEL_HEIGHT);
+        wanted
+            .into_iter()
+            .map(|rows| {
+                let rows = rows?;
+                let fit = rows
+                    .clamp(MIN_PANEL_HEIGHT, cap)
+                    .min(budget)
+                    .max(MIN_PANEL_HEIGHT);
+                budget = budget.saturating_sub(fit);
+                Some(fit)
+            })
+            .collect()
+    }
+
+    /// Whether the panel at `index` follows its `HeightMode` (false) or a
+    /// height the user set by hand (true).
+    pub fn is_height_pinned(&self, index: usize) -> bool {
+        self.height_pinned.get(index).copied().unwrap_or(false)
+    }
+
+    /// Bring the cache in line with what is on screen and return it. Manual
+    /// height operations start from here so a fit panel's on-screen height,
+    /// not its stale cache entry, is what the user's adjustment applies to.
+    fn materialize_heights(&mut self, area_height: u16) -> Vec<u16> {
+        let heights = self.effective_split_heights(area_height);
+        self.split_heights = Some(heights.clone());
+        heights
+    }
+
+    /// Pin every panel whose height a manual operation changed, so the
+    /// change sticks instead of being overridden by `HeightMode` on the
+    /// next frame.
+    fn pin_changed(&mut self, before: &[u16], after: &[u16]) {
+        for (i, (b, a)) in before.iter().zip(after).enumerate() {
+            if b != a {
+                if let Some(pinned) = self.height_pinned.get_mut(i) {
+                    *pinned = true;
+                }
+            }
+        }
     }
 
     /// Toggle the "fullscreen current panel" preset.
@@ -397,13 +510,8 @@ impl PanelGroup {
         }
         self.exit_fullscreen_preset(area_height);
         let n = self.panels.len();
-        let mut heights = self
-            .split_heights
-            .clone()
-            .unwrap_or_else(|| equal_heights(n, area_height));
-        if heights.len() != n {
-            heights = equal_heights(n, area_height);
-        }
+        let before = self.materialize_heights(area_height);
+        let mut heights = before.clone();
         let focused = self.expanded_index.min(n - 1);
         let mut to_add = lines;
         let mut i = focused + 1;
@@ -422,6 +530,7 @@ impl PanelGroup {
             heights[focused] += take;
             to_add -= take;
         }
+        self.pin_changed(&before, &heights);
         self.split_heights = Some(heights);
     }
 
@@ -437,13 +546,8 @@ impl PanelGroup {
         }
         self.exit_fullscreen_preset(area_height);
         let n = self.panels.len();
-        let mut heights = self
-            .split_heights
-            .clone()
-            .unwrap_or_else(|| equal_heights(n, area_height));
-        if heights.len() != n {
-            heights = equal_heights(n, area_height);
-        }
+        let before = self.materialize_heights(area_height);
+        let mut heights = before.clone();
         let focused = self.expanded_index.min(n - 1);
         let available = heights[focused].saturating_sub(MIN_PANEL_HEIGHT);
         let actual = lines.min(available);
@@ -459,6 +563,7 @@ impl PanelGroup {
         };
         heights[focused] -= actual;
         heights[recipient] += actual;
+        self.pin_changed(&before, &heights);
         self.split_heights = Some(heights);
     }
 
@@ -474,13 +579,8 @@ impl PanelGroup {
             return;
         }
         self.exit_fullscreen_preset(area_height);
-        let mut heights = self
-            .split_heights
-            .clone()
-            .unwrap_or_else(|| equal_heights(n, area_height));
-        if heights.len() != n {
-            heights = equal_heights(n, area_height);
-        }
+        let before = self.materialize_heights(area_height);
+        let mut heights = before.clone();
         let upper = heights[upper_idx] as i32;
         let lower = heights[upper_idx + 1] as i32;
         let min = MIN_PANEL_HEIGHT as i32;
@@ -488,6 +588,7 @@ impl PanelGroup {
         let new_lower = upper + lower - new_upper;
         heights[upper_idx] = new_upper as u16;
         heights[upper_idx + 1] = new_lower as u16;
+        self.pin_changed(&before, &heights);
         self.split_heights = Some(heights);
     }
 
@@ -681,7 +782,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use std::any::Any;
-    use termide_core::{Panel, PanelEvent, RenderContext};
+    use termide_core::{HeightMode, Panel, PanelEvent, RenderContext};
 
     struct DummyPanel(&'static str);
 
@@ -706,6 +807,154 @@ mod tests {
 
     fn make_panel(name: &'static str) -> Box<dyn Panel> {
         Box::new(DummyPanel(name))
+    }
+
+    /// A panel that asks for a fixed number of rows, like the operations
+    /// panel does for its cards. The cell lets a test change the request
+    /// after the panel is in a group.
+    struct FitPanel(std::cell::Cell<u16>);
+
+    impl Panel for FitPanel {
+        fn name(&self) -> &'static str {
+            "fit"
+        }
+        fn title(&self) -> String {
+            "fit".to_string()
+        }
+        fn render(&mut self, _area: Rect, _buf: &mut Buffer, _ctx: &RenderContext) {}
+        fn handle_key(&mut self, _chord: termide_core::KeyChord) -> Vec<PanelEvent> {
+            vec![]
+        }
+        fn height_mode(&self) -> HeightMode {
+            HeightMode::FitContent(self.0.get())
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    fn make_fit_panel(rows: u16) -> Box<dyn Panel> {
+        Box::new(FitPanel(std::cell::Cell::new(rows)))
+    }
+
+    /// `[a, fit(rows), c]` with `a` focused.
+    fn group_with_fit(rows: u16) -> PanelGroup {
+        let mut g = PanelGroup::new(make_panel("a"));
+        g.add_panel(make_fit_panel(rows));
+        g.add_panel(make_panel("c"));
+        g
+    }
+
+    fn set_fit_rows(g: &PanelGroup, index: usize, rows: u16) {
+        g.panels()[index]
+            .as_any()
+            .downcast_ref::<FitPanel>()
+            .unwrap()
+            .0
+            .set(rows);
+    }
+
+    #[test]
+    fn fit_panel_takes_its_rows_and_free_panels_share_the_rest() {
+        let mut g = group_with_fit(8);
+        g.set_split_heights(vec![20, 10, 10]);
+        let h = g.effective_split_heights(40);
+        assert_eq!(h[1], 8);
+        assert_eq!(h.iter().sum::<u16>(), 40);
+        // The free pair keeps its 2:1 proportion over the remaining 32.
+        assert_eq!(h[0], 21);
+        assert_eq!(h[2], 11);
+    }
+
+    #[test]
+    fn fit_panel_follows_its_content_between_frames() {
+        let g = group_with_fit(5);
+        assert_eq!(g.effective_split_heights(40)[1], 5);
+        set_fit_rows(&g, 1, 11);
+        assert_eq!(g.effective_split_heights(40)[1], 11);
+        assert_eq!(g.effective_split_heights(40).iter().sum::<u16>(), 40);
+    }
+
+    #[test]
+    fn fit_panel_is_capped_to_its_share_of_the_column() {
+        let g = group_with_fit(60);
+        let h = g.effective_split_heights(40);
+        assert_eq!(h[1], 40 / FIT_MAX_SHARE);
+        assert_eq!(h.iter().sum::<u16>(), 40);
+        // A tiny column still leaves every free panel its minimum row.
+        let h = g.effective_split_heights(4);
+        assert!(h.iter().all(|&x| x >= MIN_PANEL_HEIGHT), "{h:?}");
+        assert_eq!(h.iter().sum::<u16>(), 4);
+    }
+
+    #[test]
+    fn a_lone_fit_panel_fills_its_column() {
+        let g = PanelGroup::new(make_fit_panel(5));
+        assert_eq!(g.effective_split_heights(30), vec![30]);
+    }
+
+    #[test]
+    fn resizing_a_fit_panel_by_hand_pins_it() {
+        let mut g = group_with_fit(8);
+        assert!(!g.is_height_pinned(1));
+        // Drag the divider under the fit panel three rows down.
+        g.resize_panel_divider(1, 3, 40);
+        assert!(g.is_height_pinned(1));
+        assert!(
+            g.is_height_pinned(2),
+            "the neighbour that gave the rows is pinned too"
+        );
+        assert!(!g.is_height_pinned(0));
+        let h = g.effective_split_heights(40);
+        assert_eq!(h[1], 11, "{h:?}");
+        // The content request no longer matters for a pinned panel.
+        set_fit_rows(&g, 1, 20);
+        assert_eq!(g.effective_split_heights(40)[1], 11);
+    }
+
+    #[test]
+    fn growing_a_free_panel_starts_from_what_is_on_screen() {
+        let mut g = group_with_fit(8);
+        g.set_split_heights(vec![16, 16, 8]);
+        // On screen: fit is 8, the free pair shares 32 as 2:1 → [21, 8, 11].
+        g.grow_focused(2, 40);
+        let h = g.effective_split_heights(40);
+        assert_eq!(h, vec![23, 6, 11], "{h:?}");
+        assert!(
+            g.is_height_pinned(1),
+            "the fit panel lost rows to the grow, so it is pinned"
+        );
+    }
+
+    #[test]
+    fn fullscreen_preset_keeps_the_fit_panel_and_boosts_the_focused_one() {
+        let mut g = group_with_fit(8);
+        g.toggle_fullscreen(40);
+        let h = g.effective_split_heights(40);
+        assert_eq!(h, vec![31, 8, 1], "{h:?}");
+        // Focus on the fit panel: it stays at its rows and the free panels
+        // split the rest between them.
+        g.set_expanded(1);
+        let h = g.effective_split_heights(40);
+        assert_eq!(h[1], 8);
+        assert_eq!(h.iter().sum::<u16>(), 40);
+    }
+
+    #[test]
+    fn pinned_flags_follow_panels_through_insert_remove_and_swap() {
+        let mut g = group_with_fit(8);
+        g.resize_panel_divider(1, 1, 40);
+        assert!(g.is_height_pinned(1) && g.is_height_pinned(2));
+        g.insert_panel(0, make_panel("z"));
+        assert!(!g.is_height_pinned(0) && g.is_height_pinned(2) && g.is_height_pinned(3));
+        g.move_panel_up(2).unwrap();
+        assert!(g.is_height_pinned(1) && !g.is_height_pinned(2));
+        g.remove_panel(1);
+        assert!(!g.is_height_pinned(1) && g.is_height_pinned(2));
+        assert_eq!(g.height_pinned.len(), g.len());
     }
 
     fn three_panel_group() -> PanelGroup {

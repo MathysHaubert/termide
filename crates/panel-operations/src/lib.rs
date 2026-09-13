@@ -16,8 +16,8 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use termide_config::Config;
 use termide_core::{
-    CommandResult, ConfirmAction, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext,
-    SessionPanel, ThemeColors, WidthPreference,
+    CommandResult, ConfirmAction, HeightMode, HotkeyTable, Panel, PanelCommand, PanelEvent,
+    RenderContext, SessionPanel, ThemeColors, WidthPreference,
 };
 use termide_file_ops::OperationId;
 use termide_state::{ActiveOperation, OperationProgress, OperationType};
@@ -249,6 +249,20 @@ impl Panel for OperationsPanel {
         WidthPreference::PreferNarrow
     }
 
+    /// Exactly the rows the cards need — the panel grows and shrinks with
+    /// the operation list instead of taking a share of the column. Two rows
+    /// for the border, then the cards, or the one-line notice when empty.
+    fn height_mode(&self) -> HeightMode {
+        let content = if self.operations.is_empty() {
+            1
+        } else {
+            self.operations
+                .iter()
+                .fold(0u16, |rows, op| rows.saturating_add(op.card_height()))
+        };
+        HeightMode::FitContent(content.saturating_add(2))
+    }
+
     fn title(&self) -> String {
         let t = termide_i18n::t();
         t.panel_operations().to_string()
@@ -457,6 +471,28 @@ mod tests {
         });
         panel.selected_index = 0;
         panel
+    }
+
+    /// The panel asks the column for exactly its cards plus the two border
+    /// rows, and for the one-line notice when it has nothing to show.
+    #[test]
+    fn height_follows_the_cards() {
+        let empty = OperationsPanel::new();
+        assert_eq!(empty.height_mode(), HeightMode::FitContent(3));
+
+        let mut panel = panel_with_one_op(1);
+        let one_card = panel.operations[0].card_height();
+        assert_eq!(panel.height_mode(), HeightMode::FitContent(one_card + 2));
+
+        let second = panel.operations[0].clone();
+        panel.operations.push(OperationSnapshot {
+            id: OperationId(2),
+            ..second
+        });
+        assert_eq!(
+            panel.height_mode(),
+            HeightMode::FitContent(2 * one_card + 2)
+        );
     }
 
     /// Cancelling is always gated behind a confirmation modal: the key must

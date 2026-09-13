@@ -10,6 +10,13 @@ bar, source/destination, transferred bytes and elapsed time.
 The panel opens automatically when the first background operation
 starts. It can also be opened from the application menu.
 
+It takes only the rows its cards need and leaves the rest of the column
+to the panels next to it, growing and shrinking as operations start and
+finish; with nothing to show it is a header and a one-line notice. It
+never claims more than half of the column — beyond that the cards
+scroll. Resizing it by hand (`Alt+Shift+=` / `Alt+Shift+-`, or dragging
+its border) switches it to an ordinary fixed height until it is closed.
+
 Closing follows the standard panel rules (`Alt+X`, `F10`, or `Esc`
 when nothing is selected). With an operation highlighted, `Esc`
 cancels that operation instead of closing the panel — see the

@@ -187,6 +187,20 @@ pub enum WidthPreference {
     NoPreference,
 }
 
+/// How a panel wants its height inside a stacked column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeightMode {
+    /// Share the column with the other panels: the height comes from the
+    /// user's resizes (or an equal split) and is kept in the session.
+    Free,
+    /// Take exactly this many rows, borders included, and leave the rest of
+    /// the column to the free panels. The layout asks again on every frame,
+    /// so the value may follow the content. The column caps it so the free
+    /// panels keep room, and a manual resize of the panel switches it to
+    /// `Free` until it is closed.
+    FitContent(u16),
+}
+
 /// Visual role of a status-bar segment; mapped to theme colours by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentKind {
@@ -437,6 +451,12 @@ pub trait Panel: Any {
     /// Width preference for auto-stacking into existing groups.
     fn width_preference(&self) -> WidthPreference {
         WidthPreference::NoPreference
+    }
+
+    /// How the panel wants its height inside a stacked column. Queried on
+    /// every layout pass, so it must be cheap.
+    fn height_mode(&self) -> HeightMode {
+        HeightMode::Free
     }
 
     /// Colorize the truncated title for the panel header.

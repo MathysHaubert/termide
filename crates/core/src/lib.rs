@@ -27,8 +27,8 @@ pub use event::{
 pub use hotkey_table::HotkeyTable;
 pub use key_chord::KeyChord;
 pub use panel::{
-    Panel, PanelConfig, RenderContext, Searchable, SegmentKind, SessionPanel, StatusSegment,
-    ThemeColors, WidthPreference,
+    HeightMode, Panel, PanelConfig, RenderContext, Searchable, SegmentKind, SessionPanel,
+    StatusSegment, ThemeColors, WidthPreference,
 };
 pub use scrollbar::{ScrollAxis, ScrollBarGeometry, ScrollBars};
 pub use terminal_caps::{
