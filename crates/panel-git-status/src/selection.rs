@@ -355,8 +355,11 @@ impl GitStatusPanel {
         match self.current_section {
             Section::Files => {
                 match self.get_selection() {
-                    Some(Selection::UnstagedFile(_)) => self.do_stage(),
-                    Some(Selection::StagedFile(_)) => self.do_unstage(),
+                    // A file opens in the editor, as it does in the file
+                    // manager; staging has its own keys and buttons.
+                    Some(Selection::UnstagedFile(_)) | Some(Selection::StagedFile(_)) => {
+                        return self.open_file(false);
+                    }
                     Some(Selection::UnstagedDir(idx)) => self.toggle_dir_expand(true, idx),
                     Some(Selection::StagedDir(idx)) => self.toggle_dir_expand(false, idx),
                     _ => {}
@@ -483,5 +486,100 @@ impl GitStatusPanel {
     /// Record click for double-click detection
     pub(crate) fn record_click(&mut self, now: std::time::Instant, vline: usize) {
         self.click_tracker.record_at(now, vline);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GitStatusPanel;
+    use termide_core::PanelEvent;
+    use termide_git::{StagedFile, UnstagedFile};
+
+    /// A panel over a fresh repository with one unstaged and one staged file
+    /// listed, cursor on the first file row.
+    fn panel_with_files() -> (tempfile::TempDir, GitStatusPanel) {
+        let dir = tempfile::tempdir().unwrap();
+        termide_git::init_repo(dir.path()).unwrap();
+        let mut panel = GitStatusPanel::new_for_repo(dir.path().to_path_buf());
+        assert!(panel.repo_manager.current().is_some(), "tempdir is a repo");
+        panel.unstaged_files = vec![UnstagedFile {
+            path: PathBuf::from("src/lib.rs"),
+            status: 'M',
+            untracked: false,
+        }];
+        panel.staged_files = vec![StagedFile {
+            path: PathBuf::from("README.md"),
+            status: 'M',
+        }];
+        panel.rebuild_trees();
+        panel.current_section = Section::Files;
+        panel.cursor = panel.find_nearest_selectable_line(0);
+        (dir, panel)
+    }
+
+    fn opened_path(events: &[PanelEvent]) -> Option<&PathBuf> {
+        match events {
+            [PanelEvent::OpenFile(path)] => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Enter on a file row opens the file in the editor — the same gesture
+    /// as in the file manager — rather than moving it in or out of the index.
+    #[test]
+    fn enter_on_a_file_opens_it_instead_of_staging() {
+        let (_dir, mut panel) = panel_with_files();
+        let repo = panel.repo_manager.current().unwrap().to_path_buf();
+
+        // Directories start expanded, so the file under `src` has a row.
+        let file_row = (0..panel.total_virtual_lines())
+            .find(|&line| {
+                panel.cursor = line;
+                matches!(panel.get_selection(), Some(Selection::UnstagedFile(0)))
+            })
+            .expect("an unstaged file row");
+        panel.cursor = file_row;
+        let events = panel.handle_enter_key();
+        assert_eq!(
+            opened_path(&events),
+            Some(&repo.join("src/lib.rs")),
+            "{events:?}"
+        );
+        assert_eq!(panel.unstaged_files.len(), 1, "nothing was staged");
+
+        let staged_row = (0..panel.total_virtual_lines())
+            .find(|&line| {
+                panel.cursor = line;
+                matches!(panel.get_selection(), Some(Selection::StagedFile(0)))
+            })
+            .expect("a staged file row");
+        panel.cursor = staged_row;
+        let events = panel.handle_enter_key();
+        assert_eq!(
+            opened_path(&events),
+            Some(&repo.join("README.md")),
+            "{events:?}"
+        );
+        assert_eq!(panel.staged_files.len(), 1, "nothing was unstaged");
+    }
+
+    /// Enter on a directory row still folds and unfolds it.
+    #[test]
+    fn enter_on_a_directory_toggles_it() {
+        let (_dir, mut panel) = panel_with_files();
+        let rows_before = panel.total_virtual_lines();
+        panel.cursor = (0..rows_before)
+            .find(|&line| {
+                panel.cursor = line;
+                matches!(panel.get_selection(), Some(Selection::UnstagedDir(_)))
+            })
+            .expect("a directory row");
+        assert!(panel.handle_enter_key().is_empty());
+        assert_ne!(
+            panel.total_virtual_lines(),
+            rows_before,
+            "directory toggled"
+        );
     }
 }

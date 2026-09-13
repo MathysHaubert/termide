@@ -191,7 +191,7 @@ impl GitStatusPanel {
     }
 
     /// Rebuild tree data structures from current file lists.
-    fn rebuild_trees(&mut self) {
+    pub(crate) fn rebuild_trees(&mut self) {
         let unstaged_data: Vec<_> = self
             .unstaged_files
             .iter()

@@ -244,7 +244,6 @@ pub trait Translation: Send + Sync {
     fn help_desc_checkout(&self) -> &str;
     fn help_desc_copy_hash(&self) -> &str;
     fn help_desc_scroll_half_down(&self) -> &str;
-    fn help_desc_stage_unstage(&self) -> &str;
     fn help_desc_tree_search(&self) -> &str;
     fn help_desc_expand_dir(&self) -> &str;
     fn help_desc_collapse_dir(&self) -> &str;

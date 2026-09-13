@@ -1,5 +1,6 @@
 //! Mouse handling for the Git Status panel: dropdown wheel/click routing,
-//! file-list selection with double-click staging, and selector/button hit-tests.
+//! file-list selection (a double-click opens the file in the editor), and
+//! selector/button hit-tests.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -152,12 +153,11 @@ impl GitStatusPanel {
                         self.current_section = Section::Files;
                         self.cursor = vline;
                         if self.check_double_click(now, vline) {
-                            // Double-click: stage file
-                            self.do_stage();
+                            // Double-click opens the file, like Enter
                             self.reset_click_state();
-                        } else {
-                            self.record_click(now, vline);
+                            return self.open_file(false);
                         }
+                        self.record_click(now, vline);
                     } else if vline == staged_header_line && !self.staged_files.is_empty() {
                         // Clicked on staged header (with Unstage all button)
                         self.current_section = Section::Files;
@@ -168,12 +168,11 @@ impl GitStatusPanel {
                         self.current_section = Section::Files;
                         self.cursor = vline;
                         if self.check_double_click(now, vline) {
-                            // Double-click: unstage file
-                            self.do_unstage();
+                            // Double-click opens the file, like Enter
                             self.reset_click_state();
-                        } else {
-                            self.record_click(now, vline);
+                            return self.open_file(false);
                         }
+                        self.record_click(now, vline);
                     }
                     // Clicks on empty header lines are ignored
                 }

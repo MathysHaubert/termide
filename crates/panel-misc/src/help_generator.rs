@@ -514,7 +514,7 @@ impl HelpGenerator {
         let entries = vec![
             HelpEntry {
                 keys: "Enter".to_string(),
-                description: t.help_desc_stage_unstage().to_string(),
+                description: t.help_desc_open_file_editor().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.stage),

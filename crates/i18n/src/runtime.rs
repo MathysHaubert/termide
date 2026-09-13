@@ -230,7 +230,6 @@ impl Translation for RuntimeTranslation {
         help_desc_toggle_collapse,
         help_desc_open_file_editor,
         help_desc_view_commit_diff,
-        help_desc_stage_unstage,
         help_desc_tree_search,
         help_desc_expand_dir,
         help_desc_collapse_dir,

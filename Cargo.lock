@@ -5299,6 +5299,7 @@ version = "0.34.1"
 dependencies = [
  "crossterm",
  "ratatui",
+ "tempfile",
  "termide-config",
  "termide-core",
  "termide-git",
