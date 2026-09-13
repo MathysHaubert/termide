@@ -223,7 +223,13 @@ pub fn compute_tree_prefixes(tree: &[TreeNode], visible: &[usize]) -> Vec<String
 }
 
 /// Get the aggregate status for files under a directory.
-/// Counts files per status and picks the majority. Ties broken by: M > D > A/R > ?
+///
+/// The list only carries changed files, so the directory's own history is
+/// inferred from them: a folder whose changes are all additions (staged or
+/// untracked) is shown as added, one whose changes are all deletions as
+/// deleted, and any mixture — a modified file next to a new one, a deletion
+/// next to an addition — means the folder already existed and is shown as
+/// modified, however many new files it gained.
 pub(crate) fn aggregate_dir_status(tree: &[TreeNode], dir_index: usize) -> (char, bool) {
     let dir_depth = tree[dir_index].depth;
     let mut deleted = 0u32;
@@ -254,25 +260,19 @@ pub(crate) fn aggregate_dir_status(tree: &[TreeNode], dir_index: usize) -> (char
         }
     }
 
-    // All deleted — show deleted; else majority wins, ties: M > D > A > ?
-    if deleted > 0 && modified == 0 && added == 0 && untracked == 0 {
+    let new = added + untracked;
+    if modified == 0 && new == 0 && deleted > 0 {
         ('D', false)
-    } else {
-        let (best_count, best_status, best_ut) = [
-            (modified, 'M', false),
-            (deleted, 'D', false),
-            (added, 'A', false),
-            (untracked, '?', true),
-        ]
-        .into_iter()
-        .max_by_key(|(c, _, _)| *c)
-        .unwrap();
-
-        if best_count > 0 {
-            (best_status, best_ut)
+    } else if modified == 0 && deleted == 0 && new > 0 {
+        if added > 0 {
+            ('A', false)
         } else {
-            (' ', false)
+            ('?', true)
         }
+    } else if modified + deleted + new > 0 {
+        ('M', false)
+    } else {
+        (' ', false)
     }
 }
 
@@ -373,5 +373,77 @@ mod tests {
         assert_eq!(prefixes[1], "├─ ");
         // b.rs (depth 1, last) -> "└─ "
         assert_eq!(prefixes[2], "└─ ");
+    }
+
+    fn dir_status(files: &[FileEntry]) -> (char, bool) {
+        let tree = build_tree(files, &HashSet::new());
+        let dir = tree
+            .iter()
+            .position(|node| matches!(node.kind, TreeNodeKind::Directory { .. }))
+            .expect("directory node");
+        aggregate_dir_status(&tree, dir)
+    }
+
+    /// A folder that gained more new files than it has modified ones still
+    /// existed before, so it is modified — the majority of additions must not
+    /// paint it as created.
+    #[test]
+    fn existing_directory_with_new_files_is_modified() {
+        let files = vec![
+            make_file("src/old.rs", 0, 'M'),
+            make_file("src/new1.rs", 1, 'A'),
+            make_file("src/new2.rs", 2, 'A'),
+            make_file("src/new3.rs", 3, 'A'),
+        ];
+        assert_eq!(dir_status(&files), ('M', false));
+
+        let mut files = vec![make_file("src/old.rs", 0, 'M')];
+        for i in 1..4 {
+            files.push(FileEntry {
+                path: PathBuf::from(format!("src/new{i}.rs")),
+                index: i,
+                status: '?',
+                untracked: true,
+            });
+        }
+        assert_eq!(dir_status(&files), ('M', false));
+    }
+
+    /// Deletions next to additions mean the folder existed too.
+    #[test]
+    fn directory_with_deletions_and_additions_is_modified() {
+        let files = vec![
+            make_file("src/gone.rs", 0, 'D'),
+            make_file("src/new1.rs", 1, 'A'),
+            make_file("src/new2.rs", 2, 'A'),
+        ];
+        assert_eq!(dir_status(&files), ('M', false));
+    }
+
+    /// Only a folder whose every change is an addition reads as created, and
+    /// only one whose every change is a deletion reads as deleted.
+    #[test]
+    fn homogeneous_directories_keep_their_status() {
+        let files = vec![make_file("src/a.rs", 0, 'A'), make_file("src/b.rs", 1, 'R')];
+        assert_eq!(dir_status(&files), ('A', false));
+
+        let files = vec![
+            FileEntry {
+                path: PathBuf::from("src/a.rs"),
+                index: 0,
+                status: '?',
+                untracked: true,
+            },
+            FileEntry {
+                path: PathBuf::from("src/b.rs"),
+                index: 1,
+                status: '?',
+                untracked: true,
+            },
+        ];
+        assert_eq!(dir_status(&files), ('?', true));
+
+        let files = vec![make_file("src/a.rs", 0, 'D'), make_file("src/b.rs", 1, 'D')];
+        assert_eq!(dir_status(&files), ('D', false));
     }
 }
