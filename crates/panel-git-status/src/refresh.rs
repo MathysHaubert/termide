@@ -170,11 +170,11 @@ impl GitStatusPanel {
         self.staged_files = git::get_staged_files(&repo);
     }
 
-    /// Build a section tree from file entries.
+    /// Build the node list of a section tree from file entries.
     fn build_section_tree(
         paths: &[(PathBuf, usize, char, bool)],
         collapsed: &HashSet<PathBuf>,
-    ) -> (Vec<tree::TreeNode>, Vec<usize>, Vec<String>) {
+    ) -> Vec<tree::TreeNode> {
         let entries: Vec<tree::FileEntry> = paths
             .iter()
             .map(|(path, index, status, untracked)| tree::FileEntry {
@@ -184,13 +184,15 @@ impl GitStatusPanel {
                 untracked: *untracked,
             })
             .collect();
-        let tree_nodes = tree::build_tree(&entries, collapsed);
-        let visible = tree::compute_visible_nodes(&tree_nodes);
-        let prefixes = tree::compute_tree_prefixes(&tree_nodes, &visible);
-        (tree_nodes, visible, prefixes)
+        tree::build_tree(&entries, collapsed)
     }
 
     /// Rebuild tree data structures from current file lists.
+    ///
+    /// Everything derived from the node list — visible rows, tree prefixes
+    /// and the per-directory aggregate status that colours directory rows —
+    /// comes from `recompute_visible`, the one place that knows the full set,
+    /// so a refresh and a fold/unfold cannot drift apart again.
     pub(crate) fn rebuild_trees(&mut self) {
         let unstaged_data: Vec<_> = self
             .unstaged_files
@@ -198,11 +200,8 @@ impl GitStatusPanel {
             .enumerate()
             .map(|(i, f)| (f.path.clone(), i, f.status, f.untracked))
             .collect();
-        let (tree, visible, prefixes) =
-            Self::build_section_tree(&unstaged_data, &self.unstaged.collapsed);
-        self.unstaged.tree = tree;
-        self.unstaged.visible = visible;
-        self.unstaged.prefixes = prefixes;
+        self.unstaged.tree = Self::build_section_tree(&unstaged_data, &self.unstaged.collapsed);
+        self.unstaged.recompute_visible();
 
         let staged_data: Vec<_> = self
             .staged_files
@@ -210,11 +209,8 @@ impl GitStatusPanel {
             .enumerate()
             .map(|(i, f)| (f.path.clone(), i, f.status, false))
             .collect();
-        let (tree, visible, prefixes) =
-            Self::build_section_tree(&staged_data, &self.staged.collapsed);
-        self.staged.tree = tree;
-        self.staged.visible = visible;
-        self.staged.prefixes = prefixes;
+        self.staged.tree = Self::build_section_tree(&staged_data, &self.staged.collapsed);
+        self.staged.recompute_visible();
     }
 
     /// Toggle expand/collapse for a directory node.

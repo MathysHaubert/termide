@@ -564,6 +564,30 @@ mod tests {
         assert_eq!(panel.staged_files.len(), 1, "nothing was unstaged");
     }
 
+    /// A refresh must colour directory rows by their descendants right away,
+    /// not only after the user folds one: the aggregate lives in
+    /// `node_status`, which the rebuild used to leave empty.
+    #[test]
+    fn rebuilt_trees_carry_the_directory_aggregate() {
+        let (_dir, panel) = panel_with_files();
+        let ft = &panel.unstaged;
+        assert_eq!(ft.node_status.len(), ft.tree.len());
+        let src = ft
+            .tree
+            .iter()
+            .position(|node| node.label == "src")
+            .expect("`src` directory node");
+        assert!(matches!(
+            ft.tree[src].kind,
+            crate::tree::TreeNodeKind::Directory { .. }
+        ));
+        assert_eq!(
+            ft.node_status[src],
+            ('M', false),
+            "modified child colours the directory"
+        );
+    }
+
     /// Enter on a directory row still folds and unfolds it.
     #[test]
     fn enter_on_a_directory_toggles_it() {
