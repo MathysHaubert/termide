@@ -37,7 +37,6 @@ pub enum ScreenOp {
 pub struct VtPerformer {
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub screen: Arc<RwLock<TerminalScreen>>,
-    pub pending_backslash: bool,
     /// Buffer for batching screen operations
     pub pending_ops: Vec<ScreenOp>,
 }
@@ -78,25 +77,6 @@ impl Perform for VtPerformer {
         // Filter control characters that shouldn't be displayed
         // (except printable characters)
         if ch.is_control() && ch != '\t' && ch != '\n' && ch != '\r' {
-            return;
-        }
-
-        // Handle bash readline markers \[ and \]
-        if self.pending_backslash {
-            self.pending_backslash = false;
-            // If backslash is followed by [ or ], skip both characters
-            if ch == '[' || ch == ']' {
-                return;
-            }
-            // Otherwise print deferred backslash and current character
-            self.pending_ops.push(ScreenOp::PutChar('\\'));
-            self.pending_ops.push(ScreenOp::PutChar(ch));
-            return;
-        }
-
-        // If we encounter backslash, defer it
-        if ch == '\\' {
-            self.pending_backslash = true;
             return;
         }
 
@@ -743,7 +723,6 @@ mod tests {
                 Box::new(SharedCapture(Arc::clone(&capture))) as Box<dyn Write + Send>
             )),
             screen: Arc::clone(&screen),
-            pending_backslash: false,
             pending_ops: Vec::new(),
         };
         (performer, capture, screen)
@@ -763,6 +742,18 @@ mod tests {
             cell.push_text(&mut text);
         }
         text.trim_end().to_string()
+    }
+
+    #[test]
+    fn backslashes_and_brackets_are_printed_verbatim() {
+        // `\[` / `\]` are bash PS1 markup that readline consumes; they never
+        // reach the terminal, so program output containing them (regexes,
+        // LaTeX, escaped markdown) must not be mangled.
+        let (mut performer, _capture, screen) = performer();
+        feed(&mut performer, b"s/\\[a\\]//g \\\r\nnext");
+        performer.flush();
+        assert_eq!(row_text(&screen, 0), "s/\\[a\\]//g \\");
+        assert_eq!(row_text(&screen, 1), "next");
     }
 
     #[test]

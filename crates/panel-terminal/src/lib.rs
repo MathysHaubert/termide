@@ -201,7 +201,6 @@ impl Terminal {
             let mut performer = terminal::VtPerformer {
                 writer,
                 screen: Arc::clone(&screen_clone),
-                pending_backslash: false,
                 pending_ops: Vec::with_capacity(8192),
             };
 
