@@ -1,6 +1,6 @@
-# Detached Sessions
+# Detached Instances
 
-A detached session keeps running after the terminal that started it is gone.
+A detached instance keeps running after the terminal that started it is gone.
 Close the SSH connection, come back hours later, attach again — the editors,
 shells, LSP servers and long-running jobs are exactly where you left them.
 
@@ -15,22 +15,22 @@ reporting.
 ## Quick start
 
 ```bash
-termide --detached            # start a session, print its id
-termide --list-sessions       # see what is running
-termide --attach              # attach to the most recent session
+termide --detached            # start a instance, print its id
+termide --list-instances       # see what is running
+termide --attach              # attach to the most recent instance
 termide --attach my-project   # attach to a specific one
 ```
 
 `Alt+D` detaches again, leaving everything running — as does **Options →
-Detach session** in the menu. That entry is shown only in a detachable
-session; in an ordinary one there is nothing to detach from, so it is left
+Detach instance** in the menu. That entry is shown only in a detachable
+instance; in an ordinary one there is nothing to detach from, so it is left
 out rather than shown and refused.
 
-A session is named after the project directory it was started in, so starting
-one in `~/src/my-project` gives you `my-project`. Start a second session in the
+A instance is named after the project directory it was started in, so starting
+one in `~/src/my-project` gives you `my-project`. Start a second instance in the
 same directory and it becomes `my-project-2`.
 
-## Making every session detachable
+## Making every instance detachable
 
 Remembering `--detached` at launch is the whole catch: a termide started
 normally cannot be detached later. A running process is bound to its
@@ -50,9 +50,9 @@ or tick **Always detachable (Unix)** in Settings (`Alt+P`) → General. Every
 
 Worth knowing before you enable it:
 
-- **Closing a terminal stops meaning "stop termide".** The session survives,
+- **Closing a terminal stops meaning "stop termide".** The instance survives,
   and so do its LSP servers, watchers and shells. That is the point over SSH,
-  and a surprise locally — check `--list-sessions` occasionally.
+  and a surprise locally — check `--list-instances` occasionally.
 - **`$EDITOR` launches are exempt.** With file arguments (`EDITOR=termide git
   commit`) the option is ignored: git waits for the editor to exit, and a
   detach would tell it the edit finished when it had not.
@@ -77,22 +77,22 @@ ssh server
 termide --attach my-project
 ```
 
-Closing the SSH connection without detaching is safe. The session notices the
+Closing the SSH connection without detaching is safe. The instance notices the
 client is gone and carries on; the next `--attach` picks it up.
 
 ## What survives, and why
 
-Everything. The session is not saved and restored — it never stops.
+Everything. The instance is not saved and restored — it never stops.
 
 `termide --detached` starts a small host process that owns a PTY and runs an
 ordinary TermIDE inside it. Your shells, LSP servers, watchers and background
 jobs are children of that TermIDE, so they are untouched by a client coming and
 going. Attaching connects a terminal to the host; detaching disconnects it.
 
-This is a different thing from the session layout in
-`~/.local/share/termide/sessions/`, which records which panels were open so a
+This is a different thing from the instance layout in
+`~/.local/share/termide/instances/`, which records which panels were open so a
 *new* TermIDE can reopen them. That still works as before, and still applies
-when you start a session for the first time.
+when you start a instance for the first time.
 
 ## Reattaching from a different terminal
 
@@ -103,19 +103,19 @@ keyboard protocol against the terminal that is now looking at it, re-detects
 colour support from the client's `TERM`, and repaints in full.
 
 Resizing the terminal while attached works normally; the layout redistributes
-the way it does in a local session.
+the way it does in a local instance.
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `termide --detached` | Start a detached session and print its id |
+| `termide --detached` | Start a detached instance and print its id |
 | `termide --detached file.rs` | Same, opening files as usual |
-| `termide --attach` | Attach to the most recent session |
-| `termide --attach <ID>` | Attach to a named session |
-| `termide --list-sessions` | List sessions: id, pid, uptime, state, project |
+| `termide --attach` | Attach to the most recent instance |
+| `termide --attach <ID>` | Attach to a named instance |
+| `termide --list-instances` | List instances: id, pid, uptime, state, project |
 
-`--list-sessions` also cleans up after sessions whose host process is gone, so
+`--list-instances` also cleans up after instances whose host process is gone, so
 a crash never leaves a phantom entry behind.
 
 With shell completion loaded (`termide --completions <shell>`, see
@@ -126,26 +126,26 @@ offers the ids from this table.
 
 | Way | When to use it |
 |-----|----------------|
-| `Alt+D` | The normal way. Rebind it as `detach_session` in the `[general.keybindings]` section. |
-| Close the terminal | Safe. The session notices and keeps running. |
+| `Alt+D` | The normal way. Rebind it as `detach_instance` in the `[general.keybindings]` section. |
+| Close the terminal | Safe. The instance notices and keeps running. |
 | `Ctrl+Z` | Does **not** work, and cannot: termide reads keys in raw mode, so the key never reaches the tty line discipline to become a SIGTSTP. `Alt+D` is the binding that does what you meant. |
 | `Ctrl+\` three times | Emergency only — if TermIDE itself has stopped responding. Handled by the client, so it works even when the app does not. |
 
-Ending a session is the same as ending any TermIDE: quit it (`Alt+Q`) while
-attached. That stops the host process too, and removes the session.
+Ending a instance is the same as ending any TermIDE: quit it (`Alt+Q`) while
+attached. That stops the host process too, and removes the instance.
 
 ## Only one client at a time
 
-A second `--attach` to the same session is refused while another client is
+A second `--attach` to the same instance is refused while another client is
 attached, rather than mirroring the screen to both. Detach the first client (or
 close its terminal) and the next attach succeeds immediately.
 
-## Where the session state lives
+## Where the instance state lives
 
 Sockets live in `$XDG_RUNTIME_DIR/termide/` on Linux and BSD, and in
 `~/Library/Application Support/termide/run/` on macOS, which has no
 `XDG_RUNTIME_DIR`. The directory is owner-only (`0700`), so no other account on
-the machine can attach to your sessions.
+the machine can attach to your instances.
 
 Nothing there needs cleaning up by hand: a socket outlives its host only until
-the next `--list-sessions` or `--detached`, which prunes it.
+the next `--list-instances` or `--detached`, which prunes it.

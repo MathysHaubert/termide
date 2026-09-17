@@ -81,7 +81,7 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
                 field_type: FieldType::Number,
             },
             FieldDescriptor {
-                label: t.settings_general_session_retention(),
+                label: t.settings_general_project_retention(),
                 field_type: FieldType::Number,
             },
             FieldDescriptor {
@@ -197,7 +197,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             3 => format!("{:?}", config.general.icon_mode).to_lowercase(),
             4 => config.general.auto_stack_threshold.to_string(),
             5 => config.general.min_panel_width.to_string(),
-            6 => config.general.session_retention_days.to_string(),
+            6 => config.general.project_retention_days.to_string(),
             7 => bool_str(config.general.bell_on_operation_complete),
             8 => config.general.resource_monitor_interval.to_string(),
             9 => bool_str(config.general.always_detachable),

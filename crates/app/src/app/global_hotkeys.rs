@@ -26,8 +26,8 @@ pub(super) fn build_global_hotkey_table(kb: &GlobalKeybindings) -> HotkeyTable {
     t.insert("new_journal", &kb.new_journal);
     t.insert("open_help", &kb.open_help);
     t.insert("open_preferences", &kb.open_preferences);
-    t.insert("open_sessions", &kb.open_sessions);
-    t.insert("new_session", &kb.new_session);
+    t.insert("open_projects", &kb.open_projects);
+    t.insert("new_project", &kb.new_project);
     t.insert("open_git_status", &kb.open_git_status);
     t.insert("open_outline", &kb.open_outline);
     t.insert("open_diagnostics", &kb.open_diagnostics);
@@ -66,7 +66,7 @@ pub(super) fn build_global_hotkey_table(kb: &GlobalKeybindings) -> HotkeyTable {
 
     // Application
     t.insert("quit", &kb.quit);
-    t.insert("detach_session", &kb.detach_session);
+    t.insert("detach_instance", &kb.detach_instance);
 
     // Clipboard (routed to the focused panel)
     t.insert("copy", &kb.copy);
@@ -135,12 +135,12 @@ impl App {
             self.open_settings_modal();
             return Ok(true);
         }
-        if table.matches("open_sessions", key) {
-            self.handle_open_sessions_modal()?;
+        if table.matches("open_projects", key) {
+            self.handle_open_projects_modal()?;
             return Ok(true);
         }
-        if table.matches("new_session", key) {
-            self.handle_new_session()?;
+        if table.matches("new_project", key) {
+            self.handle_new_project()?;
             return Ok(true);
         }
         if table.matches("open_git_status", key) {
@@ -248,8 +248,8 @@ impl App {
             self.handle_quit_request()?;
             return Ok(true);
         }
-        if table.matches("detach_session", key) {
-            self.handle_detach_session();
+        if table.matches("detach_instance", key) {
+            self.handle_detach_instance();
             return Ok(true);
         }
 
@@ -310,8 +310,8 @@ impl App {
             "new_journal" => self.handle_new_journal()?,
             "open_help" => self.handle_new_help()?,
             "open_preferences" => self.open_config_in_editor()?,
-            "open_sessions" => self.handle_open_sessions_modal()?,
-            "new_session" => self.handle_new_session()?,
+            "open_projects" => self.handle_open_projects_modal()?,
+            "new_project" => self.handle_new_project()?,
             "open_git_status" => self.handle_open_git_status()?,
             "open_outline" => self.handle_open_outline()?,
             "open_diagnostics" => self.handle_open_diagnostics()?,
@@ -330,7 +330,7 @@ impl App {
             "panel_grow_vertical" => self.handle_panel_resize_vertical(true),
             "panel_shrink_vertical" => self.handle_panel_resize_vertical(false),
             "quit" => self.handle_quit_request()?,
-            "detach_session" => self.handle_detach_session(),
+            "detach_instance" => self.handle_detach_instance(),
             other => {
                 if let Some(key) = other.strip_prefix("run_command:") {
                     self.run_command_by_menu_key(key)?;

@@ -19,7 +19,7 @@ use ratatui::{buffer::Buffer, layout::Rect};
 use termide_config::constants::spinner_frame;
 use termide_config::{is_go_end, is_go_home, is_move_down, is_move_up, Config};
 use termide_core::{
-    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel,
+    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState, RenderContext,
     ThemeColors, WidthPreference,
 };
 use termide_git::{self as git};
@@ -414,8 +414,8 @@ impl Panel for GitDiffPanel {
         vec![]
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
-        Some(SessionPanel::GitDiff {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        Some(PanelState::GitDiff {
             repo_path: self.repo_path.clone(),
             commit_hash: self.commit_hash.clone(),
         })

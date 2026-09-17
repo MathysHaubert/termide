@@ -36,27 +36,27 @@ struct Cli {
     #[arg(long)]
     diagnostics: bool,
 
-    /// Start in a detached session and print its id. The session keeps
+    /// Start a detached instance and print its id. The instance keeps
     /// running — with every shell, LSP server and job inside it — after the
     /// terminal that started it is closed.
     #[cfg(unix)]
     #[arg(long)]
     detached: bool,
 
-    /// Attach to a detached session. Without an id, the most recent one.
+    /// Attach to a detached instance. Without an id, the most recent one.
     #[cfg(unix)]
     #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
     attach: Option<String>,
 
-    /// List detached sessions and exit.
+    /// List detached instances and exit.
     #[cfg(unix)]
     #[arg(long)]
-    list_sessions: bool,
+    list_instances: bool,
 
     /// Print a completion script for the given shell and exit. Load it with
     /// `eval "$(termide --completions bash)"` in ~/.bashrc, or write it into
-    /// the shell's completions directory; `--attach` then completes session
-    /// ids from `--list-sessions`.
+    /// the shell's completions directory; `--attach` then completes instance
+    /// ids from `--list-instances`.
     #[cfg(unix)]
     #[arg(long, value_name = "SHELL", value_parser = completions::SHELLS)]
     completions: Option<String>,
@@ -133,8 +133,8 @@ fn run_diagnostics(custom_config: Option<&std::path::Path>) -> bool {
     );
     if let Some(ref root) = project_root {
         check(
-            "session dir",
-            termide_session::Session::get_session_dir(root)
+            "project dir",
+            termide_project::Session::get_project_dir(root)
                 .map(|p| p.display().to_string())
                 .map_err(|e| format!("{e}")),
         );
@@ -164,19 +164,19 @@ fn restore_terminal() {
     termide_core::leave_terminal_modes();
 }
 
-/// Handle `--list-sessions`, `--attach` and `--detached`.
+/// Handle `--list-instances`, `--attach` and `--detached`.
 ///
 /// Returns `Some(exit_code)` when one of them ran and the process should stop,
 /// `None` when this is an ordinary launch.
 #[cfg(unix)]
-fn handle_detached_session_cli(cli: &Cli) -> Result<Option<i32>> {
-    if cli.list_sessions {
-        print!("{}", termide_detach::format_session_list()?);
+fn handle_detached_instance_cli(cli: &Cli) -> Result<Option<i32>> {
+    if cli.list_instances {
+        print!("{}", termide_detach::format_instance_list()?);
         return Ok(Some(0));
     }
 
     if let Some(id) = &cli.attach {
-        // `--attach` with no value means "the most recent session".
+        // `--attach` with no value means "the most recent instance".
         let id = if id.is_empty() {
             None
         } else {
@@ -194,7 +194,7 @@ fn handle_detached_session_cli(cli: &Cli) -> Result<Option<i32>> {
     if cli.detached {
         let project_root = std::env::current_dir()?;
         let id = termide_detach::spawn_detached(&project_root, &cli.files)?;
-        println!("Detached session '{id}' started.");
+        println!("Detached instance '{id}' started.");
         println!("Attach with: termide --attach {id}");
         return Ok(Some(0));
     }
@@ -252,12 +252,12 @@ fn main() -> Result<()> {
         std::process::exit(if ok { 0 } else { 1 });
     }
 
-    // Detached-session handling runs before anything else touches the
+    // Detached-instance handling runs before anything else touches the
     // terminal, the config or the logger. `--detached` forks, and fork only
     // carries the calling thread into the child: a lock held by a thread that
     // no longer exists would deadlock the daemon, so no thread may exist yet.
     #[cfg(unix)]
-    if let Some(code) = handle_detached_session_cli(&cli)? {
+    if let Some(code) = handle_detached_instance_cli(&cli)? {
         std::process::exit(code);
     }
 
@@ -578,8 +578,8 @@ mod completion_tests {
                 );
             }
             assert!(
-                script.contains("--list-sessions 2>/dev/null"),
-                "{shell} completion does not query --list-sessions"
+                script.contains("--list-instances 2>/dev/null"),
+                "{shell} completion does not query --list-instances"
             );
             assert_eq!(completions::script(shell), script);
         }

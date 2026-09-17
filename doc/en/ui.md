@@ -66,10 +66,10 @@ The menu bar is located at the top of the window and includes: menu items on the
 Menu activation/deactivation and each item can be accessed by mouse click or [keyboard shortcuts](#Keyboard-Navigation-and-Panel-Management).
 
 **Menu items:**
-- `Sessions` — session management submenu:
-  - New session — create session in a new directory
-  - Switch session — open session switcher modal
-  - Change root path — move current session to another directory
+- `Projects` — project management submenu:
+  - New project — start a project in another directory
+  - Switch project — open the project switcher modal
+  - Change root path — move the current project to another directory
 - `Windows` — panel creation submenu:
   - Files — file manager panel
   - Terminal — terminal panel (has submenu for choosing a shell: lists all available shells on the system, the default shell is marked with ●)
@@ -267,8 +267,8 @@ The device name is automatically detected from the filesystem:
 | `Alt+Backspace`   | Toggle panel stacking (merge/unstack)      |
 | `Alt+K`           | Open panel action menu (`[≡]` dropdown)    |
 | `Shift+F10`       | Open panel action menu (alternative)       |
-| `Alt+\`           | Open sessions menu                         |
-| `Alt+N`           | Create new session                         |
+| `Alt+\`           | Open projects menu                         |
+| `Alt+N`           | Start a new project                        |
 | `Alt+B`           | Add bookmark                               |
 | `Ctrl+P`          | Open command palette                       |
 | `Alt+1-9`         | Jump to panel by number                    |

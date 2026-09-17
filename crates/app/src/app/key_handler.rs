@@ -20,7 +20,7 @@ impl App {
     /// a scrollable list, so it is excluded.
     pub(in crate::app) fn any_menu_dropdown_open(&self) -> bool {
         let ui = &self.state.ui;
-        ui.sessions_submenu.open
+        ui.projects_submenu.open
             || ui.tools_submenu.open
             || ui.commands_submenu.open
             || ui.stash_submenu.open
@@ -54,8 +54,8 @@ impl App {
         }
 
         // If Sessions submenu is open, handle its navigation
-        if self.state.ui.sessions_submenu.open {
-            return self.handle_sessions_submenu_key(key);
+        if self.state.ui.projects_submenu.open {
+            return self.handle_projects_submenu_key(key);
         }
 
         // If Tools submenu is open, handle its navigation

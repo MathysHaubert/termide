@@ -390,7 +390,7 @@ impl SettingsModal {
             SettingsTab::General => match index {
                 4 => self.config.general.auto_stack_threshold = val as u16,
                 5 => self.config.general.min_panel_width = val as u16,
-                6 => self.config.general.session_retention_days = val as u32,
+                6 => self.config.general.project_retention_days = val as u32,
                 8 => self.config.general.resource_monitor_interval = val,
                 _ => {}
             },

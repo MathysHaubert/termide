@@ -70,7 +70,7 @@ pub use input::InputModal;
 pub use rename_pattern::RenamePatternModal;
 pub use save_as::{SaveAsModal, SaveAsResult};
 pub use select::SelectModal;
-pub use sessions::{SessionAction, SessionItem, SessionsModal};
+pub use sessions::{ProjectsModal, SessionAction, SessionItem};
 pub use settings::{SettingsModal, SettingsResult};
 
 /// Active modal window enum.
@@ -99,7 +99,7 @@ pub enum ActiveModal {
     /// Editable select modal (combobox)
     EditableSelect(Box<EditableSelectModal>),
     /// Sessions selection modal
-    Sessions(Box<SessionsModal>),
+    Sessions(Box<ProjectsModal>),
     /// Directory picker modal
     DirectoryPicker(Box<DirectoryPickerModal>),
     /// Save As modal with executable checkbox

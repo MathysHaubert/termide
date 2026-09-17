@@ -417,7 +417,7 @@ impl App {
                     self.handle_switch_session(value)?;
                 }
                 PendingAction::NewSession => {
-                    self.handle_new_session_result(value)?;
+                    self.handle_new_project_result(value)?;
                 }
                 PendingAction::DeleteSession { path } => {
                     if value.downcast_ref::<bool>().copied().unwrap_or(false) {

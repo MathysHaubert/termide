@@ -19,7 +19,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
 use termide_core::{
     CommandResult, Config, HotkeyTable, KeyChord, LinkOpen, Panel, PanelCommand, PanelEvent,
-    RenderContext, SegmentKind, SessionPanel, StatusSegment, Theme, ThemeColors, WidthPreference,
+    PanelState, RenderContext, SegmentKind, StatusSegment, Theme, ThemeColors, WidthPreference,
 };
 use termide_modal::FindBar;
 use termide_richtext::Rendered;
@@ -601,12 +601,12 @@ impl Panel for HtmlPanel {
         Ok(())
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
         // Only file-backed viewers persist; fetched URLs are not restored.
         if self.source_url.is_some() {
             return None;
         }
-        Some(SessionPanel::Html {
+        Some(PanelState::Html {
             path: self.file_path.clone(),
         })
     }
@@ -698,8 +698,8 @@ mod tests {
     #[test]
     fn to_session_round_trips_path() {
         let p = panel_from("<p>x</p>");
-        match p.to_session(Path::new("/tmp")) {
-            Some(SessionPanel::Html { path }) => {
+        match p.to_state(Path::new("/tmp")) {
+            Some(PanelState::Html { path }) => {
                 assert_eq!(path, PathBuf::from("/x/page.html"))
             }
             other => panic!("unexpected: {other:?}"),

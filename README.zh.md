@@ -335,7 +335,7 @@ termide [OPTIONS] [FILE]...
   --detached           启动一个在终端关闭后仍继续运行的可分离会话，并打印其 ID
                        （仅限 Unix）
   --attach [<ID>]      接入某个可分离会话，省略时接入最近的一个
-  --list-sessions      列出可分离会话并退出
+  --list-instances     列出可分离实例并退出
   --completions <SHELL>
                        打印补全脚本（bash、zsh、fish）并退出
   --install-completions [<SHELL>]

@@ -58,7 +58,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **38 Built-in Themes** - Dark, light, retro, and cinematic themes (Dracula, Nord, Monokai, Solarized, Matrix, Pip-Boy, Norton Commander, Windows 95, etc.)
 - **Custom Themes** - Create your own themes in TOML format
 - **15 UI Languages** - Bengali, Chinese, English, French, German, Hindi, Indonesian, Japanese, Korean, Portuguese, Russian, Spanish, Thai, Turkish, Vietnamese (missing keys transparently fall back to English)
-- **Session Management** - Auto-save and restore panel layouts
+- **Project Management** - Auto-save and restore panel layouts per project
 - **Detached Sessions** - `termide --detached` keeps the whole session — editors, shells, LSP servers, running jobs — alive after the terminal closes; `termide --attach` picks it up again from any terminal, at any size (Unix only)
 - **System Monitor** - Real-time CPU, RAM, network I/O in menu bar and disk usage in status bar; click any indicator to open a detail modal (top processes by CPU/RAM, top processes by network connections with listening ports); repeated click on the same indicator closes the modal (toggle)
 - **Search & Replace** - Live preview, match counter, regex support
@@ -336,10 +336,10 @@ Options:
   --no-lsp             Disable LSP language servers
   --config <FILE>      Use custom config file path
   --diagnostics        Run pre-flight diagnostics and exit (no UI)
-  --detached           Start a detached session that survives the terminal
+  --detached           Start a detached instance that survives the terminal
                        closing, and print its id (Unix only)
-  --attach [<ID>]      Attach to a detached session, most recent if omitted
-  --list-sessions      List detached sessions and exit
+  --attach [<ID>]      Attach to a detached instance, most recent if omitted
+  --list-instances     List detached instances and exit
   --completions <SHELL>
                        Print a completion script (bash, zsh, fish) and exit
   --install-completions [<SHELL>]
@@ -394,10 +394,10 @@ TermIDE follows the [XDG Base Directory Specification](https://specifications.fr
 - macOS: `~/Library/Application Support/termide/config.toml`
 - Windows: `%APPDATA%\termide\config.toml`
 
-**Session data location:**
-- Linux/BSD: `~/.local/share/termide/sessions/` (or `$XDG_DATA_HOME/termide/sessions/`)
-- macOS: `~/Library/Application Support/termide/sessions/`
-- Windows: `%APPDATA%\termide\sessions\`
+**Project data location:**
+- Linux/BSD: `~/.local/share/termide/projects/` (or `$XDG_DATA_HOME/termide/projects/`)
+- macOS: `~/Library/Application Support/termide/projects/`
+- Windows: `%APPDATA%\termide\projects\`
 
 **Log file location:**
 - Linux/BSD: `~/.cache/termide/termide.log` (or `$XDG_CACHE_HOME/termide/termide.log`)

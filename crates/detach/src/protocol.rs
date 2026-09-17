@@ -29,12 +29,12 @@ const TAG_ATTACHED: u8 = 0x84;
 /// Sent by an attaching client, or by the hosted termide asking to be released.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientFrame {
-    /// Take over the session at this terminal size.
+    /// Take over the instance at this terminal size.
     ///
     /// `term` is the client's `$TERM` and `caps` its keyboard capabilities,
     /// both of which the hosted process adopts. It cannot determine either
     /// for itself: its `$TERM` came from whichever terminal started the
-    /// session, and a capability probe sent down its PTY reaches the daemon,
+    /// instance, and a capability probe sent down its PTY reaches the daemon,
     /// which does not answer one.
     Attach {
         cols: u16,
@@ -48,10 +48,10 @@ pub enum ClientFrame {
         cols: u16,
         rows: u16,
     },
-    /// The client is leaving; the session stays alive.
+    /// The client is leaving; the instance stays alive.
     Detach,
     /// The hosted termide asking the daemon to drop the current client.
-    /// This is how the in-app "detach session" action works without the
+    /// This is how the in-app "detach instance" action works without the
     /// client having to intercept a chord of its own.
     RequestDetach,
 }
@@ -86,7 +86,7 @@ impl ClientCaps {
 pub enum ServerFrame {
     /// Raw PTY output.
     Output(Vec<u8>),
-    /// The hosted termide exited; the session is over.
+    /// The hosted termide exited; the instance is over.
     Exited(i32),
     /// Another client is already attached.
     Busy,

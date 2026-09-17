@@ -108,14 +108,14 @@ impl App {
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
-            termide_session::Session::get_session_dir(&project_root)
+            termide_project::Session::get_project_dir(&project_root)
                 .map(|dir| {
                     // Cleanup old log files (older than 24 hours)
-                    let _ = termide_session::cleanup_old_logs(&dir);
-                    dir.join(termide_session::generate_log_filename())
+                    let _ = termide_project::cleanup_old_logs(&dir);
+                    dir.join(termide_project::generate_log_filename())
                 })
                 .unwrap_or_else(|_| {
-                    std::env::temp_dir().join(termide_session::generate_log_filename())
+                    std::env::temp_dir().join(termide_project::generate_log_filename())
                 })
         };
         let min_log_level = termide_logger::LogLevel::from_str(&state.config.logging.min_level)
@@ -140,8 +140,8 @@ impl App {
         }
 
         // Clean up old sessions (configurable retention period)
-        let retention_days = state.config.general.session_retention_days;
-        if let Err(e) = termide_session::cleanup_old_sessions(&project_root, retention_days) {
+        let retention_days = state.config.general.project_retention_days;
+        if let Err(e) = termide_project::cleanup_old_projects(&project_root, retention_days) {
             log::warn!("Failed to cleanup old sessions: {}", e);
         }
 
@@ -191,13 +191,13 @@ impl App {
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
-            termide_session::Session::get_session_dir(&project_root)
+            termide_project::Session::get_project_dir(&project_root)
                 .map(|dir| {
-                    let _ = termide_session::cleanup_old_logs(&dir);
-                    dir.join(termide_session::generate_log_filename())
+                    let _ = termide_project::cleanup_old_logs(&dir);
+                    dir.join(termide_project::generate_log_filename())
                 })
                 .unwrap_or_else(|_| {
-                    std::env::temp_dir().join(termide_session::generate_log_filename())
+                    std::env::temp_dir().join(termide_project::generate_log_filename())
                 })
         };
         let min_log_level = termide_logger::LogLevel::from_str(&state.config.logging.min_level)
@@ -222,8 +222,8 @@ impl App {
         }
 
         // Clean up old sessions
-        let retention_days = state.config.general.session_retention_days;
-        if let Err(e) = termide_session::cleanup_old_sessions(&project_root, retention_days) {
+        let retention_days = state.config.general.project_retention_days;
+        if let Err(e) = termide_project::cleanup_old_projects(&project_root, retention_days) {
             log::warn!("Failed to cleanup old sessions: {}", e);
         }
 
@@ -318,7 +318,7 @@ impl App {
     fn detect_detach_available() -> bool {
         #[cfg(unix)]
         {
-            termide_detach::hosted_session_id().is_some()
+            termide_detach::hosted_instance_id().is_some()
         }
         #[cfg(not(unix))]
         {
@@ -331,7 +331,7 @@ impl App {
     /// Reports through the status line rather than failing: outside a detached
     /// session the action is meaningless, and the user needs to be told that
     /// rather than left wondering why nothing happened.
-    pub(super) fn handle_detach_session(&mut self) {
+    pub(super) fn handle_detach_instance(&mut self) {
         let t = termide_i18n::t();
 
         #[cfg(unix)]
@@ -339,7 +339,7 @@ impl App {
             Ok(true) => {}
             Ok(false) => self
                 .state
-                .set_info(t.detach_not_detached_session().to_string()),
+                .set_info(t.detach_not_detached_instance().to_string()),
             Err(e) => {
                 log::warn!("Detach request failed: {e:#}");
                 self.state.set_error(t.detach_failed().to_string());
@@ -348,7 +348,7 @@ impl App {
 
         #[cfg(not(unix))]
         self.state
-            .set_info(t.detach_not_detached_session().to_string());
+            .set_info(t.detach_not_detached_instance().to_string());
     }
 
     /// Enable or disable session persistence. Disabled for `$EDITOR`-style

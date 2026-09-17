@@ -14,7 +14,7 @@ pub use maintenance::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     /// Panel groups (vertical columns with accordion)
-    pub panel_groups: Vec<SessionPanelGroup>,
+    pub panel_groups: Vec<PanelGroupState>,
     /// Which group is currently focused (0-based index)
     pub focused_group: usize,
 }
@@ -25,7 +25,7 @@ pub struct Session {
 /// loader treats `Accordion` as a request to apply the
 /// fullscreen-current-panel preset on top of `expanded_index`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionGroupMode {
+pub enum GroupLayoutMode {
     #[default]
     #[serde(rename = "accordion")]
     Accordion,
@@ -35,9 +35,9 @@ pub enum SessionGroupMode {
 
 /// A group of panels (one vertical column).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionPanelGroup {
+pub struct PanelGroupState {
     /// Panels in this group.
-    pub panels: Vec<SessionPanel>,
+    pub panels: Vec<PanelState>,
     /// Which panel is focused (0-based index).
     pub expanded_index: usize,
     /// Column width in characters (None = auto-distributed).
@@ -45,7 +45,7 @@ pub struct SessionPanelGroup {
     /// Legacy mode tag — still parsed from old sessions to drive
     /// fullscreen-preset migration. New sessions never write it.
     #[serde(default, skip_serializing)]
-    pub mode: SessionGroupMode,
+    pub mode: GroupLayoutMode,
     /// Cached panel heights (in lines). `None` means "no cache yet —
     /// derive equal distribution on first use".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,7 +59,7 @@ pub struct SessionPanelGroup {
 /// Panel data for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum SessionPanel {
+pub enum PanelState {
     /// File manager panel
     #[serde(rename = "file_manager")]
     FileManager {
@@ -161,14 +161,45 @@ pub(crate) fn get_data_dir() -> Result<PathBuf> {
         .context("Failed to determine data directory")
 }
 
+/// Directory holding every project's saved layout.
+///
+/// Before the rename this was `sessions`; the old tree is moved across on
+/// first use so saved layouts survive an upgrade.
+pub(crate) const PROJECTS_DIR: &str = "projects";
+const LEGACY_PROJECTS_DIR: &str = "sessions";
+
+/// Move `<data>/sessions` to `<data>/projects` once, if the old tree is
+/// there and the new one is not. Failures are logged, never fatal: a fresh
+/// directory is created instead and only the old layouts are lost.
+fn migrate_legacy_dir(data_dir: &Path) {
+    let legacy = data_dir.join(LEGACY_PROJECTS_DIR);
+    let current = data_dir.join(PROJECTS_DIR);
+    if !legacy.is_dir() || current.exists() {
+        return;
+    }
+    match std::fs::rename(&legacy, &current) {
+        Ok(()) => log::info!(
+            "moved saved layouts from {} to {}",
+            legacy.display(),
+            current.display()
+        ),
+        Err(e) => log::warn!(
+            "could not move {} to {}: {e}",
+            legacy.display(),
+            current.display()
+        ),
+    }
+}
+
 impl Session {
-    /// Get the session directory for a specific project
+    /// Get the storage directory for a specific project
     ///
     /// Creates nested subdirectories matching the project path with root stripped.
-    /// Example (Unix):    /home/user/project1 -> ~/.local/share/termide/sessions/home/user/project1/
-    /// Example (Windows): C:\Users\user\proj  -> %APPDATA%\termide\sessions\Users\user\proj\
-    pub fn get_session_dir(project_root: &Path) -> Result<PathBuf> {
+    /// Example (Unix):    /home/user/project1 -> ~/.local/share/termide/projects/home/user/project1/
+    /// Example (Windows): C:\Users\user\proj  -> %APPDATA%\termide\projects\Users\user\proj\
+    pub fn get_project_dir(project_root: &Path) -> Result<PathBuf> {
         let data_dir = get_data_dir()?;
+        migrate_legacy_dir(&data_dir);
 
         // Canonicalize the project path to handle symlinks and relative paths
         let canonical_project = project_root
@@ -188,17 +219,17 @@ impl Session {
             })
             .collect();
 
-        Ok(data_dir.join("sessions").join(relative_path))
+        Ok(data_dir.join(PROJECTS_DIR).join(relative_path))
     }
 
     /// Get the path to the session.toml file for a specific project
-    pub fn get_session_path(project_root: &Path) -> Result<PathBuf> {
-        Ok(Self::get_session_dir(project_root)?.join("session.toml"))
+    pub fn get_project_path(project_root: &Path) -> Result<PathBuf> {
+        Ok(Self::get_project_dir(project_root)?.join("session.toml"))
     }
 
     /// Delete session directory for a specific project
     pub fn delete_session(project_root: &Path) -> Result<()> {
-        let session_dir = Self::get_session_dir(project_root)?;
+        let session_dir = Self::get_project_dir(project_root)?;
         if session_dir.exists() {
             fs::remove_dir_all(&session_dir)
                 .with_context(|| format!("Failed to delete session: {}", session_dir.display()))?;
@@ -208,7 +239,7 @@ impl Session {
 
     /// Load session from file for a specific project
     pub fn load(project_root: &Path) -> Result<Self> {
-        let path = Self::get_session_path(project_root)?;
+        let path = Self::get_project_path(project_root)?;
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read session file: {}", path.display()))?;
         let session: Session = toml::from_str(&contents)
@@ -218,7 +249,7 @@ impl Session {
 
     /// Save session to file for a specific project
     pub fn save(&self, project_root: &Path) -> Result<()> {
-        let session_dir = Self::get_session_dir(project_root)?;
+        let session_dir = Self::get_project_dir(project_root)?;
 
         // Ensure session directory exists
         fs::create_dir_all(&session_dir).with_context(|| {

@@ -141,7 +141,7 @@ impl App {
         }
 
         // Handle Sessions submenu clicks when it's open
-        if self.state.ui.sessions_submenu.open
+        if self.state.ui.projects_submenu.open
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && self.handle_sessions_submenu_click(mouse.column, mouse.row)?
         {

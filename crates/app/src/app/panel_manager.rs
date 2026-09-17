@@ -23,10 +23,10 @@ impl App {
                 if let Some(filename) = editor.unsaved_buffer_file() {
                     // Get session directory and delete the temporary file
                     if let Ok(session_dir) =
-                        termide_session::Session::get_session_dir(&self.project_root)
+                        termide_project::Session::get_project_dir(&self.project_root)
                     {
                         if let Err(e) =
-                            termide_session::delete_unsaved_buffer(&session_dir, filename)
+                            termide_project::delete_unsaved_buffer(&session_dir, filename)
                         {
                             log::warn!("Failed to delete unsaved buffer file: {}", e);
                         }

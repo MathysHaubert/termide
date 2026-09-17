@@ -30,7 +30,7 @@ termide-i18n = { path = "../i18n" }
 termide-keyboard = { path = "../keyboard" }
 termide-lsp = { path = "../lsp" }
 termide-modal = { path = "../modal" }
-termide-session = { path = "../session" }
+termide-project = { path = "../project" }
 termide-state = { path = "../state" }
 termide-system-monitor = { path = "../system-monitor" }
 termide-theme = { path = "../theme" }

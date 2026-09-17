@@ -32,7 +32,7 @@ termide-layout = { path = "../layout" }
 termide-config = { path = "../config" }
 termide-theme = { path = "../theme" }
 termide-i18n = { path = "../i18n" }
-termide-session = { path = "../session" }
+termide-project = { path = "../project" }
 termide-git = { path = "../git" }
 termide-lsp = { path = "../lsp" }
 termide-vfs = { path = "../vfs" }

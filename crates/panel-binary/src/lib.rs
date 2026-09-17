@@ -33,8 +33,8 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEven
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
 use termide_core::{
-    CommandResult, Config, HotkeyTable, KeyChord, Panel, PanelCommand, PanelEvent, RenderContext,
-    SegmentKind, SessionPanel, StatusSegment, Theme, ThemeColors, WidthPreference,
+    CommandResult, Config, HotkeyTable, KeyChord, Panel, PanelCommand, PanelEvent, PanelState,
+    RenderContext, SegmentKind, StatusSegment, Theme, ThemeColors, WidthPreference,
 };
 use termide_modal::FindBar;
 use termide_ui::ScrollBar;
@@ -603,8 +603,8 @@ impl Panel for BinaryPanel {
         }
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
-        Some(SessionPanel::Binary {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        Some(PanelState::Binary {
             path: self.file_path.clone(),
         })
     }

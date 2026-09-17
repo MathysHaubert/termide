@@ -25,8 +25,8 @@ use ratatui::{
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
 
 use termide_core::{
-    CommandResult, Config, Panel, PanelCommand, PanelEvent, RenderContext, SegmentKind,
-    SessionPanel, StatusSegment, Theme, WidthPreference,
+    CommandResult, Config, Panel, PanelCommand, PanelEvent, PanelState, RenderContext, SegmentKind,
+    StatusSegment, Theme, WidthPreference,
 };
 
 use view::Viewport;
@@ -317,8 +317,8 @@ impl Panel for ImagePanel {
         }
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
-        Some(SessionPanel::Image {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        Some(PanelState::Image {
             path: self.file_path.clone(),
         })
     }

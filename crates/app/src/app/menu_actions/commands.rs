@@ -34,8 +34,8 @@ fn collect_global_reserved_hotkeys(kb: &GlobalKeybindings) -> Vec<ReservedHotkey
     push_reserved_hotkeys(&mut reserved, &kb.new_journal);
     push_reserved_hotkeys(&mut reserved, &kb.open_help);
     push_reserved_hotkeys(&mut reserved, &kb.open_preferences);
-    push_reserved_hotkeys(&mut reserved, &kb.open_sessions);
-    push_reserved_hotkeys(&mut reserved, &kb.new_session);
+    push_reserved_hotkeys(&mut reserved, &kb.open_projects);
+    push_reserved_hotkeys(&mut reserved, &kb.new_project);
     push_reserved_hotkeys(&mut reserved, &kb.open_git_status);
     push_reserved_hotkeys(&mut reserved, &kb.open_outline);
     push_reserved_hotkeys(&mut reserved, &kb.open_diagnostics);

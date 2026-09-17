@@ -1,24 +1,24 @@
-//! Filesystem layout for detached sessions.
+//! Filesystem layout for detached instances.
 //!
 //! Sockets and their sidecar `.info` files live in a per-user runtime
 //! directory, never in a shared `/tmp`: a world-writable directory invites
 //! symlink races on a multi-user host, and a stale socket there would let
-//! another account impersonate a session.
+//! another account impersonate a instance.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Directory holding one `<id>.sock` + `<id>.info` pair per detached session.
+/// Directory holding one `<id>.sock` + `<id>.info` pair per detached instance.
 ///
 /// `dirs::runtime_dir()` is `$XDG_RUNTIME_DIR` on Linux/BSD and `None` on
 /// macOS, where the data directory is the closest per-user equivalent that
-/// survives for the lifetime of the login session.
+/// survives for the lifetime of the login instance.
 pub fn runtime_dir() -> Result<PathBuf> {
     let base = match dirs::runtime_dir() {
         Some(dir) => dir.join("termide"),
         None => dirs::data_dir()
             .map(|p| p.join("termide").join("run"))
-            .context("Failed to determine a runtime directory for detached sessions")?,
+            .context("Failed to determine a runtime directory for detached instances")?,
     };
     std::fs::create_dir_all(&base)
         .with_context(|| format!("Failed to create {}", base.display()))?;
@@ -30,7 +30,7 @@ pub fn runtime_dir() -> Result<PathBuf> {
 ///
 /// Sockets inherit the directory's protection: a connect() needs search
 /// permission on every component of the path, so an owner-only parent is
-/// what keeps another local user from attaching to the session.
+/// what keeps another local user from attaching to the instance.
 #[cfg(unix)]
 fn restrict_to_owner(dir: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -44,17 +44,17 @@ fn restrict_to_owner(_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Path of the control socket for session `id`.
+/// Path of the control socket for instance `id`.
 pub fn socket_path(id: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{id}.sock")))
 }
 
-/// Path of the metadata sidecar for session `id`.
+/// Path of the metadata sidecar for instance `id`.
 pub fn info_path(id: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{id}.info")))
 }
 
-/// Turn a project directory into a session id stem.
+/// Turn a project directory into a instance id stem.
 ///
 /// The stem is the directory name reduced to characters that are safe both
 /// as a filename and as something the user retypes into `--attach`.
@@ -77,7 +77,7 @@ pub fn id_stem_for_project(project_root: &Path) -> String {
 
     let trimmed = cleaned.trim_matches('-').to_string();
     if trimmed.is_empty() {
-        "session".to_string()
+        "instance".to_string()
     } else {
         trimmed
     }
@@ -100,14 +100,14 @@ pub fn allocate_id(project_root: &Path) -> Result<String> {
             return Ok(candidate);
         }
     }
-    anyhow::bail!("Too many detached sessions for project '{stem}'")
+    anyhow::bail!("Too many detached instances for project '{stem}'")
 }
 
-/// Path of the `$TERM` handover file for session `id`.
+/// Path of the `$TERM` handover file for instance `id`.
 ///
 /// Written by the daemon on every attach and read by the hosted termide when
 /// it refreshes its capabilities: the hosted process inherited its own `TERM`
-/// from whichever terminal started the session, which says nothing about the
+/// from whichever terminal started the instance, which says nothing about the
 /// terminal now looking at it.
 pub fn term_path(id: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{id}.term")))
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn id_stem_falls_back_when_there_is_no_name() {
-        assert_eq!(id_stem_for_project(Path::new("/")), "session");
-        assert_eq!(id_stem_for_project(Path::new("...")), "session");
+        assert_eq!(id_stem_for_project(Path::new("/")), "instance");
+        assert_eq!(id_stem_for_project(Path::new("...")), "instance");
     }
 }

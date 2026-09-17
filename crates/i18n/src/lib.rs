@@ -140,7 +140,7 @@ pub trait Translation: Send + Sync {
     fn help_desc_new_editor(&self) -> &str;
     fn help_desc_new_journal(&self) -> &str;
     fn help_desc_open_preferences(&self) -> &str;
-    fn help_desc_open_sessions(&self) -> &str;
+    fn help_desc_open_projects(&self) -> &str;
     fn help_desc_open_git_status(&self) -> &str;
     fn help_desc_open_outline(&self) -> &str;
     fn help_desc_open_diagnostics(&self) -> &str;
@@ -224,7 +224,7 @@ pub trait Translation: Send + Sync {
     fn help_desc_view_commit_diff(&self) -> &str;
 
     // Additional help descriptions (missing entries audit)
-    fn help_desc_new_session(&self) -> &str;
+    fn help_desc_new_project(&self) -> &str;
     fn help_desc_save(&self) -> &str;
     fn help_desc_undo(&self) -> &str;
     fn help_desc_redo(&self) -> &str;
@@ -322,7 +322,7 @@ pub trait Translation: Send + Sync {
     fn batch_result_errors_fmt(&self, count: usize) -> String;
 
     // Menu
-    fn menu_sessions(&self) -> &str;
+    fn menu_projects(&self) -> &str;
     fn menu_windows(&self) -> &str;
     fn menu_commands(&self) -> &str;
     fn menu_commands_add(&self) -> &str;
@@ -474,7 +474,7 @@ pub trait Translation: Send + Sync {
     fn settings_general_icon_mode(&self) -> &str;
     fn settings_general_auto_stack_threshold(&self) -> &str;
     fn settings_general_min_panel_width(&self) -> &str;
-    fn settings_general_session_retention(&self) -> &str;
+    fn settings_general_project_retention(&self) -> &str;
     fn settings_general_bell(&self) -> &str;
     fn settings_general_resource_interval(&self) -> &str;
 
@@ -516,20 +516,20 @@ pub trait Translation: Send + Sync {
     fn settings_kb_press_key(&self) -> &str;
 
     // Sessions
-    fn sessions_title(&self) -> &str;
-    fn sessions_current(&self) -> &str;
-    fn sessions_new(&self) -> &str;
-    fn sessions_switch(&self) -> &str;
-    fn sessions_change_root(&self) -> &str;
-    fn session_created(&self) -> &str;
-    fn session_moved(&self) -> &str;
+    fn projects_title(&self) -> &str;
+    fn projects_current(&self) -> &str;
+    fn projects_new(&self) -> &str;
+    fn projects_switch(&self) -> &str;
+    fn projects_change_root(&self) -> &str;
+    fn project_created(&self) -> &str;
+    fn project_moved(&self) -> &str;
 
     // Detached sessions
-    fn detach_session(&self) -> &str;
-    fn detach_not_detached_session(&self) -> &str;
+    fn detach_instance(&self) -> &str;
+    fn detach_not_detached_instance(&self) -> &str;
     fn detach_failed(&self) -> &str;
     fn settings_general_always_detachable(&self) -> &str;
-    fn help_desc_detach_session(&self) -> &str;
+    fn help_desc_detach_instance(&self) -> &str;
 
     // Directory picker
     fn directory_picker_create(&self) -> &str;

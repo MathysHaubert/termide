@@ -16,5 +16,5 @@ ratatui.workspace = true
 
 [dev-dependencies]
 crossterm.workspace = true
-termide-session = { path = "../session" }
+termide-project = { path = "../project" }
 termide-theme = { path = "../theme" }

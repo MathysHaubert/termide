@@ -191,8 +191,8 @@ nix build
 `termide --completions <shell>` prints a completion script for bash, zsh or
 fish. Once loaded, it completes the `--` options, the values `--log-level` and
 `--completions` take, paths after `--config`, and — the useful part on a server
-with several detached sessions — the session ids after `--attach`, read from
-`termide --list-sessions` at the moment Tab is pressed.
+with several detached instances — the instance ids after `--attach`, read from
+`termide --list-instances` at the moment Tab is pressed.
 
 The quick way is to let termide place the file:
 

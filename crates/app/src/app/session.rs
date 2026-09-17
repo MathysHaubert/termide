@@ -22,7 +22,7 @@ impl App {
         }
 
         // Get session directory for this project
-        let session_dir = termide_session::Session::get_session_dir(&self.project_root)?;
+        let session_dir = termide_project::Session::get_project_dir(&self.project_root)?;
 
         // Ensure all modified unnamed buffers have stable filenames
         for group in &mut self.layout_manager.panel_groups {
@@ -34,13 +34,13 @@ impl App {
         }
 
         // Serialize layout to session (may save temporary buffers)
-        let session = self.layout_manager.to_session(&session_dir);
+        let session = self.layout_manager.to_state(&session_dir);
 
         // Save session to file
         session.save(&self.project_root)?;
 
         // Remove stale unsaved buffer files not referenced by current session
-        termide_session::cleanup_stale_buffers(&session_dir, &session);
+        termide_project::cleanup_stale_buffers(&session_dir, &session);
 
         log::info!("Session saved");
         Ok(())
@@ -49,10 +49,10 @@ impl App {
     /// Load session from file and restore layout
     pub fn load_session(&mut self) -> Result<()> {
         // Load session for this project
-        let session = termide_session::Session::load(&self.project_root)?;
+        let session = termide_project::Session::load(&self.project_root)?;
 
         // Get session directory for restoring temporary buffers
-        let session_dir = termide_session::Session::get_session_dir(&self.project_root)?;
+        let session_dir = termide_project::Session::get_project_dir(&self.project_root)?;
 
         // Get terminal dimensions for creating Terminal panels
         // Height: subtract menu (1) + status bar (1) + panel border (1) = 3
@@ -96,12 +96,12 @@ impl App {
         // tabs had no way to tell what they were. Surface a Journal
         // entry per restored buffer plus a single summary so the
         // information is one panel open away.
-        match termide_session::restore_orphaned_buffers(&session_dir) {
+        match termide_project::restore_orphaned_buffers(&session_dir) {
             Ok(orphaned_files) => {
                 let mut restored = 0usize;
                 for buffer_file in orphaned_files {
                     if let Ok(content) =
-                        termide_session::load_unsaved_buffer(&session_dir, &buffer_file)
+                        termide_project::load_unsaved_buffer(&session_dir, &buffer_file)
                     {
                         let mut editor = Editor::with_config(self.state.editor_config());
                         if editor.insert_text(&content).is_ok() {

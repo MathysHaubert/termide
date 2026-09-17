@@ -42,7 +42,7 @@ pub mod defaults {
     pub const LANGUAGE: &str = "auto";
     pub const AUTO_STACK_THRESHOLD: u16 = 80;
     pub const MIN_PANEL_WIDTH: u16 = 20;
-    pub const SESSION_RETENTION_DAYS: u32 = 30;
+    pub const PROJECT_RETENTION_DAYS: u32 = 30;
     pub const TAB_SIZE: usize = 4;
     pub const SHOW_GIT_DIFF: bool = true;
     pub const WORD_WRAP: bool = true;

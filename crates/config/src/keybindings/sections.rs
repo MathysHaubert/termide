@@ -18,8 +18,13 @@ pub struct GlobalKeybindings {
     pub new_journal: Option<KeyBinding>,
     pub open_help: Option<KeyBinding>,
     pub open_preferences: Option<KeyBinding>,
-    pub open_sessions: Option<KeyBinding>,
-    pub new_session: Option<KeyBinding>,
+    /// Open the project switcher. The old `open_sessions` spelling is still
+    /// accepted so keybindings written before the rename keep working.
+    #[serde(alias = "open_sessions")]
+    pub open_projects: Option<KeyBinding>,
+    /// Start a new project. Old spelling accepted, as above.
+    #[serde(alias = "new_session")]
+    pub new_project: Option<KeyBinding>,
     pub open_git_status: Option<KeyBinding>,
     pub open_bookmark_add: Option<KeyBinding>,
     pub open_outline: Option<KeyBinding>,
@@ -61,9 +66,12 @@ pub struct GlobalKeybindings {
 
     // Application
     pub quit: Option<KeyBinding>,
-    /// Detach from the attached client, leaving the session running.
-    /// Only meaningful when termide is hosted in a detached session.
-    pub detach_session: Option<KeyBinding>,
+    /// Detach from the attached client, leaving the instance running.
+    /// Only meaningful when termide is hosted in a detached instance.
+    /// The old `detach_session` spelling is still accepted so keybindings
+    /// written before the rename keep working.
+    #[serde(alias = "detach_session")]
+    pub detach_instance: Option<KeyBinding>,
     pub open_command_palette: Option<KeyBinding>,
 
     // Clipboard (routed to the focused panel, which copies/cuts/pastes
@@ -402,8 +410,8 @@ impl GlobalKeybindings {
         set_default!(new_journal, "Alt+L");
         // open_help gets F1 alternative below (needs set_default_multiple)
         set_default!(open_preferences, "Alt+P");
-        set_default!(open_sessions, "Alt+\\");
-        set_default!(new_session, "Alt+N");
+        set_default!(open_projects, "Alt+\\");
+        set_default!(new_project, "Alt+N");
         set_default!(open_git_status, "Alt+G");
         set_default!(open_bookmark_add, "Alt+B");
         set_default!(open_outline, "Alt+O");
@@ -475,7 +483,7 @@ impl GlobalKeybindings {
         // obvious mnemonic and is unusable on macOS: `Option+Z` is the one
         // combination on the US layout that composes an *uppercase* glyph
         // (`Ω`), reported as `Shift+Ω` with no ALT bit at all.
-        set_default!(detach_session, "Alt+D");
+        set_default!(detach_instance, "Alt+D");
         set_default!(open_command_palette, "Ctrl+P");
 
         // Clipboard (routed to the focused panel)
@@ -605,7 +613,7 @@ impl FileManagerKeybindings {
         set_default!(refresh, "Ctrl+R");
         set_default!(go_parent, "Backspace");
         set_default!(go_home, "~");
-        // Parallel to global `open_sessions = "Alt+\\"`: `Ctrl+\\` for
+        // Parallel to global `open_projects = "Alt+\\"`: `Ctrl+\\` for
         // the analogous "switch directory" action. Reaches VTE via
         // the `Ctrl+4→Ctrl+\\` quirk in `KeyNormalizer`.
         set_default!(switch_directory, "Ctrl+\\");

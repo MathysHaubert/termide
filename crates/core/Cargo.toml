@@ -17,6 +17,6 @@ unicode-width.workspace = true
 # For Panel trait methods
 termide-theme = { path = "../theme" }
 termide-config = { path = "../config" }
-termide-session = { path = "../session" }
+termide-project = { path = "../project" }
 termide-file-ops = { path = "../file-ops" }
 termide-keyboard = { path = "../keyboard" }

@@ -1,9 +1,9 @@
-//! The session host: a daemonised process that owns a PTY, runs termide
+//! The instance host: a daemonised process that owns a PTY, runs termide
 //! inside it, and lets clients come and go on a unix socket.
 //!
 //! The hosted termide is an ordinary termide — it is not aware of being
 //! multiplexed beyond re-entering its terminal modes when a client arrives.
-//! Everything that makes a session survive a disconnect follows from the
+//! Everything that makes a instance survive a disconnect follows from the
 //! daemon outliving the client: the shells, LSP servers and watchers are the
 //! hosted process's children, so nothing has to be serialised or restored.
 
@@ -19,11 +19,11 @@ use crate::paths;
 use crate::protocol::{ClientFrame, ServerFrame};
 use crate::registry::{self, SessionInfo};
 
-/// Environment variable naming the socket of the session a termide is hosted
+/// Environment variable naming the socket of the instance a termide is hosted
 /// in. Its presence is also how the app knows to offer the detach action.
 pub const SOCKET_ENV: &str = "TERMIDE_DETACH_SOCK";
 
-/// Environment variable carrying the session id into the hosted termide.
+/// Environment variable carrying the instance id into the hosted termide.
 pub const ID_ENV: &str = "TERMIDE_DETACH_ID";
 
 /// PTY size used between the daemon starting and the first client attaching.
@@ -33,7 +33,7 @@ pub const ID_ENV: &str = "TERMIDE_DETACH_ID";
 const INITIAL_COLS: u16 = 80;
 const INITIAL_ROWS: u16 = 24;
 
-/// Start a detached session and return its id.
+/// Start a detached instance and return its id.
 ///
 /// Returns in the parent process. The daemon is a forked child, so this must
 /// be called before any thread is spawned — `fork` only carries the calling
@@ -46,7 +46,7 @@ pub fn spawn_detached(project_root: &Path, files: &[PathBuf]) -> Result<String> 
     let socket = paths::socket_path(&id)?;
 
     // Bind before forking so that a `--attach` racing the returning parent
-    // finds a socket rather than "no such session".
+    // finds a socket rather than "no such instance".
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("Failed to bind {}", socket.display()))?;
     restrict_socket(&socket)?;
@@ -72,7 +72,7 @@ pub fn spawn_detached(project_root: &Path, files: &[PathBuf]) -> Result<String> 
             let code = match run_daemon(&id, listener, project_root, files) {
                 Ok(()) => 0,
                 Err(e) => {
-                    log::error!("Detached session '{id}' failed: {e:#}");
+                    log::error!("Detached instance '{id}' failed: {e:#}");
                     1
                 }
             };
@@ -80,7 +80,7 @@ pub fn spawn_detached(project_root: &Path, files: &[PathBuf]) -> Result<String> 
         }
         Err(e) => {
             let _ = std::fs::remove_file(&socket);
-            Err(anyhow::anyhow!("Failed to fork the session daemon: {e}"))
+            Err(anyhow::anyhow!("Failed to fork the instance daemon: {e}"))
         }
     }
 }
@@ -95,7 +95,7 @@ fn restrict_socket(path: &Path) -> Result<()> {
 /// Detach from the controlling terminal and point stdio at `/dev/null`.
 ///
 /// Without this the daemon keeps the launching terminal's tty open: closing
-/// the SSH session would then deliver SIGHUP to it, which is precisely the
+/// the SSH instance would then deliver SIGHUP to it, which is precisely the
 /// death the feature exists to avoid.
 fn detach_from_terminal() -> Result<()> {
     nix::unistd::setsid().context("setsid failed")?;
@@ -120,7 +120,7 @@ fn detach_from_terminal() -> Result<()> {
 ///
 /// Dropping the stream is not enough: `serve_connection` holds a second
 /// descriptor for the same socket, so the peer would see neither EOF nor an
-/// error and would hang attached to a session that has already let go of it.
+/// error and would hang attached to a instance that has already let go of it.
 /// `shutdown` acts on the socket itself, so both ends agree.
 fn close_client(stream: Option<UnixStream>) {
     if let Some(stream) = stream {
@@ -129,7 +129,7 @@ fn close_client(stream: Option<UnixStream>) {
 }
 
 /// Everything the accept loop and the PTY pump share.
-struct Session {
+struct Instance {
     id: String,
     /// The attached client's socket, or `None` while detached. Writing to it
     /// is the only thing the PTY pump does with a client, so one mutex over
@@ -141,7 +141,7 @@ struct Session {
     hosted_pid: Mutex<Option<i32>>,
 }
 
-impl Session {
+impl Instance {
     /// Send a frame to the attached client, dropping it if the socket is gone.
     fn send(&self, frame: &ServerFrame) {
         let mut guard = self.client.lock().unwrap();
@@ -167,7 +167,7 @@ impl Session {
             pixel_height: 0,
         };
         if let Err(e) = self.master.lock().unwrap().resize(size) {
-            log::warn!("Failed to resize the session PTY: {e}");
+            log::warn!("Failed to resize the instance PTY: {e}");
         }
     }
 
@@ -214,7 +214,7 @@ fn run_daemon(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .context("Failed to open a PTY for the detached session")?;
+        .context("Failed to open a PTY for the detached instance")?;
 
     let exe = std::env::current_exe().context("Failed to locate the termide binary")?;
     let mut cmd = CommandBuilder::new(exe);
@@ -228,13 +228,13 @@ fn run_daemon(
     // Block SIGUSR1 before spawning: the mask is inherited across fork and
     // exec, so the hosted termide starts with the reattach signal blocked
     // rather than fatal. Without this, a client attaching during the first
-    // second of startup would kill the session it just connected to.
+    // second of startup would kill the instance it just connected to.
     crate::reattach::block_signal()?;
 
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .context("Failed to start termide inside the session PTY")?;
+        .context("Failed to start termide inside the instance PTY")?;
 
     // The daemon itself has no use for SIGUSR1.
     {
@@ -244,7 +244,7 @@ fn run_daemon(
     }
     // The daemon must not hold the slave open: with it open, the PTY never
     // reports EOF when the hosted process exits and the pump would block for
-    // ever on a session that is already over.
+    // ever on a instance that is already over.
     drop(pair.slave);
 
     let reader = pair
@@ -256,7 +256,7 @@ fn run_daemon(
         .take_writer()
         .context("Failed to take the PTY writer")?;
 
-    let session = Arc::new(Session {
+    let instance = Arc::new(Instance {
         id: id.to_string(),
         client: Mutex::new(None),
         master: Mutex::new(pair.master),
@@ -267,53 +267,53 @@ fn run_daemon(
     // Pump PTY output to whoever is attached. This thread runs even while
     // detached and discards what it reads: an unread master fills its buffer
     // within a page or two of output and would then block the hosted termide
-    // on write, freezing a session that is supposed to keep working.
+    // on write, freezing a instance that is supposed to keep working.
     {
-        let session = Arc::clone(&session);
-        std::thread::spawn(move || pump_pty_output(session, reader));
+        let instance = Arc::clone(&instance);
+        std::thread::spawn(move || pump_pty_output(instance, reader));
     }
 
-    // Reap the hosted process and end the session with it.
+    // Reap the hosted process and end the instance with it.
     {
-        let session = Arc::clone(&session);
+        let instance = Arc::clone(&instance);
         let id = id.to_string();
         std::thread::spawn(move || {
             let status = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
-            session.send(&ServerFrame::Exited(status));
+            instance.send(&ServerFrame::Exited(status));
             registry::remove(&id);
             std::process::exit(0);
         });
     }
 
-    accept_loop(session, listener)
+    accept_loop(instance, listener)
 }
 
-fn pump_pty_output(session: Arc<Session>, mut reader: Box<dyn Read + Send>) {
+fn pump_pty_output(instance: Arc<Instance>, mut reader: Box<dyn Read + Send>) {
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => session.send(&ServerFrame::Output(buf[..n].to_vec())),
+            Ok(n) => instance.send(&ServerFrame::Output(buf[..n].to_vec())),
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
 }
 
-fn accept_loop(session: Arc<Session>, listener: UnixListener) -> Result<()> {
+fn accept_loop(instance: Arc<Instance>, listener: UnixListener) -> Result<()> {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        let session = Arc::clone(&session);
+        let instance = Arc::clone(&instance);
         std::thread::spawn(move || {
-            if let Err(e) = serve_connection(session, stream) {
-                log::warn!("Session connection ended with an error: {e:#}");
+            if let Err(e) = serve_connection(instance, stream) {
+                log::warn!("Instance connection ended with an error: {e:#}");
             }
         });
     }
     Ok(())
 }
 
-fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
+fn serve_connection(instance: Arc<Instance>, stream: UnixStream) -> Result<()> {
     let mut reader = stream.try_clone()?;
 
     let Some(first) = ClientFrame::read_from(&mut reader)? else {
@@ -324,7 +324,7 @@ fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
         // The hosted termide asking to be released. It is a one-shot
         // connection: no attach, no stream to keep.
         ClientFrame::RequestDetach => {
-            session.detach_client();
+            instance.detach_client();
             return Ok(());
         }
         ClientFrame::Attach {
@@ -334,7 +334,7 @@ fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
             caps,
         } => {
             {
-                let mut guard = session.client.lock().unwrap();
+                let mut guard = instance.client.lock().unwrap();
                 if guard.is_some() {
                     let mut stream = stream;
                     let _ = ServerFrame::Busy.write_to(&mut stream);
@@ -346,7 +346,7 @@ fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
             // One line the hosted process parses on reattach: the terminal it
             // is now being looked at through.
             let _ = std::fs::write(
-                paths::term_path(&session.id)?,
+                paths::term_path(&instance.id)?,
                 format!(
                     "{term}\nkitty={}\nssh={}\nvs16={}\n",
                     u8::from(caps.kitty),
@@ -354,32 +354,32 @@ fn serve_connection(session: Arc<Session>, stream: UnixStream) -> Result<()> {
                     u8::from(caps.vs16_wide)
                 ),
             );
-            let _ = registry::set_attached(&session.id, true);
+            let _ = registry::set_attached(&instance.id, true);
 
-            session.send(&ServerFrame::Attached);
-            session.resize(cols, rows);
-            session.signal_reattach();
+            instance.send(&ServerFrame::Attached);
+            instance.resize(cols, rows);
+            instance.signal_reattach();
         }
         // Anything else before an attach is a confused peer; ignoring it costs
-        // nothing and keeps a stray connect from disturbing the session.
+        // nothing and keeps a stray connect from disturbing the instance.
         _ => return Ok(()),
     }
 
-    let result = client_loop(&session, &mut reader);
-    session.detach_client();
+    let result = client_loop(&instance, &mut reader);
+    instance.detach_client();
     result
 }
 
-fn client_loop(session: &Arc<Session>, reader: &mut UnixStream) -> Result<()> {
+fn client_loop(instance: &Arc<Instance>, reader: &mut UnixStream) -> Result<()> {
     while let Some(frame) = ClientFrame::read_from(reader)? {
         match frame {
             ClientFrame::Input(bytes) => {
-                let mut writer = session.pty_writer.lock().unwrap();
+                let mut writer = instance.pty_writer.lock().unwrap();
                 if writer.write_all(&bytes).is_err() || writer.flush().is_err() {
                     break;
                 }
             }
-            ClientFrame::Resize { cols, rows } => session.resize(cols, rows),
+            ClientFrame::Resize { cols, rows } => instance.resize(cols, rows),
             ClientFrame::Detach => break,
             ClientFrame::RequestDetach => break,
             ClientFrame::Attach { .. } => {}
@@ -391,20 +391,20 @@ fn client_loop(session: &Arc<Session>, reader: &mut UnixStream) -> Result<()> {
 /// Ask the daemon hosting this process to drop its client.
 ///
 /// Called by the in-app detach action. Returns `Ok(false)` when termide is not
-/// running inside a detached session, so the caller can tell the user why
+/// running inside a detached instance, so the caller can tell the user why
 /// nothing happened.
 pub fn request_detach_from_host() -> Result<bool> {
     let Some(socket) = std::env::var_os(SOCKET_ENV) else {
         return Ok(false);
     };
     let mut stream = UnixStream::connect(&socket)
-        .with_context(|| format!("Failed to reach the session daemon at {socket:?}"))?;
+        .with_context(|| format!("Failed to reach the instance daemon at {socket:?}"))?;
     ClientFrame::RequestDetach.write_to(&mut stream)?;
     Ok(true)
 }
 
-/// The session id this process is hosted in, if any.
-pub fn hosted_session_id() -> Option<String> {
+/// The instance id this process is hosted in, if any.
+pub fn hosted_instance_id() -> Option<String> {
     std::env::var(ID_ENV).ok()
 }
 
@@ -416,7 +416,7 @@ mod tests {
     /// Regression: an in-app detach must reach the client even though the
     /// daemon still holds a second descriptor for the same socket in
     /// `serve_connection`. Dropping the stream alone leaves the peer blocked
-    /// on a read for ever, attached to a session that has released it.
+    /// on a read for ever, attached to a instance that has released it.
     #[test]
     fn closing_a_client_is_visible_to_the_peer_despite_a_duplicate_fd() {
         let (daemon_side, mut peer) = UnixStream::pair().unwrap();

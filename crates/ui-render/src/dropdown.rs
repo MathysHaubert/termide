@@ -307,24 +307,24 @@ impl<'a> Dropdown<'a> {
 }
 
 /// Get sessions submenu items
-pub fn get_sessions_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
+pub fn get_projects_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();
     let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     vec![
-        DropdownItem::new(t.sessions_new(), "new_session").with_shortcut(shortcut("new_session")),
-        DropdownItem::new(t.sessions_switch(), "switch_session")
+        DropdownItem::new(t.projects_new(), "new_project").with_shortcut(shortcut("new_project")),
+        DropdownItem::new(t.projects_switch(), "switch_session")
             .with_shortcut(shortcut("switch_session")),
-        DropdownItem::new(t.sessions_change_root(), "change_root"),
+        DropdownItem::new(t.projects_change_root(), "change_root"),
     ]
 }
 
 /// Number of items in Sessions submenu
-pub const SESSIONS_SUBMENU_ITEM_COUNT: usize = 3;
+pub const PROJECTS_SUBMENU_ITEM_COUNT: usize = 3;
 
 /// Index of Sessions submenu items
-pub const SESSIONS_SUBMENU_NEW: usize = 0;
-pub const SESSIONS_SUBMENU_SWITCH: usize = 1;
-pub const SESSIONS_SUBMENU_CHANGE_ROOT: usize = 2;
+pub const PROJECTS_SUBMENU_NEW: usize = 0;
+pub const PROJECTS_SUBMENU_SWITCH: usize = 1;
+pub const PROJECTS_SUBMENU_CHANGE_ROOT: usize = 2;
 
 /// Get tools submenu items
 pub fn get_tools_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
@@ -401,11 +401,11 @@ pub fn menu_shortcut(kb: &termide_config::GlobalKeybindings, key: &str) -> Optio
         // Options
         "edit_preferences" => &kb.open_preferences,
         "help" => &kb.open_help,
-        "detach_session" => &kb.detach_session,
+        "detach_instance" => &kb.detach_instance,
         "quit" => &kb.quit,
         // Sessions
-        "new_session" => &kb.new_session,
-        "switch_session" => &kb.open_sessions,
+        "new_project" => &kb.new_project,
+        "switch_session" => &kb.open_projects,
         // Tools / Windows
         "terminal" => &kb.new_terminal,
         "files" => &kb.new_file_manager,
@@ -457,8 +457,8 @@ pub fn get_options_items(
     // session — the one that keeps it running.
     if can_detach {
         items.push(
-            DropdownItem::new(t.detach_session(), "detach_session")
-                .with_shortcut(shortcut("detach_session")),
+            DropdownItem::new(t.detach_instance(), "detach_instance")
+                .with_shortcut(shortcut("detach_instance")),
         );
     }
     items.push(DropdownItem::new(t.menu_quit(), "quit").with_shortcut(shortcut("quit")));
@@ -969,7 +969,7 @@ mod options_menu_tests {
                 "language",
                 "edit_preferences",
                 "help",
-                "detach_session",
+                "detach_instance",
                 "quit"
             ]
         );
@@ -1019,7 +1019,7 @@ mod menu_shortcut_tests {
         let kb = defaults();
         assert_eq!(menu_shortcut(&kb, "quit").as_deref(), Some("Alt+Q"));
         assert_eq!(
-            menu_shortcut(&kb, "detach_session").as_deref(),
+            menu_shortcut(&kb, "detach_instance").as_deref(),
             Some("Alt+D")
         );
         // Menu key and binding name differ here, which is the reason for the
@@ -1078,11 +1078,11 @@ mod menu_shortcut_tests {
     fn every_menu_annotates_the_entries_that_have_bindings() {
         let kb = defaults();
 
-        let sessions = get_sessions_items(Some(&kb));
+        let sessions = get_projects_items(Some(&kb));
         assert_eq!(
             sessions
                 .iter()
-                .find(|i| i.key == "new_session")
+                .find(|i| i.key == "new_project")
                 .unwrap()
                 .shortcut
                 .as_deref(),
@@ -1140,7 +1140,7 @@ mod menu_shortcut_tests {
                 .unwrap_or_else(|| panic!("{key} missing"))
         };
         assert_eq!(by_key("quit").shortcut.as_deref(), Some("Alt+Q"));
-        assert_eq!(by_key("detach_session").shortcut.as_deref(), Some("Alt+D"));
+        assert_eq!(by_key("detach_instance").shortcut.as_deref(), Some("Alt+D"));
         assert_eq!(by_key("themes").shortcut, None);
 
         // Without keybindings nothing is annotated, and nothing panics.

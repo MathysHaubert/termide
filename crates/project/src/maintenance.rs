@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{get_data_dir, Session, SessionPanel};
+use crate::{get_data_dir, PanelState, Session};
 
 /// Generate a unique filename for an unsaved buffer
 ///
@@ -109,7 +109,7 @@ pub fn cleanup_stale_buffers(session_dir: &Path, session: &Session) {
         .iter()
         .flat_map(|g| &g.panels)
         .filter_map(|p| match p {
-            SessionPanel::Editor {
+            PanelState::Editor {
                 unsaved_buffer_file,
                 ..
             } => unsaved_buffer_file.as_deref(),
@@ -132,7 +132,7 @@ pub fn cleanup_stale_buffers(session_dir: &Path, session: &Session) {
 /// Clean up old sessions (excluding the current project's session)
 ///
 /// Removes sessions older than `retention_days` from the sessions directory
-pub fn cleanup_old_sessions(current_project: &Path, retention_days: u32) -> Result<()> {
+pub fn cleanup_old_projects(current_project: &Path, retention_days: u32) -> Result<()> {
     use std::time::{Duration, SystemTime};
 
     // 0 disables cleanup (keep sessions forever). Guard against the footgun
@@ -142,7 +142,7 @@ pub fn cleanup_old_sessions(current_project: &Path, retention_days: u32) -> Resu
     }
 
     let data_dir = get_data_dir()?;
-    let sessions_dir = data_dir.join("sessions");
+    let sessions_dir = data_dir.join(crate::PROJECTS_DIR);
 
     if !sessions_dir.exists() {
         return Ok(()); // No sessions to clean up
@@ -264,7 +264,7 @@ fn is_same_session(session_dir: &Path, project_path: &Path) -> bool {
         Err(_) => return false,
     };
 
-    let sessions_base = data_dir.join("sessions");
+    let sessions_base = data_dir.join(crate::PROJECTS_DIR);
 
     // Extract relative path from session directory
     let rel_path = match session_dir.strip_prefix(&sessions_base) {
@@ -334,7 +334,7 @@ pub fn restore_orphaned_buffers(session_dir: &Path) -> Result<Vec<String>> {
                         .iter()
                         .flat_map(|group| &group.panels)
                         .filter_map(|panel| match panel {
-                            SessionPanel::Editor {
+                            PanelState::Editor {
                                 unsaved_buffer_file,
                                 ..
                             } => unsaved_buffer_file.clone(),
@@ -405,9 +405,9 @@ pub struct SessionInfo {
 }
 
 /// List all available sessions, sorted by modification time (newest first)
-pub fn list_all_sessions() -> Result<Vec<SessionInfo>> {
+pub fn list_all_projects() -> Result<Vec<SessionInfo>> {
     let data_dir = get_data_dir()?;
-    let sessions_dir = data_dir.join("sessions");
+    let sessions_dir = data_dir.join(crate::PROJECTS_DIR);
 
     if !sessions_dir.exists() {
         return Ok(Vec::new());
@@ -482,7 +482,7 @@ pub fn format_relative_time(time: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SessionPanelGroup;
+    use crate::PanelGroupState;
 
     /// Regression: a stale *parent* project session must not take fresh
     /// *nested* project sessions down with it (previously `remove_dir_all` on
@@ -540,12 +540,12 @@ mod tests {
     fn test_round_trip_serialization() {
         let session = Session {
             panel_groups: vec![
-                SessionPanelGroup {
+                PanelGroupState {
                     panels: vec![
-                        SessionPanel::FileManager {
+                        PanelState::FileManager {
                             path_or_url: "/home/user/project".to_string(),
                         },
-                        SessionPanel::Editor {
+                        PanelState::Editor {
                             path: Some(PathBuf::from("/home/user/project/main.rs")),
                             unsaved_buffer_file: None,
                         },
@@ -556,8 +556,8 @@ mod tests {
                     fullscreen_cache: None,
                     width: Some(120),
                 },
-                SessionPanelGroup {
-                    panels: vec![SessionPanel::Terminal {
+                PanelGroupState {
+                    panels: vec![PanelState::Terminal {
                         working_dir: PathBuf::from("/home/user/project"),
                     }],
                     expanded_index: 0,
@@ -599,7 +599,7 @@ path = "/old/style/path"
 "#;
         let session: Session = toml::from_str(toml_str).unwrap();
         match &session.panel_groups[0].panels[0] {
-            SessionPanel::FileManager { path_or_url } => {
+            PanelState::FileManager { path_or_url } => {
                 assert_eq!(path_or_url, "/old/style/path");
             }
             _ => panic!("Expected FileManager panel"),
@@ -613,8 +613,8 @@ path = "/old/style/path"
     #[test]
     fn test_sftp_url_round_trip() {
         let session = Session {
-            panel_groups: vec![SessionPanelGroup {
-                panels: vec![SessionPanel::FileManager {
+            panel_groups: vec![PanelGroupState {
+                panels: vec![PanelState::FileManager {
                     path_or_url: "sftp://user@host:22/remote/path".to_string(),
                 }],
                 expanded_index: 0,
@@ -630,7 +630,7 @@ path = "/old/style/path"
         let restored: Session = toml::from_str(&toml_str).unwrap();
 
         match &restored.panel_groups[0].panels[0] {
-            SessionPanel::FileManager { path_or_url } => {
+            PanelState::FileManager { path_or_url } => {
                 assert_eq!(path_or_url, "sftp://user@host:22/remote/path");
             }
             _ => panic!("Expected FileManager panel"),
@@ -644,8 +644,8 @@ path = "/old/style/path"
     #[test]
     fn test_markdown_panel_round_trip() {
         let session = Session {
-            panel_groups: vec![SessionPanelGroup {
-                panels: vec![SessionPanel::Markdown {
+            panel_groups: vec![PanelGroupState {
+                panels: vec![PanelState::Markdown {
                     path: PathBuf::from("/home/user/project/README.md"),
                 }],
                 expanded_index: 0,
@@ -663,7 +663,7 @@ path = "/old/style/path"
 
         let restored: Session = toml::from_str(&toml_str).unwrap();
         match &restored.panel_groups[0].panels[0] {
-            SessionPanel::Markdown { path } => {
+            PanelState::Markdown { path } => {
                 assert_eq!(path, &PathBuf::from("/home/user/project/README.md"));
             }
             other => panic!("expected Markdown panel, got {other:?}"),
@@ -698,17 +698,17 @@ path = "/old/style/path"
     #[test]
     fn test_session_dir_mapping() {
         let project = Path::new("/home/user/project");
-        let session_dir = Session::get_session_dir(project).unwrap();
+        let session_dir = Session::get_project_dir(project).unwrap();
         // Should contain "sessions/home/user/project"
         let path_str = session_dir.to_string_lossy();
-        assert!(path_str.contains("sessions"));
+        assert!(path_str.contains(crate::PROJECTS_DIR));
         assert!(path_str.ends_with("home/user/project"));
     }
 
     #[test]
     fn test_session_path_has_toml_extension() {
         let project = Path::new("/home/user/project");
-        let session_path = Session::get_session_path(project).unwrap();
+        let session_path = Session::get_project_path(project).unwrap();
         assert!(session_path.to_string_lossy().ends_with("session.toml"));
     }
 
@@ -748,37 +748,37 @@ panels = []
     #[test]
     fn test_all_panel_types_round_trip() {
         let session = Session {
-            panel_groups: vec![SessionPanelGroup {
+            panel_groups: vec![PanelGroupState {
                 panels: vec![
-                    SessionPanel::FileManager {
+                    PanelState::FileManager {
                         path_or_url: "/tmp".to_string(),
                     },
-                    SessionPanel::Editor {
+                    PanelState::Editor {
                         path: Some(PathBuf::from("/tmp/test.rs")),
                         unsaved_buffer_file: Some("unsaved-20251203-143022-456.txt".to_string()),
                     },
-                    SessionPanel::Terminal {
+                    PanelState::Terminal {
                         working_dir: PathBuf::from("/tmp"),
                     },
-                    SessionPanel::Journal,
-                    SessionPanel::Image {
+                    PanelState::Journal,
+                    PanelState::Image {
                         path: PathBuf::from("/tmp/img.png"),
                     },
-                    SessionPanel::Binary {
+                    PanelState::Binary {
                         path: PathBuf::from("/tmp/data.bin"),
                     },
-                    SessionPanel::GitStatus {
+                    PanelState::GitStatus {
                         repo_path: PathBuf::from("/tmp/repo"),
                     },
-                    SessionPanel::GitLog {
+                    PanelState::GitLog {
                         repo_path: PathBuf::from("/tmp/repo"),
                     },
-                    SessionPanel::GitDiff {
+                    PanelState::GitDiff {
                         repo_path: PathBuf::from("/tmp/repo"),
                         commit_hash: Some("abc123".to_string()),
                     },
-                    SessionPanel::Outline,
-                    SessionPanel::Diagnostics,
+                    PanelState::Outline,
+                    PanelState::Diagnostics,
                 ],
                 expanded_index: 0,
                 width: None,

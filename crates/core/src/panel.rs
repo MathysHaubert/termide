@@ -19,8 +19,8 @@ use termide_theme::Theme;
 
 use crate::{CommandResult, KeyChord, PanelCommand, PanelEvent};
 
-// Re-export SessionPanel from termide-session for unified type
-pub use termide_session::SessionPanel;
+// Re-export PanelState from termide-session for unified type
+pub use termide_project::PanelState;
 
 /// Configuration settings relevant to panels.
 ///
@@ -410,7 +410,7 @@ pub trait Panel: Any {
     ///
     /// Returns None if panel should not be saved in session.
     /// The session_dir is provided for saving unsaved buffers.
-    fn to_session(&self, session_dir: &Path) -> Option<SessionPanel> {
+    fn to_state(&self, session_dir: &Path) -> Option<PanelState> {
         let _ = session_dir;
         None
     }

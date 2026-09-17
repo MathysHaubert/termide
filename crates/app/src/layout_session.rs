@@ -43,16 +43,16 @@ use termide_panel_file_manager::FileManager;
 use termide_panel_image::ImagePanel;
 use termide_panel_misc::JournalPanel;
 use termide_panel_terminal::Terminal;
-use termide_session::{
-    cleanup_unsaved_buffer, load_unsaved_buffer, Session, SessionGroupMode, SessionPanel,
-    SessionPanelGroup,
+use termide_project::{
+    cleanup_unsaved_buffer, load_unsaved_buffer, GroupLayoutMode, PanelGroupState, PanelState,
+    Session,
 };
 use termide_theme::Theme;
 
 /// Extension trait for session serialization.
 pub trait LayoutManagerSession {
     /// Serialize current layout to Session.
-    fn to_session(&mut self, session_dir: &Path) -> Session;
+    fn to_state(&mut self, session_dir: &Path) -> Session;
 
     /// Restore layout from Session.
     fn from_session(
@@ -65,23 +65,23 @@ pub trait LayoutManagerSession {
 }
 
 impl LayoutManagerSession for LayoutManager {
-    fn to_session(&mut self, session_dir: &Path) -> Session {
-        let panel_groups: Vec<SessionPanelGroup> = self
+    fn to_state(&mut self, session_dir: &Path) -> Session {
+        let panel_groups: Vec<PanelGroupState> = self
             .panel_groups
             .iter_mut()
             .map(|group| {
                 let panels: Vec<_> = group
                     .panels_mut()
                     .iter_mut()
-                    .filter_map(|panel| panel.to_session(session_dir))
+                    .filter_map(|panel| panel.to_state(session_dir))
                     .collect();
 
-                SessionPanelGroup {
+                PanelGroupState {
                     panels,
                     expanded_index: group.expanded_index(),
                     width: group.width,
                     // `mode` is legacy — never written by current code.
-                    mode: SessionGroupMode::default(),
+                    mode: GroupLayoutMode::default(),
                     split_heights: group.split_heights().map(|s| s.to_vec()),
                     fullscreen_cache: group.fullscreen_cache().map(|c| c.to_vec()),
                 }
@@ -165,7 +165,7 @@ impl LayoutManagerSession for LayoutManager {
             let area_height = term_height.saturating_sub(2);
             let fullscreen_cache = if let Some(cache) = session_group.fullscreen_cache {
                 Some(cache)
-            } else if matches!(session_group.mode, SessionGroupMode::Accordion)
+            } else if matches!(session_group.mode, GroupLayoutMode::Accordion)
                 && session_group.split_heights.is_none()
                 && n_panels >= 2
             {
@@ -221,14 +221,14 @@ impl LayoutManagerSession for LayoutManager {
 /// owned so the closure is `Send` without extra dances; logging of
 /// failures happens here so the caller can just `match` the result.
 fn construct_panel(
-    session_panel: SessionPanel,
+    session_panel: PanelState,
     session_dir: &Path,
     term_height: u16,
     term_width: u16,
     editor_config: EditorConfig,
 ) -> Option<Box<dyn Panel + Send>> {
     match session_panel {
-        SessionPanel::FileManager { path_or_url } => {
+        PanelState::FileManager { path_or_url } => {
             if termide_vfs::is_vfs_url(&path_or_url) {
                 let vfs_manager = std::sync::Arc::new(termide_vfs::VfsManager::new());
                 match FileManager::new_with_vfs_url(&path_or_url, vfs_manager) {
@@ -248,7 +248,7 @@ fn construct_panel(
                 ))))
             }
         }
-        SessionPanel::Editor {
+        PanelState::Editor {
             path,
             unsaved_buffer_file,
         } => {
@@ -284,13 +284,13 @@ fn construct_panel(
                 None
             }
         }
-        SessionPanel::Terminal { working_dir } => {
+        PanelState::Terminal { working_dir } => {
             Terminal::new_with_cwd(term_height, term_width, nearest_existing_dir(&working_dir))
                 .ok()
                 .map(|t| Box::new(t) as Box<dyn Panel + Send>)
         }
-        SessionPanel::Journal => Some(Box::new(JournalPanel::default())),
-        SessionPanel::Image { path } => {
+        PanelState::Journal => Some(Box::new(JournalPanel::default())),
+        PanelState::Image { path } => {
             if ImagePanel::graphics_available() {
                 ImagePanel::new(path)
                     .ok()
@@ -299,38 +299,38 @@ fn construct_panel(
                 None
             }
         }
-        SessionPanel::Binary { path } => termide_panel_binary::BinaryPanel::new(path)
+        PanelState::Binary { path } => termide_panel_binary::BinaryPanel::new(path)
             .ok()
             .map(|p| Box::new(p) as Box<dyn Panel + Send>),
-        SessionPanel::Markdown { path } => termide_panel_markdown::MarkdownPanel::new(path)
+        PanelState::Markdown { path } => termide_panel_markdown::MarkdownPanel::new(path)
             .ok()
             .map(|p| Box::new(p) as Box<dyn Panel + Send>),
-        SessionPanel::Mermaid { path } => termide_panel_mermaid::MermaidPanel::new(path)
+        PanelState::Mermaid { path } => termide_panel_mermaid::MermaidPanel::new(path)
             .ok()
             .map(|p| Box::new(p) as Box<dyn Panel + Send>),
-        SessionPanel::Html { path } => termide_panel_html::HtmlPanel::new(path)
+        PanelState::Html { path } => termide_panel_html::HtmlPanel::new(path)
             .ok()
             .map(|p| Box::new(p) as Box<dyn Panel + Send>),
-        SessionPanel::GitStatus { repo_path } => Some(Box::new(
+        PanelState::GitStatus { repo_path } => Some(Box::new(
             termide_panel_git_status::GitStatusPanel::new_for_repo(repo_path),
         )),
-        SessionPanel::GitLog { repo_path } => Some(Box::new(
+        PanelState::GitLog { repo_path } => Some(Box::new(
             termide_panel_git_log::GitLogPanel::new_for_repo(repo_path),
         )),
-        SessionPanel::GitDiff {
+        PanelState::GitDiff {
             repo_path,
             commit_hash,
         } => Some(Box::new(match commit_hash {
             Some(hash) => termide_panel_git_diff::GitDiffPanel::new_for_commit(repo_path, hash),
             None => termide_panel_git_diff::GitDiffPanel::new(repo_path),
         })),
-        SessionPanel::Outline => Some(Box::new(termide_panel_outline::OutlinePanel::new(
+        PanelState::Outline => Some(Box::new(termide_panel_outline::OutlinePanel::new(
             Theme::default(),
         ))),
-        SessionPanel::Diagnostics => Some(Box::new(
+        PanelState::Diagnostics => Some(Box::new(
             termide_panel_diagnostics::DiagnosticsPanel::new(&Theme::default()),
         )),
-        SessionPanel::Database { url, label } => {
+        PanelState::Database { url, label } => {
             Some(Box::new(termide_panel_db::DbPanel::new(url, label)))
         }
     }

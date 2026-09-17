@@ -1,6 +1,6 @@
-//! The list of detached sessions, kept as one `<id>.info` sidecar per socket.
+//! The list of detached instances, kept as one `<id>.info` sidecar per socket.
 //!
-//! There is no central index file: a session is whatever has a live socket in
+//! There is no central index file: a instance is whatever has a live socket in
 //! the runtime directory. That keeps the registry self-healing — a daemon that
 //! dies without cleaning up leaves a socket whose pid no longer exists, and
 //! [`prune_dead`] removes it on the next listing.
@@ -11,12 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::paths;
 
-/// What `--list-sessions` shows for one detached session.
+/// What `--list-instances` shows for one detached instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionInfo {
     pub id: String,
     /// Pid of the daemon, not of the hosted termide: the daemon is what owns
-    /// the socket, so its liveness is what decides whether the session exists.
+    /// the socket, so its liveness is what decides whether the instance exists.
     pub pid: i32,
     pub project: PathBuf,
     /// Seconds since the Unix epoch.
@@ -25,7 +25,7 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
-    /// How long the session has been up, as a compact `3d 4h` / `5m` string.
+    /// How long the instance has been up, as a compact `3d 4h` / `5m` string.
     pub fn uptime(&self) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -93,21 +93,21 @@ pub fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Write (or overwrite) the sidecar for a session.
+/// Write (or overwrite) the sidecar for a instance.
 pub fn write_info(info: &SessionInfo) -> Result<()> {
     let path = paths::info_path(&info.id)?;
     std::fs::write(&path, info.serialise())
         .with_context(|| format!("Failed to write {}", path.display()))
 }
 
-/// Read one session's sidecar, if it is present and parsable.
+/// Read one instance's sidecar, if it is present and parsable.
 pub fn read_info(id: &str) -> Option<SessionInfo> {
     let path = paths::info_path(id).ok()?;
     let text = std::fs::read_to_string(path).ok()?;
     SessionInfo::parse(id, &text)
 }
 
-/// Mark a session attached or detached, leaving the rest of the sidecar alone.
+/// Mark a instance attached or detached, leaving the rest of the sidecar alone.
 pub fn set_attached(id: &str, attached: bool) -> Result<()> {
     if let Some(mut info) = read_info(id) {
         info.attached = attached;
@@ -116,7 +116,7 @@ pub fn set_attached(id: &str, attached: bool) -> Result<()> {
     Ok(())
 }
 
-/// Delete every file belonging to a session.
+/// Delete every file belonging to a instance.
 ///
 /// All three of them: a leftover `.term` is small but permanent, and since
 /// `prune_dead` routes through here, anything this function forgets accretes
@@ -168,7 +168,7 @@ pub fn prune_dead() -> Result<Vec<String>> {
     Ok(pruned)
 }
 
-/// Every session with a socket in the runtime directory, dead ones included.
+/// Every instance with a socket in the runtime directory, dead ones included.
 fn scan() -> Result<Vec<SessionInfo>> {
     let dir = paths::runtime_dir()?;
     let mut found = Vec::new();
@@ -199,15 +199,15 @@ fn scan() -> Result<Vec<SessionInfo>> {
     Ok(found)
 }
 
-/// Live sessions, with dead entries pruned as a side effect.
+/// Live instances, with dead entries pruned as a side effect.
 pub fn list() -> Result<Vec<SessionInfo>> {
     prune_dead()?;
     scan()
 }
 
-/// The session `--attach` should pick when the user names none.
+/// The instance `--attach` should pick when the user names none.
 ///
-/// The most recently started one: with a single session it is unambiguous,
+/// The most recently started one: with a single instance it is unambiguous,
 /// and with several it matches "the one I just detached from".
 pub fn most_recent() -> Result<Option<SessionInfo>> {
     Ok(list()?.into_iter().max_by_key(|s| s.started))
@@ -228,7 +228,7 @@ mod tests {
     }
 
     // Regression: `remove` used to delete the socket and the sidecar but not
-    // the `.term` handover file, so every session that ever ran left one
+    // the `.term` handover file, so every instance that ever ran left one
     // behind — for ever, since pruning goes through this same function.
     #[test]
     fn remove_deletes_every_file_a_session_owns() {

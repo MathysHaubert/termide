@@ -18,8 +18,8 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEven
 use ratatui::{buffer::Buffer, layout::Rect, style::Modifier, style::Style};
 
 use termide_core::{
-    CommandResult, Config, HotkeyTable, KeyChord, Panel, PanelCommand, PanelEvent, RenderContext,
-    ScrollAxis, SegmentKind, SessionPanel, StatusSegment, Theme, ThemeColors, WidthPreference,
+    CommandResult, Config, HotkeyTable, KeyChord, Panel, PanelCommand, PanelEvent, PanelState,
+    RenderContext, ScrollAxis, SegmentKind, StatusSegment, Theme, ThemeColors, WidthPreference,
 };
 use termide_mermaid::parser::{self, DiagramKind};
 use termide_ui::ScrollBar;
@@ -448,8 +448,8 @@ impl Panel for MermaidPanel {
         Ok(())
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
-        Some(SessionPanel::Mermaid {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        Some(PanelState::Mermaid {
             path: self.file_path.clone(),
         })
     }
@@ -551,8 +551,8 @@ mod tests {
     #[test]
     fn to_session_round_trips() {
         let p = panel_from("sequenceDiagram");
-        match p.to_session(Path::new("/tmp")) {
-            Some(SessionPanel::Mermaid { path }) => assert_eq!(path, PathBuf::from("/x/d.mmd")),
+        match p.to_state(Path::new("/tmp")) {
+            Some(PanelState::Mermaid { path }) => assert_eq!(path, PathBuf::from("/x/d.mmd")),
             other => panic!("unexpected: {other:?}"),
         }
     }

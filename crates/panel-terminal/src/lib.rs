@@ -36,8 +36,8 @@ use vte::Parser;
 
 use termide_config::{Config, TerminalKeybindings};
 use termide_core::{
-    get_terminal_caps, CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext,
-    SessionPanel, WidthPreference,
+    get_terminal_caps, CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState,
+    RenderContext, WidthPreference,
 };
 use termide_modal::FindBar;
 use termide_theme::Theme;
@@ -1401,11 +1401,11 @@ impl Panel for Terminal {
         self.find_bar.is_some() || (self.is_alive() && self.has_running_processes())
     }
 
-    fn to_session(&self, _session_dir: &std::path::Path) -> Option<SessionPanel> {
+    fn to_state(&self, _session_dir: &std::path::Path) -> Option<PanelState> {
         // Save where the shell was last working, not where the panel was
         // created: reopening the session should put the user back in the
         // directory they left off in.
-        Some(SessionPanel::Terminal {
+        Some(PanelState::Terminal {
             working_dir: self.shell_cwd(),
         })
     }
@@ -1553,8 +1553,8 @@ mod title_tests {
         let mut saved = None;
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            saved = match term.to_session(std::path::Path::new("/tmp")) {
-                Some(SessionPanel::Terminal { working_dir }) => Some(working_dir),
+            saved = match term.to_state(std::path::Path::new("/tmp")) {
+                Some(PanelState::Terminal { working_dir }) => Some(working_dir),
                 other => panic!("terminal saved as {other:?}"),
             };
             if saved.as_ref() == Some(&expected) {

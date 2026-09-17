@@ -25,7 +25,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use render::Rendered;
 use termide_core::{
     CommandResult, Config, HotkeyTable, InputAction, KeyChord, LinkOpen, Panel, PanelCommand,
-    PanelEvent, RenderContext, SegmentKind, SessionPanel, StatusSegment, Theme, ThemeColors,
+    PanelEvent, PanelState, RenderContext, SegmentKind, StatusSegment, Theme, ThemeColors,
     WidthPreference,
 };
 use termide_modal::FindBar;
@@ -622,12 +622,12 @@ impl Panel for MarkdownPanel {
         Ok(())
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
         // Only file-backed viewers persist; fetched URLs are not restored.
         if self.source_url.is_some() {
             return None;
         }
-        Some(SessionPanel::Markdown {
+        Some(PanelState::Markdown {
             path: self.file_path.clone(),
         })
     }
@@ -772,8 +772,8 @@ mod tests {
     #[test]
     fn to_session_round_trips_path() {
         let p = panel_from("x");
-        match p.to_session(Path::new("/tmp")) {
-            Some(SessionPanel::Markdown { path }) => {
+        match p.to_state(Path::new("/tmp")) {
+            Some(PanelState::Markdown { path }) => {
                 assert_eq!(path, PathBuf::from("/x/doc.md"))
             }
             other => panic!("unexpected: {other:?}"),

@@ -12,9 +12,9 @@ use termide_i18n as i18n;
 use termide_theme::Theme;
 use termide_ui_render::{
     get_bookmarks_group_items, get_bookmarks_items, get_commands_group_items, get_commands_items,
-    get_menu_item_x_position, get_options_items, get_sessions_items, get_shell_items,
+    get_menu_item_x_position, get_options_items, get_projects_items, get_shell_items,
     get_tools_items, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX,
-    SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 
 /// Hit-test a dropdown menu and return the clicked item index (if any).
@@ -212,11 +212,11 @@ impl App {
     /// Handle click on Sessions submenu dropdown
     /// Returns true if click was handled
     pub(in crate::app) fn handle_sessions_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
-        let menu_x = get_menu_item_x_position(SESSIONS_MENU_INDEX);
-        let items = get_sessions_items(Some(&self.state.config.general.keybindings));
+        let menu_x = get_menu_item_x_position(PROJECTS_MENU_INDEX);
+        let items = get_projects_items(Some(&self.state.config.general.keybindings));
         if let Some(index) = hit_dropdown_item(x, y, menu_x, 1, &items) {
-            self.state.ui.sessions_submenu.selected = index;
-            self.execute_sessions_submenu_action()?;
+            self.state.ui.projects_submenu.selected = index;
+            self.execute_projects_submenu_action()?;
             return Ok(true);
         }
         self.state.close_menu();

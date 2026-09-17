@@ -11,7 +11,7 @@ mod commands_exec;
 mod operation_action;
 mod outline;
 mod panel_action;
-mod sessions;
+mod projects;
 mod settings;
 mod stash;
 mod tools;
@@ -26,7 +26,7 @@ use termide_theme::Theme;
 use termide_ui_render::menu::{
     BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, INDICATOR_CLOCK_INDEX, INDICATOR_CPU_INDEX,
     INDICATOR_DISK_INDEX, INDICATOR_NET_INDEX, INDICATOR_RAM_INDEX, MENU_TOTAL_COUNT,
-    OPTIONS_MENU_INDEX, SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 use termide_ui_render::{OPTIONS_SUBMENU_LANGUAGE, OPTIONS_SUBMENU_THEMES};
 
@@ -142,7 +142,7 @@ impl App {
     pub(super) fn execute_menu_action(&mut self) -> Result<()> {
         if let Some(menu_index) = self.state.ui.selected_menu_item {
             match menu_index {
-                SESSIONS_MENU_INDEX => {
+                PROJECTS_MENU_INDEX => {
                     self.state.open_sessions_submenu();
                 }
                 WINDOWS_MENU_INDEX => {
@@ -322,9 +322,9 @@ impl App {
                 self.state.close_menu();
                 self.handle_new_help()?;
             }
-            "detach_session" => {
+            "detach_instance" => {
                 self.state.close_menu();
-                self.handle_detach_session();
+                self.handle_detach_instance();
             }
             "quit" => {
                 self.state.close_menu();

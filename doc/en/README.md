@@ -13,7 +13,7 @@ Welcome to the TermIDE documentation! This guide covers installation, usage, and
 - [Remote Filesystems (VFS)](vfs.md) - Browsing and transferring files over SFTP / FTP / FTPS
 - [Database Viewer](database.md) - Read-only browsing of SQLite / PostgreSQL / MySQL tables
 - [Terminal](terminal.md) - Using the integrated terminal
-- [Detached Sessions](detached-sessions.md) - Keeping a session alive across SSH disconnects
+- [Detached Instances](detached-instances.md) - Keeping termide alive across SSH disconnects
 - [Text Editor](editor.md) - Editing files with syntax highlighting
 - [Markdown Preview](markdown.md) - Rendered `.md` preview with `Ctrl+E` source toggle
 - [Mermaid Diagrams](mermaid.md) - `.mmd` diagram viewer and embedded ```mermaid``` blocks

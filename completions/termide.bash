@@ -7,10 +7,10 @@
 # Option names are spelled out by hand; src/main.rs has a test that fails
 # when a clap option is missing here.
 
-# Ids of the detached sessions `termide --list-sessions` reports: the table's
+# Ids of the detached instances `termide --list-instances` reports: the table's
 # first column, minus its header. Prints nothing when there are none.
-_termide_sessions() {
-  termide --list-sessions 2>/dev/null | awk 'NR > 1 { print $1 }'
+_termide_instances() {
+  termide --list-instances 2>/dev/null | awk 'NR > 1 { print $1 }'
 }
 
 _termide() {
@@ -29,16 +29,16 @@ _termide() {
       COMPREPLY=($(compgen -f -- "$cur"))
       return ;;
     --attach)
-      # `--attach` takes an optional id; with no session running the next
+      # `--attach` takes an optional id; with no instance running the next
       # word can only be a file to open.
-      COMPREPLY=($(compgen -W "$(_termide_sessions)" -- "$cur"))
+      COMPREPLY=($(compgen -W "$(_termide_instances)" -- "$cur"))
       [[ ${#COMPREPLY[@]} -eq 0 ]] && COMPREPLY=($(compgen -f -- "$cur"))
       return ;;
   esac
 
   if [[ "$cur" == -* ]]; then
     COMPREPLY=($(compgen -W "--log-level --no-lsp --config --diagnostics \
-      --detached --attach --list-sessions --completions --install-completions \
+      --detached --attach --list-instances --completions --install-completions \
       --help --version" -- "$cur"))
   else
     COMPREPLY=($(compgen -f -- "$cur"))

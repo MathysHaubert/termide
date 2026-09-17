@@ -1,11 +1,11 @@
-//! Detached sessions for termide.
+//! Detached instances for termide.
 //!
-//! A detached session is an ordinary termide running inside a PTY owned by a
+//! A detached instance is an ordinary termide running inside a PTY owned by a
 //! daemonised parent. Clients attach to that daemon over a unix socket and
 //! pump bytes; closing a client leaves the daemon, the hosted termide and
 //! everything it spawned — shells, LSP servers, watchers — untouched.
 //!
-//! The split is deliberate. Nothing about the running session is serialised,
+//! The split is deliberate. Nothing about the running instance is serialised,
 //! so nothing can be lost in translation: reattaching re-enters the terminal
 //! modes and repaints, and the state was never anywhere but in the still-live
 //! process.
@@ -25,7 +25,9 @@ pub mod daemon;
 pub mod reattach;
 
 #[cfg(unix)]
-pub use daemon::{hosted_session_id, request_detach_from_host, spawn_detached, ID_ENV, SOCKET_ENV};
+pub use daemon::{
+    hosted_instance_id, request_detach_from_host, spawn_detached, ID_ENV, SOCKET_ENV,
+};
 #[cfg(unix)]
 pub use reattach::{
     adopt_client_terminal, install_handler as install_reattach_handler,
@@ -34,14 +36,14 @@ pub use reattach::{
 
 use anyhow::Result;
 
-/// Render the detached-session list as a table, or a hint when there is none.
-pub fn format_session_list() -> Result<String> {
-    let sessions = registry::list()?;
-    if sessions.is_empty() {
-        return Ok("No detached sessions. Start one with `termide --detached`.\n".to_string());
+/// Render the detached-instance list as a table, or a hint when there is none.
+pub fn format_instance_list() -> Result<String> {
+    let instances = registry::list()?;
+    if instances.is_empty() {
+        return Ok("No detached instances. Start one with `termide --detached`.\n".to_string());
     }
 
-    let id_width = sessions
+    let id_width = instances
         .iter()
         .map(|s| s.id.len())
         .chain(std::iter::once("ID".len()))
@@ -57,18 +59,18 @@ pub fn format_session_list() -> Result<String> {
         "PROJECT",
         id_width = id_width
     );
-    for session in sessions {
+    for instance in instances {
         out.push_str(&format!(
             "{:<id_width$}  {:<8}  {:<7}  {:<8}  {}\n",
-            session.id,
-            session.pid,
-            session.uptime(),
-            if session.attached {
+            instance.id,
+            instance.pid,
+            instance.uptime(),
+            if instance.attached {
                 "attached"
             } else {
                 "detached"
             },
-            session.project.display(),
+            instance.project.display(),
             id_width = id_width
         ));
     }

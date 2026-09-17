@@ -84,8 +84,8 @@ pub fn enumerate_bindings(config: &Config) -> Vec<(BindingLocation, ParsedKeyBin
     push(&mut out, "general", "new_journal", &g.new_journal);
     push(&mut out, "general", "open_help", &g.open_help);
     push(&mut out, "general", "open_preferences", &g.open_preferences);
-    push(&mut out, "general", "open_sessions", &g.open_sessions);
-    push(&mut out, "general", "new_session", &g.new_session);
+    push(&mut out, "general", "open_projects", &g.open_projects);
+    push(&mut out, "general", "new_project", &g.new_project);
     push(&mut out, "general", "open_git_status", &g.open_git_status);
     push(
         &mut out,

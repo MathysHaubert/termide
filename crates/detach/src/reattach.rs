@@ -38,7 +38,7 @@ pub fn block_signal() -> Result<()> {
     mask.thread_block().context("Failed to block SIGUSR1")
 }
 
-/// Start listening for reattach signals. A no-op outside a detached session.
+/// Start listening for reattach signals. A no-op outside a detached instance.
 ///
 /// Call this as early as possible: until it runs SIGUSR1 stays blocked, and an
 /// attach that happened meanwhile is sitting pending, waiting for this call.
@@ -87,7 +87,7 @@ pub struct ClientTerminal {
 /// Adopt the terminal facts reported by the client that just attached.
 ///
 /// The hosted process inherited `$TERM` from whichever terminal started the
-/// session, and it cannot probe for keyboard capabilities at all: the far end
+/// instance, and it cannot probe for keyboard capabilities at all: the far end
 /// of its PTY is the daemon, which answers no capability query, so a probe
 /// there always reports "unsupported" and every `Alt+<letter>` binding quietly
 /// stops working on macOS. Both facts therefore come from the client.
@@ -95,7 +95,7 @@ pub struct ClientTerminal {
 /// Setting `$TERM` here is also what makes every shell spawned afterwards see
 /// the right terminal.
 pub fn adopt_client_terminal() -> Option<ClientTerminal> {
-    let id = daemon::hosted_session_id()?;
+    let id = daemon::hosted_instance_id()?;
     let path = paths::term_path(&id).ok()?;
     let text = std::fs::read_to_string(path).ok()?;
 

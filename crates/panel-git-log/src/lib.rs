@@ -17,7 +17,7 @@ use ratatui::{buffer::Buffer, layout::Rect};
 
 use termide_config::{is_go_end, is_go_home, is_move_down, is_move_up, Config, KeyBinding};
 use termide_core::{
-    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel,
+    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState, RenderContext,
     ThemeColors, WidthPreference,
 };
 use termide_git::{self as git, CommitInfo, RepoManager};
@@ -653,12 +653,10 @@ impl Panel for GitLogPanel {
         vec![]
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
-        self.repo_manager
-            .current()
-            .map(|repo| SessionPanel::GitLog {
-                repo_path: repo.to_path_buf(),
-            })
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        self.repo_manager.current().map(|repo| PanelState::GitLog {
+            repo_path: repo.to_path_buf(),
+        })
     }
 
     fn as_any(&self) -> &dyn Any {

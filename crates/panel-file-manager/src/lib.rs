@@ -68,7 +68,7 @@ use std::sync::mpsc;
 
 use termide_config::{constants, Config, FileManagerSettings};
 use termide_core::{
-    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel,
+    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState, RenderContext,
 };
 use termide_git::{GitStatus, GitStatusAsyncResult, GitStatusCache};
 use termide_modal::{ActionButton, ActiveModal, FindBar, InfoActionModal};
@@ -878,7 +878,7 @@ impl Panel for FileManager {
         self.on_tick()
     }
 
-    fn to_session(&self, _session_dir: &std::path::Path) -> Option<SessionPanel> {
+    fn to_state(&self, _session_dir: &std::path::Path) -> Option<PanelState> {
         // Save file manager with current directory path or VFS URL
         let path_or_url = self.display_path(); // Returns VFS URL for remote, local path for local
 
@@ -914,11 +914,11 @@ impl Panel for FileManager {
                 path_or_url
             };
 
-            Some(SessionPanel::FileManager {
+            Some(PanelState::FileManager {
                 path_or_url: reconstructed,
             })
         } else {
-            Some(SessionPanel::FileManager { path_or_url })
+            Some(PanelState::FileManager { path_or_url })
         }
     }
 

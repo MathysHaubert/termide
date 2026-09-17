@@ -42,7 +42,7 @@ pub struct SessionItem {
 
 /// Sessions selection modal window
 #[derive(Debug)]
-pub struct SessionsModal {
+pub struct ProjectsModal {
     title: String,
     items: Vec<SessionItem>,
     cursor: usize,
@@ -58,7 +58,7 @@ const MAX_VISIBLE_ITEMS: usize = 6;
 /// Height of the empty line + filter row + separator above the list
 const FILTER_ROWS: u16 = 3;
 
-impl SessionsModal {
+impl ProjectsModal {
     /// Create a new sessions modal
     pub fn new(title: impl Into<String>, items: Vec<SessionItem>) -> Self {
         let filtered_indices = (0..items.len()).collect();
@@ -166,7 +166,7 @@ impl SessionsModal {
     }
 }
 
-impl Modal for SessionsModal {
+impl Modal for ProjectsModal {
     type Result = SessionAction;
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -246,7 +246,7 @@ impl Modal for SessionsModal {
             let prefix = if is_selected { "▶ " } else { "  " };
 
             let path_suffix = if is_current {
-                format!(" {}", t.sessions_current())
+                format!(" {}", t.projects_current())
             } else {
                 String::new()
             };

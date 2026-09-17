@@ -86,15 +86,15 @@ impl App {
                 },
             ),
             (
-                "open_sessions",
+                "open_projects",
                 CommandEntry {
                     label: "Open Sessions".into(),
                     category: "Navigation",
-                    keybinding: kb_str(&kb.open_sessions),
+                    keybinding: kb_str(&kb.open_projects),
                 },
             ),
             (
-                "open_sessions",
+                "open_projects",
                 CommandEntry {
                     label: "Switch Directory".into(),
                     category: "Navigation",
@@ -176,11 +176,11 @@ impl App {
                 },
             ),
             (
-                "detach_session",
+                "detach_instance",
                 CommandEntry {
                     label: "Detach Session".into(),
                     category: "Application",
-                    keybinding: kb_str(&kb.detach_session),
+                    keybinding: kb_str(&kb.detach_instance),
                 },
             ),
             (

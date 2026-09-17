@@ -9,15 +9,15 @@
 # Option names are spelled out by hand; src/main.rs has a test that fails
 # when a clap option is missing here.
 
-# Detached sessions as `id:project` pairs from the `--list-sessions` table,
+# Detached instances as `id:project` pairs from the `--list-instances` table,
 # header dropped. Falls back to files when nothing is running, because
 # `--attach` takes an optional id and the next word may be a file to open.
-_termide_sessions() {
-  local -a sessions
-  sessions=(${(f)"$(termide --list-sessions 2>/dev/null |
+_termide_instances() {
+  local -a instances
+  instances=(${(f)"$(termide --list-instances 2>/dev/null |
     awk 'NR > 1 { gsub(/:/, "\\:", $5); print $1 ":" $5 }')"})
-  if (( ${#sessions} )); then
-    _describe -t sessions 'detached session' sessions
+  if (( ${#instances} )); then
+    _describe -t instances 'detached instance' instances
   else
     _files
   fi
@@ -28,9 +28,9 @@ _arguments \
   '--no-lsp[Disable LSP support]' \
   '--config[Path to config file]:path:_files' \
   '--diagnostics[Run pre-flight diagnostics and exit]' \
-  '--detached[Start a detached session and print its id]' \
-  '--attach[Attach to a detached session, the most recent without an id]::session:_termide_sessions' \
-  '--list-sessions[List detached sessions and exit]' \
+  '--detached[Start a detached instance and print its id]' \
+  '--attach[Attach to a detached instance, the most recent without an id]::instance:_termide_instances' \
+  '--list-instances[List detached instances and exit]' \
   '--completions[Print a shell completion script and exit]:shell:(bash zsh fish)' \
   '--install-completions[Install the completion script for a shell, $SHELL by default]::shell:(bash zsh fish)' \
   '(- *)'{-h,--help}'[Print help]' \

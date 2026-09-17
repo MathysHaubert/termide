@@ -1,5 +1,5 @@
 [package]
-name = "termide-session"
+name = "termide-project"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

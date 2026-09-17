@@ -13,7 +13,7 @@
 
 ```bash
 termide --detached            # 启动会话，打印其 ID
-termide --list-sessions       # 查看正在运行的会话
+termide --list-instances       # 查看正在运行的会话
 termide --attach              # 接入最近的会话
 termide --attach my-project   # 接入指定的会话
 ```
@@ -46,7 +46,7 @@ always_detachable = true
 
 - **关闭终端不再意味着"停止 termide"。** 会话会存活下来，它的 LSP 服务器、监视器
   和 shell 也一样。通过 SSH 时这正是目的，在本机则可能令人意外——请不时查看
-  `--list-sessions`。
+  `--list-instances`。
 - **作为 `$EDITOR` 启动时不受影响。** 带文件参数时（`EDITOR=termide git commit`）
   该选项被忽略：git 会等待编辑器退出，而分离会让它误以为编辑已经完成。
 - 多出的一层 PTY 在大量输出时会稍微降低吞吐量，与 tmux 一样。
@@ -100,9 +100,9 @@ termide --attach my-project
 | `termide --detached file.rs` | 同上，并照常打开文件 |
 | `termide --attach` | 接入最近的会话 |
 | `termide --attach <ID>` | 接入指定名称的会话 |
-| `termide --list-sessions` | 列出会话：ID、pid、运行时长、状态、项目 |
+| `termide --list-instances` | 列出会话：ID、pid、运行时长、状态、项目 |
 
-`--list-sessions` 还会清理宿主进程已消失的会话，因此崩溃永远不会留下幽灵条目。
+`--list-instances` 还会清理宿主进程已消失的会话，因此崩溃永远不会留下幽灵条目。
 
 加载 shell 补全后（`termide --completions <shell>`，参见
 [安装](installation.md#shell-补全)），在 `--attach` 之后按 Tab 会给出此表中的 ID。
@@ -131,4 +131,4 @@ termide --attach my-project
 仅所有者可访问（`0700`），因此本机上的其他账户无法接入您的会话。
 
 那里没有任何需要手动清理的东西：套接字在宿主消失后最多存活到下一次
-`--list-sessions` 或 `--detached`，它们会将其清除。
+`--list-instances` 或 `--detached`，它们会将其清除。

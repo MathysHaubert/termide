@@ -331,7 +331,7 @@ impl AppState {
     /// Open Sessions submenu
     pub fn open_sessions_submenu(&mut self) {
         self.ui.close_all_submenus();
-        self.ui.sessions_submenu.open();
+        self.ui.projects_submenu.open();
     }
 
     /// Open Tools submenu

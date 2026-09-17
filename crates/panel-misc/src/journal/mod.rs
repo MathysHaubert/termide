@@ -379,8 +379,8 @@ impl Panel for JournalPanel {
         events
     }
 
-    fn to_session(&self, _session_dir: &std::path::Path) -> Option<termide_core::SessionPanel> {
-        Some(termide_core::SessionPanel::Journal)
+    fn to_state(&self, _session_dir: &std::path::Path) -> Option<termide_core::PanelState> {
+        Some(termide_core::PanelState::Journal)
     }
 
     fn as_any(&self) -> &dyn Any {

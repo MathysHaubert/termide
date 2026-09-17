@@ -31,7 +31,7 @@ use ratatui::{
 
 use termide_config::Config;
 use termide_core::{
-    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel,
+    CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState, RenderContext,
     ThemeColors, WidthPreference,
 };
 use termide_git::{self as git, RepoManager, StagedFile, UnstagedFile};
@@ -497,10 +497,10 @@ impl Panel for GitStatusPanel {
         vec![]
     }
 
-    fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
         self.repo_manager
             .current()
-            .map(|repo| SessionPanel::GitStatus {
+            .map(|repo| PanelState::GitStatus {
                 repo_path: repo.to_path_buf(),
             })
     }

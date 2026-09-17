@@ -47,7 +47,7 @@ fn compute_menu_items() -> Vec<String> {
     vec![
         t.menu_bookmarks().to_string(),
         t.menu_commands().to_string(),
-        t.menu_sessions().to_string(),
+        t.menu_projects().to_string(),
         t.menu_windows().to_string(),
         t.menu_options().to_string(),
     ]
@@ -106,7 +106,7 @@ pub const BOOKMARKS_MENU_INDEX: usize = 0;
 pub const COMMANDS_MENU_INDEX: usize = 1;
 
 /// Index of Sessions menu item
-pub const SESSIONS_MENU_INDEX: usize = 2;
+pub const PROJECTS_MENU_INDEX: usize = 2;
 
 /// Index of Windows menu item
 pub const WINDOWS_MENU_INDEX: usize = 3;

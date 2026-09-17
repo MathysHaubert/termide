@@ -4842,7 +4842,7 @@ dependencies = [
  "termide-panel-editor",
  "termide-panel-file-manager",
  "termide-panel-terminal",
- "termide-session",
+ "termide-project",
  "termide-theme",
  "termide-ui-render",
  "windows-sys 0.59.0",
@@ -4892,7 +4892,7 @@ dependencies = [
  "termide-panel-operations",
  "termide-panel-outline",
  "termide-panel-terminal",
- "termide-session",
+ "termide-project",
  "termide-state",
  "termide-system-monitor",
  "termide-theme",
@@ -4959,7 +4959,7 @@ dependencies = [
  "termide-config",
  "termide-file-ops",
  "termide-keyboard",
- "termide-session",
+ "termide-project",
  "termide-theme",
  "unicode-width",
 ]
@@ -5084,7 +5084,7 @@ dependencies = [
  "ratatui",
  "termide-config",
  "termide-core",
- "termide-session",
+ "termide-project",
  "termide-theme",
 ]
 
@@ -5205,7 +5205,7 @@ dependencies = [
  "termide-lsp",
  "termide-modal",
  "termide-panel-outline",
- "termide-session",
+ "termide-project",
  "termide-state",
  "termide-system-monitor",
  "termide-theme",
@@ -5460,18 +5460,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "termide-richtext"
-version = "0.35.0"
-dependencies = [
- "ratatui",
- "termide-core",
- "termide-highlight",
- "termide-mermaid",
- "unicode-width",
-]
-
-[[package]]
-name = "termide-session"
+name = "termide-project"
 version = "0.35.0"
 dependencies = [
  "anyhow",
@@ -5481,6 +5470,17 @@ dependencies = [
  "serde",
  "termide-i18n",
  "toml",
+]
+
+[[package]]
+name = "termide-richtext"
+version = "0.35.0"
+dependencies = [
+ "ratatui",
+ "termide-core",
+ "termide-highlight",
+ "termide-mermaid",
+ "unicode-width",
 ]
 
 [[package]]

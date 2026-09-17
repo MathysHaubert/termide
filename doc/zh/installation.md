@@ -189,7 +189,7 @@ nix build
 `termide --completions <shell>` 会为 bash、zsh 或 fish 打印补全脚本。加载后，它可以
 补全 `--` 选项、`--log-level` 和 `--completions` 接受的值、`--config` 之后的路径，
 以及——在有多个可分离会话的服务器上最实用的部分——`--attach` 之后的会话 ID，这些
-ID 在按下 Tab 的那一刻从 `termide --list-sessions` 读取。
+ID 在按下 Tab 的那一刻从 `termide --list-instances` 读取。
 
 最快的方式是让 termide 自行放置文件：
 

@@ -308,7 +308,7 @@ pub struct UiState {
     /// Divider drag state for in-group panel resize (vertical).
     pub vdrag: VerticalDividerDragState,
     /// Sessions submenu state
-    pub sessions_submenu: SubmenuState,
+    pub projects_submenu: SubmenuState,
     /// Tools submenu state
     pub tools_submenu: SubmenuState,
     /// Tools nested submenu state (shell picker inside Terminal)
@@ -347,7 +347,7 @@ impl UiState {
     /// Close all main-level submenus (sessions, tools, options, commands, bookmarks)
     /// and their nested submenus. Use before opening a specific submenu.
     pub fn close_all_submenus(&mut self) {
-        self.sessions_submenu.close();
+        self.projects_submenu.close();
         self.tools_submenu.close();
         self.tools_nested.close();
         self.options_submenu.close();
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_ui_state_close_all_submenus() {
         let mut ui = UiState::default();
-        ui.sessions_submenu.open();
+        ui.projects_submenu.open();
         ui.tools_submenu.open();
         ui.tools_nested.open();
         ui.options_submenu.open();
@@ -505,7 +505,7 @@ mod tests {
 
         ui.close_all_submenus();
 
-        assert!(!ui.sessions_submenu.open);
+        assert!(!ui.projects_submenu.open);
         assert!(!ui.tools_submenu.open);
         assert!(!ui.tools_nested.open);
         assert!(!ui.options_submenu.open);

@@ -121,8 +121,8 @@ impl HelpGenerator {
                 description: t.help_desc_quit().to_string(),
             },
             HelpEntry {
-                keys: Self::format_keys(&kb.detach_session),
-                description: t.help_desc_detach_session().to_string(),
+                keys: Self::format_keys(&kb.detach_instance),
+                description: t.help_desc_detach_instance().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.new_file_manager),
@@ -141,16 +141,16 @@ impl HelpGenerator {
                 description: t.help_desc_new_journal().to_string(),
             },
             HelpEntry {
-                keys: Self::format_keys(&kb.new_session),
-                description: t.help_desc_new_session().to_string(),
+                keys: Self::format_keys(&kb.new_project),
+                description: t.help_desc_new_project().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.open_preferences),
                 description: t.help_desc_open_preferences().to_string(),
             },
             HelpEntry {
-                keys: Self::format_keys(&kb.open_sessions),
-                description: t.help_desc_open_sessions().to_string(),
+                keys: Self::format_keys(&kb.open_projects),
+                description: t.help_desc_open_projects().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.open_git_status),
