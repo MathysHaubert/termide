@@ -1,0 +1,18 @@
+[package]
+name = "termide-agent-providers"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Model providers for the termide coding agent (OpenAI-compatible chat completions)"
+
+[dependencies]
+log.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+termide-agent-core = { path = "../agent-core" }
+
+[dev-dependencies]
+termide-agent-tools = { path = "../agent-tools" }

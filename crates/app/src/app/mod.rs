@@ -29,6 +29,7 @@ use crate::PanelExt;
 // Panel trait re-export
 pub use termide_core::Panel;
 
+mod agent_panel;
 mod background_ops;
 mod bg_fetch;
 mod bg_git;

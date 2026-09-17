@@ -349,11 +349,12 @@ pub fn get_tools_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<Dr
             .with_shortcut(shortcut("diagnostics")),
         DropdownItem::new(t.tools_operations(), "operations"),
         DropdownItem::new(t.tools_outline(), "outline").with_shortcut(shortcut("outline")),
+        DropdownItem::new(t.tools_agent(), "agent").with_shortcut(shortcut("agent")),
     ]
 }
 
 /// Number of items in Tools submenu (including the separator row).
-pub const TOOLS_SUBMENU_ITEM_COUNT: usize = 11;
+pub const TOOLS_SUBMENU_ITEM_COUNT: usize = 12;
 
 /// Index of the (non-selectable) separator row in the Tools submenu.
 pub const TOOLS_SUBMENU_SEPARATOR: usize = 1;
@@ -369,6 +370,7 @@ pub const TOOLS_SUBMENU_JOURNAL: usize = 7;
 pub const TOOLS_SUBMENU_DIAGNOSTICS: usize = 8;
 pub const TOOLS_SUBMENU_OPERATIONS: usize = 9;
 pub const TOOLS_SUBMENU_OUTLINE: usize = 10;
+pub const TOOLS_SUBMENU_AGENT: usize = 11;
 
 /// Get shell picker submenu items from discovered shells.
 ///

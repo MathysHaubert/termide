@@ -4849,6 +4849,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "termide-agent-core"
+version = "0.35.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "termide-agent-providers"
+version = "0.35.0"
+dependencies = [
+ "log",
+ "serde_json",
+ "termide-agent-core",
+ "termide-agent-tools",
+ "ureq",
+]
+
+[[package]]
+name = "termide-agent-tools"
+version = "0.35.0"
+dependencies = [
+ "libc",
+ "log",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "termide-agent-core",
+]
+
+[[package]]
 name = "termide-app"
 version = "0.35.0"
 dependencies = [
@@ -4861,6 +4895,9 @@ dependencies = [
  "open",
  "ratatui",
  "tempfile",
+ "termide-agent-core",
+ "termide-agent-providers",
+ "termide-agent-tools",
  "termide-app-core",
  "termide-clipboard",
  "termide-config",
@@ -4876,6 +4913,7 @@ dependencies = [
  "termide-logger",
  "termide-lsp",
  "termide-modal",
+ "termide-panel-agent",
  "termide-panel-binary",
  "termide-panel-db",
  "termide-panel-diagnostics",
@@ -4944,6 +4982,7 @@ dependencies = [
  "log",
  "serde",
  "tempfile",
+ "termide-agent-core",
  "termide-keyboard",
  "toml",
 ]
@@ -5128,6 +5167,25 @@ dependencies = [
  "termide-theme",
  "termide-ui",
  "unicode-width",
+]
+
+[[package]]
+name = "termide-panel-agent"
+version = "0.35.0"
+dependencies = [
+ "crossterm",
+ "log",
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "termide-agent-core",
+ "termide-config",
+ "termide-core",
+ "termide-i18n",
+ "termide-panel-markdown",
+ "termide-richtext",
+ "termide-theme",
+ "termide-ui",
 ]
 
 [[package]]

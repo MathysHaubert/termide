@@ -785,6 +785,8 @@ impl Panel for Editor {
             | PanelCommand::SetHostFocus { .. }
             | PanelCommand::RefreshDirectory
             | PanelCommand::SetGitOperationInProgress { .. }
+            | PanelCommand::SelectionMade { .. }
+            | PanelCommand::InputSubmitted { .. }
             | PanelCommand::UpdateRepoPaths { .. } => CommandResult::None,
         }
     }

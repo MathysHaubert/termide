@@ -394,6 +394,22 @@ pub trait Translation: Send + Sync {
     fn tools_diagnostics(&self) -> &str;
     fn tools_operations(&self) -> &str;
     fn tools_outline(&self) -> &str;
+    /// Tools menu: coding agent panel
+    fn tools_agent(&self) -> &str;
+    /// Agent panel title prefix
+    fn panel_agent(&self) -> &str;
+    /// Agent panel context menu: rename the conversation
+    fn agent_rename(&self) -> &str;
+    /// Prompt shown when renaming an agent conversation
+    fn agent_rename_prompt(&self) -> &str;
+    /// Agent panel context menu: start a new session
+    fn agent_new_session(&self) -> &str;
+    /// Agent panel context menu: open an earlier session
+    fn agent_resume(&self) -> &str;
+    /// Status message when the project has no saved agent sessions
+    fn agent_no_sessions(&self) -> &str;
+    /// Status message when the agent panel has no model configured
+    fn agent_not_configured(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 

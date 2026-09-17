@@ -18,6 +18,7 @@ Welcome to the TermIDE documentation! This guide covers installation, usage, and
 - [Markdown Preview](markdown.md) - Rendered `.md` preview with `Ctrl+E` source toggle
 - [Mermaid Diagrams](mermaid.md) - `.mmd` diagram viewer and embedded ```mermaid``` blocks
 - [HTML Preview](html.md) - Rendered `.html` preview and embedded HTML in Markdown
+- [Coding Agent](agent.md) - Built-in AI agent: tools, permissions, project instructions
 - [Themes](themes.md) - Customizing appearance with themes
 - [Custom Scripts](actions.md) - Running user-defined scripts from the Scripts menu
 

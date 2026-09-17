@@ -94,6 +94,7 @@ pub fn enumerate_bindings(config: &Config) -> Vec<(BindingLocation, ParsedKeyBin
         &g.open_bookmark_add,
     );
     push(&mut out, "general", "open_outline", &g.open_outline);
+    push(&mut out, "general", "open_agent", &g.open_agent);
     push(&mut out, "general", "open_diagnostics", &g.open_diagnostics);
     push(&mut out, "general", "open_git_log", &g.open_git_log);
     push(&mut out, "general", "close_panel", &g.close_panel);

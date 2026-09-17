@@ -744,6 +744,10 @@ pub enum InputAction {
     /// Move files to destination
     MoveTo { sources: Vec<PathBuf> },
 
+    /// Text a panel asked for itself; the entered value comes back as
+    /// `PanelCommand::InputSubmitted` carrying this action string.
+    Custom(String),
+
     /// Rename LSP symbol at position
     RenameSymbol {
         file_path: PathBuf,

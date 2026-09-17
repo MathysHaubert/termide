@@ -28,6 +28,7 @@ pub struct GlobalKeybindings {
     pub open_git_status: Option<KeyBinding>,
     pub open_bookmark_add: Option<KeyBinding>,
     pub open_outline: Option<KeyBinding>,
+    pub open_agent: Option<KeyBinding>,
     pub open_diagnostics: Option<KeyBinding>,
     pub open_git_log: Option<KeyBinding>,
 
@@ -415,6 +416,7 @@ impl GlobalKeybindings {
         set_default!(open_git_status, "Alt+G");
         set_default!(open_bookmark_add, "Alt+B");
         set_default!(open_outline, "Alt+O");
+        set_default!(open_agent, "Alt+A");
         set_default!(open_diagnostics, "Alt+I");
         set_default!(open_git_log, "Alt+C");
 

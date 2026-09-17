@@ -1,0 +1,21 @@
+[package]
+name = "termide-agent-tools"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Built-in tools of the termide coding agent: read, edit, write, bash"
+
+[dependencies]
+log.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+
+termide-agent-core = { path = "../agent-core" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

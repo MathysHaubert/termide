@@ -54,6 +54,13 @@ pub enum PendingAction {
     ClosePanel,
     /// Close editor with choice: save, don't save, cancel
     CloseEditorWithSave,
+    /// A selection a panel raised with `SelectAction::Custom`; the chosen
+    /// index is delivered back to the panels as `PanelCommand::SelectionMade`
+    /// with this action string.
+    PanelSelection { action: String },
+    /// Text a panel asked for with `InputAction::Custom`; delivered back as
+    /// `PanelCommand::InputSubmitted`.
+    PanelInput { action: String },
     /// Close editor with external changes (file changed on disk)
     CloseEditorExternal,
     /// Close editor with conflict (local changes + external changes)

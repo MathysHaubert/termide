@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use super::super::App;
 use termide_ui_render::{
-    TOOLS_SUBMENU_DIAGNOSTICS, TOOLS_SUBMENU_EDITOR, TOOLS_SUBMENU_FILES, TOOLS_SUBMENU_GIT_LOG,
-    TOOLS_SUBMENU_GIT_STATUS, TOOLS_SUBMENU_JOURNAL, TOOLS_SUBMENU_OPEN, TOOLS_SUBMENU_OPERATIONS,
-    TOOLS_SUBMENU_OUTLINE, TOOLS_SUBMENU_SEPARATOR, TOOLS_SUBMENU_TERMINAL,
+    TOOLS_SUBMENU_AGENT, TOOLS_SUBMENU_DIAGNOSTICS, TOOLS_SUBMENU_EDITOR, TOOLS_SUBMENU_FILES,
+    TOOLS_SUBMENU_GIT_LOG, TOOLS_SUBMENU_GIT_STATUS, TOOLS_SUBMENU_JOURNAL, TOOLS_SUBMENU_OPEN,
+    TOOLS_SUBMENU_OPERATIONS, TOOLS_SUBMENU_OUTLINE, TOOLS_SUBMENU_SEPARATOR,
+    TOOLS_SUBMENU_TERMINAL,
 };
 
 impl App {
@@ -149,6 +150,10 @@ impl App {
             TOOLS_SUBMENU_OUTLINE => {
                 self.state.close_menu();
                 self.handle_open_outline()?;
+            }
+            TOOLS_SUBMENU_AGENT => {
+                self.state.close_menu();
+                self.handle_open_agent()?;
             }
             TOOLS_SUBMENU_OPEN => {
                 // Universal opener: the entered value is routed by type — a file

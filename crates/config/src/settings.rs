@@ -76,6 +76,66 @@ pub struct Config {
     /// Syntax-highlighting settings (custom keyword languages)
     #[serde(default)]
     pub highlight: HighlightSettings,
+
+    /// Coding agent panel settings
+    #[serde(default)]
+    pub agent: AgentSettings,
+}
+
+/// Coding agent settings: which model to talk to and what it may do.
+///
+/// The provider is any OpenAI-compatible endpoint, which covers local
+/// servers (llama.cpp, Ollama, vLLM, omlx) and most gateways. The API key is
+/// read from `api_key_env` rather than stored here, so the config file never
+/// holds a secret.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSettings {
+    /// Base URL including the API prefix, e.g. `http://127.0.0.1:10000/v1`.
+    #[serde(default = "agent_defaults::base_url")]
+    pub base_url: String,
+
+    /// Model id as the endpoint expects it. Empty disables the panel.
+    #[serde(default)]
+    pub model: String,
+
+    /// Environment variable holding the API key; empty for local servers.
+    #[serde(default = "agent_defaults::api_key_env")]
+    pub api_key_env: String,
+
+    /// Context window in tokens; drives the compaction threshold.
+    #[serde(default = "agent_defaults::context_window")]
+    pub context_window: u64,
+
+    /// Upper bound on tokens per response.
+    #[serde(default = "agent_defaults::max_tokens")]
+    pub max_tokens: u64,
+
+    /// Send `reasoning_effort` to models that support it.
+    #[serde(default)]
+    pub reasoning: bool,
+
+    /// Permission rules: a mode plus one `pattern = decision` table per tool.
+    #[serde(default)]
+    pub permissions: termide_agent_core::PermissionRules,
+
+    /// Context compaction policy.
+    #[serde(default)]
+    pub compaction: termide_agent_core::CompactionPolicy,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            base_url: agent_defaults::base_url(),
+            model: String::new(),
+            api_key_env: agent_defaults::api_key_env(),
+            context_window: agent_defaults::context_window(),
+            max_tokens: agent_defaults::max_tokens(),
+            reasoning: false,
+            permissions: termide_agent_core::PermissionRules::default(),
+            compaction: termide_agent_core::CompactionPolicy::default(),
+        }
+    }
 }
 
 /// Syntax-highlighting settings.
@@ -430,6 +490,21 @@ fn default_theme_name() -> String {
     defaults::THEME_NAME.to_string()
 }
 
+mod agent_defaults {
+    pub fn base_url() -> String {
+        "http://127.0.0.1:10000/v1".to_string()
+    }
+    pub fn api_key_env() -> String {
+        "OPENAI_API_KEY".to_string()
+    }
+    pub fn context_window() -> u64 {
+        32_000
+    }
+    pub fn max_tokens() -> u64 {
+        4_096
+    }
+}
+
 fn default_language() -> String {
     defaults::LANGUAGE.to_string()
 }
@@ -654,6 +729,7 @@ impl From<LegacyConfig> for Config {
             },
             vfs: VfsSettings::default(),
             highlight: HighlightSettings::default(),
+            agent: AgentSettings::default(),
         }
     }
 }

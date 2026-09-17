@@ -30,6 +30,7 @@ pub(super) fn build_global_hotkey_table(kb: &GlobalKeybindings) -> HotkeyTable {
     t.insert("new_project", &kb.new_project);
     t.insert("open_git_status", &kb.open_git_status);
     t.insert("open_outline", &kb.open_outline);
+    t.insert("open_agent", &kb.open_agent);
     t.insert("open_diagnostics", &kb.open_diagnostics);
     t.insert("open_git_log", &kb.open_git_log);
     t.insert("open_bookmark_add", &kb.open_bookmark_add);
@@ -149,6 +150,10 @@ impl App {
         }
         if table.matches("open_outline", key) {
             self.handle_open_outline()?;
+            return Ok(true);
+        }
+        if table.matches("open_agent", key) {
+            self.handle_open_agent()?;
             return Ok(true);
         }
         if table.matches("open_diagnostics", key) {
@@ -314,6 +319,7 @@ impl App {
             "new_project" => self.handle_new_project()?,
             "open_git_status" => self.handle_open_git_status()?,
             "open_outline" => self.handle_open_outline()?,
+            "open_agent" => self.handle_open_agent()?,
             "open_diagnostics" => self.handle_open_diagnostics()?,
             "open_git_log" => self.handle_open_git_log()?,
             "open_bookmark_add" => self.handle_add_bookmark()?,

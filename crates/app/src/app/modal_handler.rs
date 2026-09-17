@@ -238,6 +238,41 @@ impl App {
 
         if let Some(action) = self.state.take_pending_action() {
             match action {
+                PendingAction::PanelSelection { action } => {
+                    // Cancelling leaves the panel unanswered on purpose: it
+                    // keeps its pending state and can re-ask.
+                    if let Some(index) = value
+                        .downcast_ref::<Vec<usize>>()
+                        .and_then(|picked| picked.first().copied())
+                    {
+                        for panel in self.layout_manager.iter_all_panels_mut() {
+                            let handled =
+                                panel.handle_command(termide_core::PanelCommand::SelectionMade {
+                                    action: action.clone(),
+                                    index,
+                                });
+                            if matches!(handled, termide_core::CommandResult::Handled(true)) {
+                                break;
+                            }
+                        }
+                        self.state.needs_redraw = true;
+                    }
+                }
+                PendingAction::PanelInput { action } => {
+                    if let Some(text) = value.downcast_ref::<String>() {
+                        for panel in self.layout_manager.iter_all_panels_mut() {
+                            let handled =
+                                panel.handle_command(termide_core::PanelCommand::InputSubmitted {
+                                    action: action.clone(),
+                                    text: text.clone(),
+                                });
+                            if matches!(handled, termide_core::CommandResult::Handled(true)) {
+                                break;
+                            }
+                        }
+                        self.state.needs_redraw = true;
+                    }
+                }
                 PendingAction::CreateFile { directory } => {
                     self.handle_create_file(directory, value)?;
                 }

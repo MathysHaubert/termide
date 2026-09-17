@@ -148,6 +148,7 @@ pub fn panel_icon(name: &str) -> &'static str {
         "diagnostics" => "🚧",
         "outline" => "📑",
         "operations" => "🔄",
+        "agent" => "🤖",
         _ => "📋",
     }
 }

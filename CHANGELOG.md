@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **"Session" now means one thing.** The word used to cover three: the saved
+  panel layout of a directory, a detached run that outlives its terminal, and
+  (as of this release) a conversation with the agent. The first two are
+  renamed, so "session" belongs to the agent alone, as it does in every other
+  coding agent.
+
+  Saved layouts are now **projects**: the menu is `Projects`, and their
+  storage moves from `<data>/termide/sessions/` to `<data>/termide/projects/`.
+  Existing layouts are moved across automatically on first launch.
+
+  A detached run is now an **instance**: `--list-sessions` becomes
+  `--list-instances` (the old spelling is gone, not hidden), and
+  `Options → Detach session` becomes `Detach instance`.
+
+  Configuration keeps working as written: `session_retention_days`,
+  `open_sessions`, `new_session` and `detach_session` are still accepted as
+  aliases for `project_retention_days`, `open_projects`, `new_project` and
+  `detach_instance`.
+
+### Added
+
+- **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you
+  describe a task and a language model carries it out in your project: it
+  reads files, edits them and runs shell commands, one collapsed line per tool
+  call that expands to the full output. Works with any OpenAI-compatible
+  endpoint, so a local server (llama.cpp, Ollama, vLLM, omlx) needs no account
+  and no key; the API key for hosted models is read from an environment
+  variable named in the config, never stored in it.
+
+  Nothing that changes the project runs unasked: a prompt offers allow once,
+  allow for the session, allow always or deny, and "allow always" writes a
+  rule into the project's `.termide/config.toml`. Rules are per tool with
+  `deny` beating `ask` beating `allow`; shell commands are judged per part, so
+  `cargo build && rm -rf target` needs both halves allowed. Reading inside the
+  project and a list of look-only commands (`ls`, `rg`, `git status`, …) never
+  ask.
+
+  The agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem
+  root down to the working directory, and summarises the older part of a long
+  session by itself when it approaches the model's context window. Every
+  session is logged as JSON Lines beside the project's saved layout, and the
+  panel's `[≡]` menu starts a new one, renames the current one or reopens an
+  earlier one. The panel is titled by that name, or by your first request. See
+  [`doc/en/agent.md`](doc/en/agent.md).
+
 ## [0.35.0] - 2026-09-13
 
 [0.35.0]: https://github.com/termide/termide/releases/tag/0.35.0

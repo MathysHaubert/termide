@@ -120,6 +120,7 @@ The layout adapts to the terminal width, showing more panel groups on wider scre
 - diagnostics — `Alt+I`
 - git log — `Alt+C`
 - git diff
+- [coding agent](agent.md) — `Alt+A`
 - [operations](operations.md)
 - image viewer
 - help — `Alt+H`
@@ -242,6 +243,7 @@ The device name is automatically detected from the filesystem:
 | `Alt+E`           | Open new file editor panel                 |
 | `Alt+G`           | Open git status panel                      |
 | `Alt+O`           | Open outline panel                         |
+| `Alt+A`           | Open coding agent panel                    |
 | `Alt+I`           | Open diagnostics panel                     |
 | `Alt+C`           | Open git log panel                         |
 | `Alt+L`           | Open journal panel                             |

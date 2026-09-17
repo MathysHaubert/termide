@@ -153,6 +153,26 @@ pub enum PanelCommand<'a> {
         text: String,
     },
 
+    /// The user picked option `index` in a selection modal the panel raised
+    /// with `SelectAction::Custom(action)`. Delivered to every panel; a
+    /// panel answers `Handled(true)` only for actions it recognises.
+    SelectionMade {
+        /// The `SelectAction::Custom` payload the panel emitted.
+        action: String,
+        /// Zero-based index of the chosen option.
+        index: usize,
+    },
+
+    /// The user submitted an input modal the panel raised with
+    /// `InputAction::Custom(action)`. Same delivery rule as
+    /// [`PanelCommand::SelectionMade`].
+    InputSubmitted {
+        /// The `InputAction::Custom` payload the panel emitted.
+        action: String,
+        /// What the user typed.
+        text: String,
+    },
+
     // === Scrollbar mouse interaction ===
     /// Request the geometry of the scrollbars drawn by the panel's last
     /// render. The mouse dispatcher uses it to route a thumb grab to the

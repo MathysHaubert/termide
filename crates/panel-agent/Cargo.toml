@@ -1,0 +1,27 @@
+[package]
+name = "termide-panel-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Coding agent panel for termide: transcript, input, tool calls and permission prompts"
+
+[dependencies]
+crossterm.workspace = true
+log.workspace = true
+ratatui.workspace = true
+serde_json.workspace = true
+
+# Workspace crates
+termide-agent-core = { path = "../agent-core" }
+termide-config = { path = "../config" }
+termide-core = { path = "../core" }
+termide-i18n = { path = "../i18n" }
+termide-panel-markdown = { path = "../panel-markdown" }
+termide-richtext = { path = "../richtext" }
+termide-theme = { path = "../theme" }
+termide-ui = { path = "../ui" }
+
+[dev-dependencies]
+tempfile.workspace = true

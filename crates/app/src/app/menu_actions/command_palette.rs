@@ -112,6 +112,14 @@ impl App {
                 },
             ),
             (
+                "open_agent",
+                CommandEntry {
+                    label: "Open Agent".into(),
+                    category: "Panels",
+                    keybinding: kb_str(&kb.open_agent),
+                },
+            ),
+            (
                 "open_diagnostics",
                 CommandEntry {
                     label: "Open Diagnostics".into(),

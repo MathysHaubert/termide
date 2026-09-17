@@ -1,0 +1,17 @@
+[package]
+name = "termide-agent-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provider-agnostic coding agent core: messages, tools, agent loop and steering queues"
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true

@@ -15,6 +15,8 @@ mod navigation;
 mod render;
 mod search;
 
+pub use render::render_markdown;
+
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

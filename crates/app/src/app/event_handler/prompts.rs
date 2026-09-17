@@ -55,10 +55,10 @@ impl App {
                 return;
             }
             termide_core::SelectAction::CloseEditorChoice => PendingAction::CloseEditorWithSave,
-            termide_core::SelectAction::Custom(_) => {
-                // Custom actions not yet supported
-                return;
-            }
+            // A panel-defined selection (e.g. an agent permission prompt);
+            // the chosen index goes back to the panels as
+            // `PanelCommand::SelectionMade`.
+            termide_core::SelectAction::Custom(action) => PendingAction::PanelSelection { action },
         };
 
         let modal = SelectModal::single(title, "", options);
@@ -90,6 +90,12 @@ impl App {
                     directory: in_dir.clone(),
                 }
             }
+            // A panel-defined prompt (e.g. renaming an agent conversation);
+            // the text goes back to the panels as
+            // `PanelCommand::InputSubmitted`.
+            termide_core::InputAction::Custom(action) => PendingAction::PanelInput {
+                action: action.clone(),
+            },
             termide_core::InputAction::GotoLine => {
                 // GotoLine is handled directly, not through modal
                 return;
