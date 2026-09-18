@@ -5,7 +5,7 @@
 //! external-modification detection. The actual git work lives in
 //! `crate::git`; this module is the Editor-level glue.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{file_io, git};
 
@@ -77,10 +77,20 @@ impl Editor {
             return;
         }
 
-        if let Some(file_path) = self.buffer.file_path() {
-            if file_io::was_modified_externally(file_path, self.file_state.mtime) {
-                self.file_state.external_change_detected = true;
-            }
+        let Some(file_path) = self.buffer.file_path().map(Path::to_path_buf) else {
+            return;
+        };
+        if !file_io::was_modified_externally(&file_path, self.file_state.mtime) {
+            return;
+        }
+        // A buffer without unsaved work follows the file, as VS Code, Zed and
+        // JetBrains do; one with unsaved work keeps it and shows the conflict
+        // until the user reloads or saves elsewhere.
+        if self.buffer.is_modified() {
+            self.file_state.external_change_detected = true;
+        } else if let Err(error) = self.reload_from_disk() {
+            log::warn!("cannot reload {}: {error}", file_path.display());
+            self.file_state.external_change_detected = true;
         }
     }
 

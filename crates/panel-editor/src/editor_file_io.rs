@@ -7,7 +7,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use termide_buffer::{Cursor, TextBuffer};
+use termide_buffer::TextBuffer;
 use termide_config::Config;
 
 use crate::file_io;
@@ -110,7 +110,10 @@ impl Editor {
         Ok(None) // Local file saved
     }
 
-    /// Reload file from disk (discards local changes)
+    /// Reload file from disk (discards local changes). The cursor and the
+    /// scroll position stay where they were, clamped to the new content, so
+    /// a file rewritten by a formatter or the agent does not throw the user
+    /// back to the top.
     pub fn reload_from_disk(&mut self) -> Result<()> {
         if let Some(path) = self.buffer.file_path().map(|p| p.to_path_buf()) {
             // Re-read the file
@@ -125,9 +128,13 @@ impl Editor {
             self.file_state.mtime = file_io::get_file_mtime(&path);
             self.file_state.external_change_detected = false;
 
-            // Reset cursor and selection
-            self.cursor = Cursor::new();
+            let last_line = self.buffer.line_count().saturating_sub(1);
+            self.clamp_cursor();
             self.selection = None;
+            if self.viewport.top_line > last_line {
+                self.viewport.top_line = last_line;
+                self.viewport.top_visual_row_offset = 0;
+            }
 
             // Update git diff
             self.update_git_diff();

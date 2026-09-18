@@ -51,6 +51,15 @@ The text editor panel provides a functional editor for working with text files w
 | `Tab`             | Insert indent (configurable, default 4)    |
 | `Ctrl+/`          | Toggle comment (line/block)                |
 
+## Changes on disk
+
+When the file changes outside the editor (a formatter, `git checkout`, the
+[agent](agent.md)), a buffer without unsaved work reloads on its own and keeps
+the cursor and the scroll position, clamped if the file got shorter. A buffer
+with unsaved work keeps it: the title shows `[changed on disk]`, saving is
+refused, and you choose between `Ctrl+Shift+R` to take the disk version
+(discarding your changes) and `Ctrl+Shift+S` to save yours elsewhere.
+
 ## Search and Replace
 
 ### Inline Search Bar (Ctrl+F)

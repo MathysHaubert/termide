@@ -452,3 +452,59 @@ fn set_scroll_offset_moves_the_content_not_just_the_thumb() {
         "content did not follow the scroll offset: {first_row:?}"
     );
 }
+
+/// Push the file's mtime past what the editor recorded, so a rewrite within
+/// the same clock tick still counts as newer.
+fn rewrite_later(file: &NamedTempFile, content: &str) {
+    std::fs::write(file.path(), content).unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    file.as_file().set_modified(later).unwrap();
+}
+
+#[test]
+fn a_clean_buffer_follows_the_file_on_disk_and_keeps_its_place() {
+    let (mut editor, file) = create_editor_with_content("a\nb\nc\nd\ne\nf\n");
+    editor.cursor.line = 4;
+    editor.cursor.column = 1;
+    editor.viewport.top_line = 3;
+
+    rewrite_later(&file, "a\nb\nc2\n");
+    let result = editor.handle_command(PanelCommand::OnFsUpdate {
+        changed_path: file.path(),
+    });
+    assert!(result.needs_redraw());
+
+    assert_eq!(editor.buffer().text(), "a\nb\nc2\n");
+    assert!(!editor.has_external_change());
+    assert!(!editor.buffer().is_modified());
+    // Clamped to the shorter file rather than reset to the top.
+    let last = editor.buffer().line_count() - 1;
+    assert_eq!(editor.cursor.line, last);
+    assert!(editor.viewport.top_line <= last);
+
+    // A rewrite that keeps the line leaves the cursor exactly where it was.
+    editor.cursor.line = 1;
+    editor.cursor.column = 1;
+    rewrite_later(&file, "a\nbb\nc3\n");
+    editor.handle_command(PanelCommand::OnFsUpdate {
+        changed_path: file.path(),
+    });
+    assert_eq!(editor.buffer().text(), "a\nbb\nc3\n");
+    assert_eq!((editor.cursor.line, editor.cursor.column), (1, 1));
+}
+
+#[test]
+fn a_buffer_with_unsaved_work_keeps_it_and_flags_the_conflict() {
+    let (mut editor, file) = create_editor_with_content("a\nb\n");
+    editor.insert_text("x").unwrap();
+    assert!(editor.buffer().is_modified());
+
+    rewrite_later(&file, "a\nb\nc\n");
+    editor.handle_command(PanelCommand::OnFsUpdate {
+        changed_path: file.path(),
+    });
+
+    assert!(editor.has_external_change());
+    assert!(editor.buffer().text().starts_with("xa\nb\n"));
+    assert!(editor.buffer().is_modified());
+}

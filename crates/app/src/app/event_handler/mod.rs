@@ -269,6 +269,10 @@ impl App {
                 self.event_unwatch_path(path);
             }
 
+            PanelEvent::FileChangedOnDisk(path) => {
+                self.fan_out_fs_changes(&std::collections::HashSet::from([path]));
+            }
+
             PanelEvent::RefreshGitStatus(path) => {
                 self.event_refresh_git_status(path);
             }

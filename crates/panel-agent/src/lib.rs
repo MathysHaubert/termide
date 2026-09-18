@@ -21,8 +21,8 @@ use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision, Message,
     Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules,
-    PersistRule, Provider, Session, SessionSummary, StreamEvent, ToolRegistry, ToolUpdate,
-    UserMessage,
+    PersistRule, Provider, Session, SessionSummary, StreamEvent, ToolRegistry, ToolResultMessage,
+    ToolUpdate, UserMessage,
 };
 use termide_config::Config;
 use termide_core::{
@@ -375,6 +375,10 @@ impl AgentPanel {
                 });
             }
             AgentEvent::ToolExecutionEnd { result } => {
+                if let Some(path) = changed_file(&result) {
+                    self.pending_events
+                        .push(PanelEvent::FileChangedOnDisk(path));
+                }
                 let id = result.tool_call_id.clone();
                 self.transcript.with_tool(&id, |item| {
                     if let Item::Tool {
@@ -755,6 +759,20 @@ fn unicode_display_width(c: char) -> usize {
         | 0x20000..=0x3FFFD => 2,
         _ => 1,
     }
+}
+
+/// The file a successful `edit` or `write` changed, from the result details,
+/// so open editors can follow it without waiting for the watcher.
+fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
+    if result.is_error || !matches!(result.tool_name.as_str(), "edit" | "write") {
+        return None;
+    }
+    result
+        .details
+        .as_ref()?
+        .get("path")?
+        .as_str()
+        .map(PathBuf::from)
 }
 
 /// Picker prefix: `●` on the current entry, blank otherwise.
@@ -1941,5 +1959,49 @@ mod tests {
         });
         assert_eq!(restored.title(), "Agent: task");
         assert_eq!(restored.session_path(), Some(session.as_path()));
+    }
+
+    #[test]
+    fn a_successful_edit_reports_the_changed_file() {
+        use termide_agent_core::ToolCall;
+        let mut panel = panel(vec![]);
+        let call = |name: &str| ToolCall {
+            id: format!("{name}-1"),
+            name: name.into(),
+            arguments: serde_json::json!({}),
+        };
+        let changed = |events: &[PanelEvent]| -> Vec<PathBuf> {
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    PanelEvent::FileChangedOnDisk(path) => Some(path.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let edit = call("edit");
+        panel.apply(AgentEvent::ToolExecutionStart { call: edit.clone() });
+        panel.apply(AgentEvent::ToolExecutionEnd {
+            result: ToolResultMessage::text(&edit, "Edited")
+                .with_details(serde_json::json!({ "path": "/tmp/f.rs", "replacements": 1 })),
+        });
+        assert_eq!(changed(&panel.tick()), vec![PathBuf::from("/tmp/f.rs")]);
+
+        // A failed edit, a read and a shell command report nothing.
+        panel.apply(AgentEvent::ToolExecutionEnd {
+            result: ToolResultMessage::error(&edit, "no match")
+                .with_details(serde_json::json!({ "path": "/tmp/f.rs" })),
+        });
+        let read = call("read");
+        panel.apply(AgentEvent::ToolExecutionEnd {
+            result: ToolResultMessage::text(&read, "…")
+                .with_details(serde_json::json!({ "path": "/tmp/g.rs" })),
+        });
+        let bash = call("bash");
+        panel.apply(AgentEvent::ToolExecutionEnd {
+            result: ToolResultMessage::text(&bash, "ok"),
+        });
+        assert!(changed(&panel.tick()).is_empty());
     }
 }

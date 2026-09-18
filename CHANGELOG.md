@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aliases for `project_retention_days`, `open_projects`, `new_project` and
   `detach_instance`.
 
+- **The editor follows its file on disk.** A buffer without unsaved work used
+  to show `[changed on disk]` and wait for `Ctrl+Shift+R`, which then put the
+  cursor back at the top. It now reloads by itself when a formatter, a
+  checkout or the agent rewrites the file, and keeps the cursor and the scroll
+  position, clamped when the file got shorter; `Ctrl+Shift+R` keeps them too.
+  A buffer with unsaved work behaves as before: it keeps them, shows the
+  marker and refuses to save over the newer file.
+
 ### Added
 
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you

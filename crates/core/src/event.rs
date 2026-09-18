@@ -567,6 +567,12 @@ pub enum PanelEvent {
     /// Unregister path from watching
     UnwatchPath(PathBuf),
 
+    /// `path` was changed on disk by a panel acting for the user (the
+    /// agent's `edit` and `write`). Delivered to panels as a filesystem
+    /// update at once, without waiting for the watcher, which may also drop
+    /// paths under `.gitignore`.
+    FileChangedOnDisk(PathBuf),
+
     // === Git integration ===
     /// Request git status refresh for path
     RefreshGitStatus(PathBuf),

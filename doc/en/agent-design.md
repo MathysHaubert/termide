@@ -242,6 +242,15 @@ session records its starting model, so resume continues on the session's model
 (pi's behaviour) rather than the config's. Neither switch is written to the
 config: the chips are per-panel state, as Claude Code's `Shift+Tab` is.
 
+Edits and open editors: VS Code, Zed and JetBrains reload a clean buffer
+when its file changes on disk and keep the cursor; a dirty buffer keeps its
+work and shows a conflict. termide's editor now does the same for every
+on-disk change, so the agent needs no special path into the editor. It only
+speeds the reload up: a successful `edit` or `write` result carries the path
+in its details, and the panel raises `PanelEvent::FileChangedOnDisk`, which
+the app fans out like a watcher batch — at once, and also for paths the
+watcher drops under `.gitignore`.
+
 Persisted in a termide project layout as `PanelState::Agent { cwd, session }`:
 the working directory and the path of the session log. That is enough because
 the log carries the model and the rest (endpoint, rules, prompt) is

@@ -177,7 +177,18 @@ impl App {
             }
         }
 
-        let fanout = collapse_fs_burst(&fs_paths);
+        self.fan_out_fs_changes(&fs_paths);
+    }
+
+    /// Deliver changed paths to the panels: those showing content get an
+    /// `OnFsUpdate`, those collapsed to their title bar are marked stale.
+    /// Used for the watcher's batches and for changes a panel reports itself.
+    pub(super) fn fan_out_fs_changes(&mut self, fs_paths: &HashSet<std::path::PathBuf>) {
+        if fs_paths.is_empty() {
+            return;
+        }
+        let area_height = self.panel_area_height();
+        let fanout = collapse_fs_burst(fs_paths);
 
         // Invalidate FM directory-size cache for any ancestor containing
         // a changed path. Panels keep stale totals until this event lands,
@@ -211,7 +222,7 @@ impl App {
         }
 
         // Update outline panel if tracked file changed on disk
-        self.notify_outline_on_fs_change(&fs_paths);
+        self.notify_outline_on_fs_change(fs_paths);
     }
 }
 

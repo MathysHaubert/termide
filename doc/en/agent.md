@@ -92,6 +92,11 @@ The agent has four tools.
 Searching is done through `bash` with the tools you already have (`rg`,
 `find`), rather than through a separate search tool.
 
+A file the agent edits while it is open in an editor is reloaded there at
+once, cursor and scroll position kept, unless that editor has unsaved changes;
+then the editor keeps them and marks the conflict, as with any change on disk
+(see [Changes on disk](editor.md#changes-on-disk)).
+
 ## Permissions
 
 Nothing that changes your project happens without your say-so. When the agent
