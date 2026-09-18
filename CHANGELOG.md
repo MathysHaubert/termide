@@ -87,8 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reopened session continues on both. The panel's `[≡]` menu starts, renames
   and reopens sessions, the **Model** chip lists the endpoint's models,
   `↑`/`↓` recall earlier requests, and the agent summarises the older part of
-  a long session by itself when it approaches the context window. The panel
-  is part of the project's saved layout. See
+  a long session by itself when it approaches the context window. `/undo`
+  takes the last request back: the files it edited or wrote are restored from
+  copies kept before each change and the conversation is rewound to before
+  it. The panel is part of the project's saved layout. See
   [`doc/en/agent.md`](doc/en/agent.md).
 
 ## [0.35.0] - 2026-09-13

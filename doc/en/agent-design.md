@@ -331,7 +331,35 @@ a tool the model calls; `tools/` stays free for overriding built-in tool
 descriptions if that is ever wanted. `/compact` is a built-in slash command
 next to the templates, a `Compact` worker command between runs.
 
-## 6b. The panel
+## 6b. Checkpoints and undo
+
+Claude Code snapshots every file before a tool changes it and offers
+`/rewind` with three choices: conversation only, code only, or both; its
+snapshots are copies under the session, independent of git, and shell
+commands are explicitly not covered. OpenCode's `/undo` and `/redo` are git
+snapshots of the whole worktree (a hidden git dir, so also for ignored files)
+per message, with the messages reverted alongside; Codex, Gemini CLI and pi
+have nothing and point at git.
+
+Decision (`crates/agent-core/src/checkpoints.rs`): Claude Code's shape,
+because copying the two or three files a request touches is cheaper and more
+predictable than a git snapshot of a large tree on every request, needs no git
+and works in `target/` or any ignored path. `CheckpointHooks` sits first in
+the hook chain and copies the target of `edit`/`write` into
+`<session_dir>/checkpoints/<session>/<n>/` with a manifest; a target that does
+not exist is recorded as created and removed on undo. The panel calls
+`begin_run` with the session's leaf when a request starts and `end_run` at
+`AgentEnd`; a run that touched nothing leaves no folder. `/undo` (also in the
+menu) shows a `ChoiceForm` naming the files, restores them, appends a
+`rewind` entry to the session log whose parent is the leaf before the request
+and rebuilds the runtime from the new leaf, emitting `FileChangedOnDisk` per
+file so editors reload. One kind of undo, not three: the conversation-only
+variant is `↑` recall plus a new request, and code-only undo leaves the agent
+believing the edit is in place, which misleads the next turn. No redo: the
+messages stay in the log on the dead branch, but the files' newer content is
+not kept. Shell commands are not covered, as in Claude Code; the doc says so.
+
+## 6c. The panel
 
 Layout follows pi, Claude Code and Codex: transcript above, multi-line input
 below. `Enter` sends, `Shift+Enter` adds a line, `Esc` aborts a run and then

@@ -12,7 +12,7 @@ use std::any::Any;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -20,11 +20,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
-    ChainedHooks, CommandScript, CompactionPolicy, CompactionPrompts, Decision, Hooks, LateTools,
-    Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope,
-    PermissionHooks, PermissionRules, PersistRule, PromptTemplate, Provider, Session,
-    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
-    DEFAULT_AGENT,
+    ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
+    CompactionPrompts, Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
+    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule,
+    PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
+    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -69,6 +69,10 @@ const AGENT_ACTION: &str = "agent_agent";
 const PROMPTS_ACTION: &str = "agent_prompts";
 /// The built-in `/compact [focus]` command.
 const COMPACT_COMMAND: &str = "compact";
+/// The built-in `/undo` command.
+const UNDO_COMMAND: &str = "undo";
+/// Context-menu action that undoes the last request.
+const UNDO_ACTION: &str = "agent_undo";
 
 /// What a card in the panel is asking: the agent's permission request, or
 /// whether a command script that came with the project may run.
@@ -82,18 +86,25 @@ enum Pending {
         args: String,
         form: ChoiceForm,
     },
+    Undo {
+        form: ChoiceForm,
+    },
 }
 
 impl Pending {
     fn form(&self) -> &ChoiceForm {
         match self {
-            Pending::Permission { form, .. } | Pending::Command { form, .. } => form,
+            Pending::Permission { form, .. }
+            | Pending::Command { form, .. }
+            | Pending::Undo { form } => form,
         }
     }
 
     fn form_mut(&mut self) -> &mut ChoiceForm {
         match self {
-            Pending::Permission { form, .. } | Pending::Command { form, .. } => form,
+            Pending::Permission { form, .. }
+            | Pending::Command { form, .. }
+            | Pending::Undo { form } => form,
         }
     }
 }
@@ -190,6 +201,9 @@ pub struct AgentPanel {
     allowed_commands: HashSet<String>,
     /// A command script running on a thread; its output becomes a request.
     command_run: Option<Receiver<(String, Result<String, String>)>>,
+    /// What the files the agent changes looked like before each request,
+    /// for `/undo`; shared with the hook that records them.
+    checkpoints: Option<Arc<Mutex<CheckpointStore>>>,
     session: Option<Session>,
     session_dir: Option<PathBuf>,
     /// Sessions offered by the last picker, in the order they were shown.
@@ -267,6 +281,7 @@ impl AgentPanel {
             )
         });
         let model = session_model(&setup.model, session.as_ref());
+        let checkpoints = checkpoint_store(setup.session_dir.as_deref(), session.as_ref());
         let (mut agent, mut system_prompt, mut tools, mut late_tools, mut backend) = (
             setup.agent,
             setup.system_prompt,
@@ -301,6 +316,7 @@ impl AgentPanel {
             setup.persist_rule,
             setup.hooks.as_ref(),
             backend.as_ref(),
+            checkpoints.clone(),
             session.as_ref(),
         );
         Self {
@@ -310,6 +326,7 @@ impl AgentPanel {
             pending: None,
             allowed_commands: HashSet::new(),
             command_run: None,
+            checkpoints,
             session,
             session_dir: setup.session_dir,
             session_choices: Vec::new(),
@@ -370,6 +387,7 @@ impl AgentPanel {
             )
         });
         let model = session_model(&self.configured_model, session.as_ref());
+        self.checkpoints = checkpoint_store(self.session_dir.as_deref(), session.as_ref());
         let (mut agent, mut system_prompt, mut tools) = (
             self.agent.clone(),
             self.system_prompt.clone(),
@@ -403,6 +421,7 @@ impl AgentPanel {
             self.persist_rule,
             self.hooks.as_ref(),
             self.backend.as_ref(),
+            self.checkpoints.clone(),
             session.as_ref(),
         );
         // Dropping the old runtime cancels it and asks its worker to stop.
@@ -470,6 +489,10 @@ impl AgentPanel {
         self.history_pos = None;
         self.draft.clear();
         let text = match slash_command(&text) {
+            Some((UNDO_COMMAND, _)) => {
+                self.input = TextArea::new();
+                return self.ask_undo();
+            }
             Some((COMPACT_COMMAND, focus)) => {
                 // Built in: summarise the older part of the session now.
                 let focus = (!focus.is_empty()).then(|| focus.to_string());
@@ -521,6 +544,16 @@ impl AgentPanel {
             self.queued = self.runtime.queue_lens();
             self.notice("queued for the next turn", NoticeKind::Info);
         } else {
+            // A request starts: from here on the files it touches are kept
+            // for /undo, together with where the conversation stood.
+            if let Some(store) = &self.checkpoints {
+                let leaf = self
+                    .session
+                    .as_ref()
+                    .and_then(Session::leaf_id)
+                    .map(str::to_string);
+                store.lock().unwrap().begin_run(leaf);
+            }
             match self.runtime.prompt(message) {
                 Ok(()) => self.busy = true,
                 Err(error) => self.notice(format!("cannot start: {error}"), NoticeKind::Error),
@@ -550,6 +583,9 @@ impl AgentPanel {
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.queued = self.runtime.queue_lens();
+                if let Some(store) = &self.checkpoints {
+                    store.lock().unwrap().end_run();
+                }
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => self.transcript.push(Item::Assistant {
@@ -1191,6 +1227,15 @@ impl AgentPanel {
                     .with_description(description),
             );
         }
+        if UNDO_COMMAND.starts_with(prefix) && !self.external {
+            items.push(
+                CompletionItem::new(UNDO_COMMAND)
+                    .with_label(format!("/{UNDO_COMMAND}"))
+                    .with_description(
+                        "Undo the last request: restore its files, rewind the session",
+                    ),
+            );
+        }
         if COMPACT_COMMAND.starts_with(prefix) && !self.external {
             items.push(
                 CompletionItem::new(COMPACT_COMMAND)
@@ -1263,9 +1308,97 @@ impl AgentPanel {
             (Some(Pending::Command { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
+            (Some(Pending::Undo { .. }), ChoiceAction::Chosen(_)) => {
+                self.pending = None;
+                let events = self.perform_undo();
+                self.pending_events.extend(events);
+            }
+            (Some(Pending::Undo { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
             (None, _) => {}
         }
         true
+    }
+
+    /// Offer to undo the last request: its files go back and the
+    /// conversation is rewound to before it.
+    fn ask_undo(&mut self) -> Vec<PanelEvent> {
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let files = self
+            .checkpoints
+            .as_ref()
+            .map(|store| store.lock().unwrap().last_files())
+            .unwrap_or_default();
+        if files.is_empty() {
+            self.notice(
+                "nothing to undo: the last request changed no files",
+                NoticeKind::Info,
+            );
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&self.cwd)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        let changed = if names.len() == 1 {
+            names[0].clone()
+        } else {
+            format!("{} files: {}", names.len(), names.join(", "))
+        };
+        let form = ChoiceForm::new(
+            format!("Undo the last request? It changed {changed}"),
+            vec!["Restore the files and rewind the conversation".into()],
+        )
+        .with_cancel("Keep everything");
+        self.pending = Some(Pending::Undo { form });
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Put the last request's files back, rewind the session to before it
+    /// and rebuild the agent from there.
+    fn perform_undo(&mut self) -> Vec<PanelEvent> {
+        let Some(store) = self.checkpoints.clone() else {
+            return vec![];
+        };
+        let undone = store.lock().unwrap().undo_last();
+        let undone = match undone {
+            Ok(undone) => undone,
+            Err(error) => {
+                self.notice(format!("cannot undo: {error}"), NoticeKind::Error);
+                return vec![PanelEvent::NeedsRedraw];
+            }
+        };
+        let mut events: Vec<PanelEvent> = undone
+            .files
+            .iter()
+            .map(|path| PanelEvent::FileChangedOnDisk(path.clone()))
+            .collect();
+        if let Some(session) = &mut self.session {
+            if let Err(error) = session.rewind_to(undone.leaf_before.as_deref()) {
+                log::warn!("agent session rewind failed: {error}");
+            }
+        }
+        let count = undone.files.len();
+        let session = self.session.take();
+        self.switch_session(session);
+        self.notice(
+            format!(
+                "undid the last request: {count} file{} restored, conversation rewound",
+                if count == 1 { "" } else { "s" }
+            ),
+            NoticeKind::Info,
+        );
+        events.push(PanelEvent::NeedsRedraw);
+        events
     }
 
     /// `/name args` names a command script: run it, or ask first when it
@@ -1519,6 +1652,19 @@ fn slash_command(text: &str) -> Option<(&str, &str)> {
     Some((name, args.trim()))
 }
 
+/// The checkpoint store of `session`, under the session directory.
+fn checkpoint_store(
+    session_dir: Option<&std::path::Path>,
+    session: Option<&Session>,
+) -> Option<Arc<Mutex<CheckpointStore>>> {
+    let dir = session_dir?;
+    let session = session?;
+    Some(Arc::new(Mutex::new(CheckpointStore::for_session(
+        dir,
+        session.id(),
+    ))))
+}
+
 /// Picker prefix: `●` on the current entry, blank otherwise.
 fn current_mark(current: bool) -> &'static str {
     if current {
@@ -1616,6 +1762,7 @@ fn spawn_runtime(
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
+    checkpoints: Option<Arc<Mutex<CheckpointStore>>>,
     session: Option<&Session>,
 ) -> Spawned {
     let cancel = CancelToken::new();
@@ -1676,11 +1823,21 @@ fn spawn_runtime(
     .with_compaction(compaction)
     .with_compaction_prompts(compaction_prompts.clone())
     .with_messages(messages);
-    // Command hooks run first: one may block or approve before anyone is
-    // asked, and its rewritten arguments are what the rules then judge.
-    let hooks: Box<dyn Hooks> = match extra_hooks {
-        Some(factory) => Box::new(ChainedHooks::new(vec![factory(), Box::new(hooks)])),
-        None => Box::new(hooks),
+    // The checkpoint recorder goes first, so no call that runs is missed;
+    // then the command hooks, which may block or approve before anyone is
+    // asked, and whose rewritten arguments are what the rules then judge.
+    let mut chain: Vec<Box<dyn Hooks>> = Vec::new();
+    if let Some(store) = checkpoints {
+        chain.push(Box::new(CheckpointHooks::new(store)));
+    }
+    if let Some(factory) = extra_hooks {
+        chain.push(factory());
+    }
+    chain.push(Box::new(hooks));
+    let hooks: Box<dyn Hooks> = if chain.len() == 1 {
+        chain.remove(0)
+    } else {
+        Box::new(ChainedHooks::new(chain))
     };
     let runtime = AgentRuntime::spawn_with_cancel(agent, hooks, cancel);
     Spawned {
@@ -1765,6 +1922,9 @@ impl Panel for AgentPanel {
         items.push((t.agent_change_model().to_string(), MODEL_ACTION));
         items.push((t.agent_change_mode().to_string(), MODE_ACTION));
         items.push((t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION));
+        if !self.external {
+            items.push((t.agent_undo().to_string(), UNDO_ACTION));
+        }
         items
     }
 
@@ -1817,6 +1977,7 @@ impl Panel for AgentPanel {
                 }]
             }
             PROMPTS_ACTION => self.prompt_picker(),
+            UNDO_ACTION => self.ask_undo(),
             AGENT_ACTION => vec![self.agent_picker()],
             MODEL_ACTION | MODE_ACTION if self.external => {
                 self.notice(PromptError::Unsupported.to_string(), NoticeKind::Warn);
@@ -2732,7 +2893,8 @@ mod tests {
                 "Change agent…",
                 "Change model…",
                 "Permission mode",
-                "Show system prompt"
+                "Show system prompt",
+                "Undo last request"
             ]
         );
         panel.handle_status_action(NEW_SESSION_ACTION);
@@ -3155,10 +3317,7 @@ mod tests {
             .into_iter()
             .map(|(label, _)| label)
             .collect();
-        assert_eq!(
-            labels.last().map(String::as_str),
-            Some("Show system prompt")
-        );
+        assert!(labels.iter().any(|label| label == "Show system prompt"));
 
         let events = panel.handle_status_action(SHOW_PROMPT_ACTION);
         let Some(PanelEvent::ViewFile(path)) = events.first() else {
@@ -3688,5 +3847,81 @@ mod tests {
         panel.handle_key(chord(KeyCode::Char('4'), KeyModifiers::NONE));
         assert!(panel.pending.is_none() && panel.command_run.is_none());
         *COMMANDS.lock().unwrap() = Vec::new();
+    }
+    #[test]
+    fn undo_restores_the_files_and_rewinds_the_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "before").unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            cwd: dir.path().to_path_buf(),
+            session_dir: Some(sessions),
+            ..setup(vec![reply("a"), reply("b"), reply("c")])
+        });
+        type_text(&mut panel, "task one");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        // Nothing changed files yet: /undo has nothing to offer.
+        type_text(&mut panel, "/undo");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains("nothing to undo"))));
+
+        // The second request "edits" the file: the store records it the way
+        // the hook does for the edit tool.
+        let leaf = panel
+            .session
+            .as_ref()
+            .unwrap()
+            .leaf_id()
+            .map(str::to_string);
+        {
+            let store = panel.checkpoints.as_ref().unwrap();
+            let mut store = store.lock().unwrap();
+            store.begin_run(leaf);
+            store.save(&file).unwrap();
+            std::fs::write(&file, "after").unwrap();
+            store.end_run();
+        }
+        type_text(&mut panel, "task two");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(panel.session.as_ref().unwrap().context_messages().len(), 4);
+
+        type_text(&mut panel, "/un");
+        assert!(panel
+            .completion
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .any(|i| i.value == "undo"));
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE)); // completes
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE)); // sends /undo
+        let form = panel.pending.as_ref().expect("undo card").form();
+        assert!(form.title().contains("notes.txt"), "{}", form.title());
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        let events = panel.tick();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, PanelEvent::FileChangedOnDisk(p) if p == &file)));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before");
+        // The conversation is back at the end of task one, on disk too.
+        assert_eq!(panel.session.as_ref().unwrap().context_messages().len(), 2);
+        assert!(!panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::User { text } if text == "task two")));
+        assert!(panel.transcript().items().iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("undid the last request"))
+        ));
+        let reopened = Session::open(panel.session_path().unwrap()).unwrap();
+        assert_eq!(reopened.context_messages().len(), 2);
     }
 }

@@ -434,6 +434,8 @@ pub trait Translation: Send + Sync {
     fn agent_prompts(&self) -> &str;
     /// Status message when no prompt templates exist
     fn agent_no_prompts(&self) -> &str;
+    /// Agent panel: undo the last request (its files and messages).
+    fn agent_undo(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 

@@ -51,7 +51,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -87,6 +87,23 @@ through them without the picker. A change applies at the agent's next tool
 call, so you can loosen the mode while a long task is running instead of
 answering the same prompt again and again. Neither switch touches the
 configuration file; the panel starts from `[agent]` again the next time.
+
+### Undoing a request
+
+`/undo`, or **Undo last request** in the `[≡]` menu, takes back the last
+request that changed files: a card in the panel names the files, and on
+confirmation each is put back as it was before that request (a file the
+request created is removed) and the conversation is rewound to just before
+it, so the agent no longer remembers doing it either. Open editors reload the
+restored files. Repeat it to step back through earlier requests; a request
+that changed nothing is skipped. It is a step back, not a redo: the undone
+messages stay in the session log on a dead branch, and the files' newer
+content is gone.
+
+Before `edit` or `write` runs, the panel keeps a copy of the target under the
+session's directory (`ai/sessions/<path>/checkpoints/<session id>/`), one
+folder per request, deleted again when the request is undone. Shell commands
+are not covered: what `bash` changes, git or your own backups have to hold.
 
 ## Tools
 
@@ -471,7 +488,9 @@ the model and as the agent it last used. When a session approaches the
 model's context window, the agent replaces the older part with a summary it
 writes itself and keeps the recent messages verbatim; the panel says when this
 happens, and `/compact` does it on request (see
-[Service prompts](#service-prompts)).
+[Service prompts](#service-prompts)). `/undo` writes a `rewind` entry: the
+log keeps every message, but the branch continues from before the undone
+request, on reopening too.
 
 When TermIDE reopens a saved layout, the agent panel comes back with it and
 continues the session it was in, on that session's model and as its agent. If

@@ -67,6 +67,9 @@ pub enum EntryKind {
     AgentChange {
         agent: String,
     },
+    /// The user undid a request: the branch continues from this entry's
+    /// parent, the undone messages stay in the file on a dead branch.
+    Rewind,
 }
 
 /// The model a session last recorded, see [`Session::current_model`].
@@ -300,7 +303,8 @@ impl Session {
                 EntryKind::Message { message } => messages.push(message.clone()),
                 EntryKind::ModelChange { .. }
                 | EntryKind::SessionName { .. }
-                | EntryKind::AgentChange { .. } => {}
+                | EntryKind::AgentChange { .. }
+                | EntryKind::Rewind => {}
                 EntryKind::Compaction {
                     summary, keep_last, ..
                 } => {
@@ -367,8 +371,17 @@ impl Session {
                 EntryKind::Message { .. }
                 | EntryKind::Compaction { .. }
                 | EntryKind::SessionName { .. }
-                | EntryKind::AgentChange { .. } => None,
+                | EntryKind::AgentChange { .. }
+                | EntryKind::Rewind => None,
             })
+    }
+
+    /// Undo back to `leaf`: the next entries hang off it, and a `rewind`
+    /// entry marks the spot so a reopened session lands there too.
+    pub fn rewind_to(&mut self, leaf: Option<&str>) -> Result<String, String> {
+        self.set_leaf(leaf)?;
+        self.append(EntryKind::Rewind)
+            .map_err(|error| format!("cannot record the rewind: {error}"))
     }
 
     /// Record the agent the branch runs as from here.
@@ -449,7 +462,8 @@ impl From<&Session> for SessionSummary {
             EntryKind::ModelChange { .. }
             | EntryKind::Compaction { .. }
             | EntryKind::SessionName { .. }
-            | EntryKind::AgentChange { .. } => None,
+            | EntryKind::AgentChange { .. }
+            | EntryKind::Rewind => None,
         });
         let first_prompt = messages.clone().find_map(|m| match m {
             Message::User(user) => Some(user.plain_text()),
@@ -644,5 +658,39 @@ mod tests {
         let ids: std::collections::HashSet<String> = (0..1000).map(|_| new_id()).collect();
         assert_eq!(ids.len(), 1000);
         assert!(ids.iter().all(|id| id.len() == 8));
+    }
+    #[test]
+    fn a_rewind_drops_the_undone_messages_from_the_branch_and_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), Path::new("/work")).unwrap();
+        session
+            .append_message(&Message::User(UserMessage::text("one")))
+            .unwrap();
+        let keep = session
+            .append_message(&Message::Assistant(text_reply("a")))
+            .unwrap();
+        session
+            .append_message(&Message::User(UserMessage::text("two")))
+            .unwrap();
+        session
+            .append_message(&Message::Assistant(text_reply("b")))
+            .unwrap();
+        session.rewind_to(Some(&keep)).unwrap();
+        assert_eq!(session.context_messages().len(), 2);
+        session
+            .append_message(&Message::User(UserMessage::text("three")))
+            .unwrap();
+        let reopened = Session::open(session.path()).unwrap();
+        let texts: Vec<String> = reopened
+            .context_messages()
+            .iter()
+            .map(|m| match m {
+                Message::User(u) => u.plain_text(),
+                Message::Assistant(a) => a.plain_text(),
+                Message::ToolResult(_) => String::new(),
+            })
+            .collect();
+        assert_eq!(texts, ["one", "a", "three"]);
+        assert!(session.rewind_to(Some("missing")).is_err());
     }
 }

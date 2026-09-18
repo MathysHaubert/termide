@@ -359,6 +359,7 @@ impl Translation for RuntimeTranslation {
         agent_change_agent,
         agent_prompts,
         agent_no_prompts,
+        agent_undo,
         tools_open,
         tools_open_prompt,
         options_help,
