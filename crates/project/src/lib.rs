@@ -57,7 +57,7 @@ pub struct PanelGroupState {
 }
 
 /// Panel data for serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PanelState {
     /// File manager panel
@@ -150,6 +150,15 @@ pub enum PanelState {
         /// Display label
         #[serde(default, skip_serializing_if = "String::is_empty")]
         label: String,
+    },
+    /// Coding agent panel
+    #[serde(rename = "agent")]
+    Agent {
+        /// Working directory the agent's tools run in
+        cwd: PathBuf,
+        /// Session log to continue; absent when the panel ran without one
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<PathBuf>,
     },
     // Note: Welcome panels are NOT saved (they auto-close)
 }
@@ -266,5 +275,38 @@ impl Session {
             .with_context(|| format!("Failed to write session file: {}", path.display()))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct Panels {
+        panels: Vec<PanelState>,
+    }
+
+    /// The agent variant serialises like the others and an absent session
+    /// log is left out rather than written as an empty value.
+    #[test]
+    fn agent_panel_state_round_trips_through_toml() {
+        let panels = Panels {
+            panels: vec![
+                PanelState::Agent {
+                    cwd: PathBuf::from("/work"),
+                    session: Some(PathBuf::from("/data/agent/s.jsonl")),
+                },
+                PanelState::Agent {
+                    cwd: PathBuf::from("/work"),
+                    session: None,
+                },
+            ],
+        };
+        let text = toml::to_string(&panels).unwrap();
+        assert!(text.contains("type = \"agent\""), "{text}");
+        assert_eq!(text.matches("session").count(), 1, "{text}");
+        let back: Panels = toml::from_str(&text).unwrap();
+        assert_eq!(back.panels, panels.panels);
     }
 }

@@ -242,9 +242,15 @@ session records its starting model, so resume continues on the session's model
 (pi's behaviour) rather than the config's. Neither switch is written to the
 config: the chips are per-panel state, as Claude Code's `Shift+Tab` is.
 
-Not persisted in a termide layout session: rebuilding the panel needs the
-config, which the session-restore constructor does not have. Reopening with
-`Alt+A` starts a fresh session; the JSONL log of the old one is kept.
+Persisted in a termide project layout as `PanelState::Agent { cwd, session }`:
+the working directory and the path of the session log. That is enough because
+the log carries the model and the rest (endpoint, rules, prompt) is
+configuration, which the layout-restore constructor now receives as
+`AgentSettings` alongside the editor config. Zed's ACP threads and JetBrains'
+tool windows restore the same way — a reference to the conversation, not its
+content — and Claude Code's `--continue` is the CLI shape of it. A missing log
+starts a fresh session in the same project; no configured model skips the
+panel, as an unavailable image backend skips an image panel.
 
 ## 7. Panel ↔ agent boundary
 

@@ -26,10 +26,10 @@ pub use keybindings::{
     ViewerKeybindings,
 };
 pub use settings::{
-    Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings, GeneralSettings,
-    GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings, IconMode, LegacyConfig,
-    LinkOpen, LoggingSettings, LspServerSettings, LspSettings, TerminalSettings, VfsSettings,
-    ViewerSettings,
+    AgentSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
+    GeneralSettings, GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings,
+    IconMode, LegacyConfig, LinkOpen, LoggingSettings, LspServerSettings, LspSettings,
+    TerminalSettings, VfsSettings, ViewerSettings,
 };
 pub use xdg::{get_config_dir, get_data_dir};
 

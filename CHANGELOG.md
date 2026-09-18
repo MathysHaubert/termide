@@ -57,8 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
   the change reaches a task already running at its next tool call; the second
   lists the models the endpoint serves, or takes an id typed by hand when it
-  cannot, and the session remembers the model it was on when reopened. See
-  [`doc/en/agent.md`](doc/en/agent.md).
+  cannot, and the session remembers the model it was on when reopened. The
+  panel is part of the project's saved layout: reopening the project brings
+  it back in the session it was in. See [`doc/en/agent.md`](doc/en/agent.md).
 
 ## [0.35.0] - 2026-09-13
 

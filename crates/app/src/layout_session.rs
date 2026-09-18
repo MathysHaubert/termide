@@ -38,6 +38,7 @@ fn fullscreen_preset(n: usize, focused: usize, area_height: u16) -> Vec<u16> {
     }
     heights
 }
+use termide_config::AgentSettings;
 use termide_panel_editor::{Editor, EditorConfig};
 use termide_panel_file_manager::FileManager;
 use termide_panel_image::ImagePanel;
@@ -61,6 +62,7 @@ pub trait LayoutManagerSession {
         term_height: u16,
         term_width: u16,
         editor_config: EditorConfig,
+        agent_settings: AgentSettings,
     ) -> Result<LayoutManager>;
 }
 
@@ -100,6 +102,7 @@ impl LayoutManagerSession for LayoutManager {
         term_height: u16,
         term_width: u16,
         editor_config: EditorConfig,
+        agent_settings: AgentSettings,
     ) -> Result<LayoutManager> {
         let mut layout = LayoutManager::new();
 
@@ -122,6 +125,7 @@ impl LayoutManagerSession for LayoutManager {
                 .map(|session_panel| {
                     let session_dir = session_dir_owned.clone();
                     let editor_config = editor_config.clone();
+                    let agent_settings = agent_settings.clone();
                     std::thread::spawn(move || {
                         construct_panel(
                             session_panel,
@@ -129,6 +133,7 @@ impl LayoutManagerSession for LayoutManager {
                             term_height,
                             term_width,
                             editor_config,
+                            &agent_settings,
                         )
                     })
                 })
@@ -226,6 +231,7 @@ fn construct_panel(
     term_height: u16,
     term_width: u16,
     editor_config: EditorConfig,
+    agent_settings: &AgentSettings,
 ) -> Option<Box<dyn Panel + Send>> {
     match session_panel {
         PanelState::FileManager { path_or_url } => {
@@ -332,6 +338,10 @@ fn construct_panel(
         )),
         PanelState::Database { url, label } => {
             Some(Box::new(termide_panel_db::DbPanel::new(url, label)))
+        }
+        PanelState::Agent { cwd, session } => {
+            crate::app::agent_panel::restore_agent_panel(agent_settings, cwd, session)
+                .map(|p| Box::new(p) as Box<dyn Panel + Send>)
         }
     }
 }

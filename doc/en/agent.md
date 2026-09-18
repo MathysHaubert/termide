@@ -159,5 +159,7 @@ approaches the model's context window, the agent replaces the older part with
 a summary it writes itself and keeps the recent messages verbatim; the panel
 says when this happens.
 
-The agent panel is not restored when TermIDE reopens a saved layout. Reopen it
-with `Alt+A` and pick the session you were in from **Open session**.
+When TermIDE reopens a saved layout, the agent panel comes back with it and
+continues the session it was in, on that session's model. If the log has been
+deleted the panel starts a fresh session; if no model is configured any more
+the panel is left out of the layout.

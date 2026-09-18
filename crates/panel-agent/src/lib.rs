@@ -1276,6 +1276,15 @@ impl Panel for AgentPanel {
         self.is_busy()
     }
 
+    /// The working directory and the session log, which is all a restore
+    /// needs: the model is in the log and the rest comes from the config.
+    fn to_state(&self, _session_dir: &std::path::Path) -> Option<termide_core::PanelState> {
+        Some(termide_core::PanelState::Agent {
+            cwd: self.cwd.clone(),
+            session: self.session_path().map(std::path::Path::to_path_buf),
+        })
+    }
+
     fn kill_processes(&mut self) {
         self.runtime.abort();
     }
@@ -1297,6 +1306,7 @@ impl Panel for AgentPanel {
 mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
+    use std::path::Path;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use termide_agent_core::PermissionPrompter;
@@ -1894,5 +1904,42 @@ mod tests {
             item,
             Item::Notice { text, .. } if text.contains("HTTP 404")
         )));
+    }
+    #[test]
+    fn saved_state_names_the_directory_and_the_session_log() {
+        let no_log = panel(vec![]);
+        assert_eq!(
+            no_log.to_state(Path::new("/unused")),
+            Some(termide_core::PanelState::Agent {
+                cwd: PathBuf::from("/tmp"),
+                session: None,
+            })
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("done")])
+        });
+        type_text(&mut panel, "task");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let Some(termide_core::PanelState::Agent { cwd, session }) =
+            panel.to_state(Path::new("/unused"))
+        else {
+            panic!("agent state expected");
+        };
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+        let session = session.expect("session path");
+        assert_eq!(panel.session_path(), Some(session.as_path()));
+
+        // Rebuilding from that state brings the conversation back.
+        let restored = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            session: Some(Session::open(&session).unwrap()),
+            ..setup(vec![])
+        });
+        assert_eq!(restored.title(), "Agent: task");
+        assert_eq!(restored.session_path(), Some(session.as_path()));
     }
 }
