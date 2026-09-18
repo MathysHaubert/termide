@@ -37,6 +37,64 @@ pub const SKILLS_DIR: &str = "skills";
 pub const SHARED_SKILLS_DIR: &str = ".agents/skills";
 /// The file that makes a directory a skill.
 pub const SKILL_FILE: &str = "SKILL.md";
+/// Prompt templates under an `ai` directory: `prompts/<name>.md`, typed as
+/// `/<name>` in the panel.
+pub const PROMPTS_DIR: &str = "prompts";
+
+/// One prompt template: `/<name> args` in the input expands to `body` with
+/// `$ARGUMENTS` and `$1`…`$9` filled in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptTemplate {
+    pub name: String,
+    pub description: String,
+    /// What to type after the name, for the picker (`argument-hint`).
+    pub argument_hint: String,
+    pub body: String,
+}
+
+impl PromptTemplate {
+    /// The body with `args` substituted: `$ARGUMENTS` takes the whole
+    /// string, `$1`…`$9` its whitespace-separated words. A body without any
+    /// placeholder gets non-empty `args` appended on a line of their own, so
+    /// `/review src/x.rs` works with a template that never mentions
+    /// arguments (Claude Code's and Codex's behaviour).
+    #[must_use]
+    pub fn expand(&self, args: &str) -> String {
+        let args = args.trim();
+        let words: Vec<&str> = args.split_whitespace().collect();
+        let mut out = String::with_capacity(self.body.len() + args.len());
+        let mut used = false;
+        let mut rest = self.body.as_str();
+        while let Some(i) = rest.find('$') {
+            out.push_str(&rest[..i]);
+            let tail = &rest[i + 1..];
+            if let Some(after) = tail.strip_prefix("ARGUMENTS") {
+                out.push_str(args);
+                used = true;
+                rest = after;
+            } else if let Some(digit) = tail.chars().next().filter(char::is_ascii_digit) {
+                let index = digit.to_digit(10).unwrap_or(0) as usize;
+                if index >= 1 {
+                    out.push_str(words.get(index - 1).copied().unwrap_or(""));
+                    used = true;
+                } else {
+                    out.push_str("$0");
+                }
+                rest = &tail[1..];
+            } else {
+                out.push('$');
+                rest = tail;
+            }
+        }
+        out.push_str(rest);
+        let mut out = out.trim_end().to_string();
+        if !used && !args.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(args);
+        }
+        out
+    }
+}
 
 /// One skill as the prompt lists it: name, one-line description and where
 /// its `SKILL.md` is.
@@ -152,6 +210,30 @@ impl AgentDirs {
             skill_roots.push(global.join(SKILLS_DIR));
         }
         Self { roots, skill_roots }
+    }
+
+    /// Every prompt template the roots define (`prompts/<name>.md`), by
+    /// name, sorted; a higher root hides a lower one. The name is the file
+    /// name, description and argument hint come from the front matter.
+    #[must_use]
+    pub fn prompts(&self) -> Vec<PromptTemplate> {
+        self.merged_entries(PROMPTS_DIR)
+            .into_iter()
+            .filter_map(|(file, path)| {
+                let name = file.strip_suffix(".md")?.to_string();
+                if name.is_empty() || !path.is_file() {
+                    return None;
+                }
+                let text = std::fs::read_to_string(&path).ok()?;
+                let (fields, body) = split_front_matter(&text);
+                Some(PromptTemplate {
+                    name,
+                    description: fields.get("description").cloned().unwrap_or_default(),
+                    argument_hint: fields.get("argument-hint").cloned().unwrap_or_default(),
+                    body: body.trim().to_string(),
+                })
+            })
+            .collect()
     }
 
     /// Every skill the roots define, by name, sorted; a name in a higher
@@ -436,5 +518,63 @@ mod tests {
         assert_eq!(fields["name"], "x");
         assert_eq!(body, "body\n");
         assert_eq!(split_front_matter("plain").1, "plain");
+    }
+    #[test]
+    fn prompts_come_from_markdown_files_and_expand_their_arguments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        let project = tmp.path().join("proj");
+        let write = |dir: &Path, file: &str, body: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(file), body).unwrap();
+        };
+        write(
+            &global.join("prompts"),
+            "review.md",
+            "---\ndescription: Review a file\nargument-hint: <path>\n---\nReview $1 for bugs. Notes: $ARGUMENTS\n",
+        );
+        write(&global.join("prompts"), "notes.txt", "not a prompt");
+        write(
+            &project.join(".termide/ai/prompts"),
+            "review.md",
+            "Project review of $1.",
+        );
+        write(
+            &project.join(".termide/ai/prompts"),
+            "tests.md",
+            "Write tests.",
+        );
+
+        let dirs = AgentDirs::new(&project, None, Some(&global));
+        let prompts = dirs.prompts();
+        let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["review", "tests"]);
+        assert_eq!(prompts[0].body, "Project review of $1.");
+        assert_eq!(
+            prompts[0].expand("src/x.rs extra"),
+            "Project review of src/x.rs."
+        );
+        // No placeholder: the arguments follow the body.
+        assert_eq!(
+            prompts[1].expand("for parser"),
+            "Write tests.\n\nfor parser"
+        );
+        assert_eq!(prompts[1].expand(""), "Write tests.");
+
+        let global_only = AgentDirs::new(tmp.path(), None, Some(&global)).prompts();
+        assert_eq!(global_only[0].description, "Review a file");
+        assert_eq!(global_only[0].argument_hint, "<path>");
+        assert_eq!(
+            global_only[0].expand("a.rs b.rs"),
+            "Review a.rs for bugs. Notes: a.rs b.rs"
+        );
+        // Unknown dollar words and $0 pass through untouched.
+        let odd = PromptTemplate {
+            name: "odd".into(),
+            description: String::new(),
+            argument_hint: String::new(),
+            body: "Cost $5, $HOME, $0, $2 end".into(),
+        };
+        assert_eq!(odd.expand("one"), "Cost , $HOME, $0,  end");
     }
 }

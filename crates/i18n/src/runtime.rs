@@ -357,6 +357,8 @@ impl Translation for RuntimeTranslation {
         agent_mode_auto,
         agent_show_prompt,
         agent_change_agent,
+        agent_prompts,
+        agent_no_prompts,
         tools_open,
         tools_open_prompt,
         options_help,

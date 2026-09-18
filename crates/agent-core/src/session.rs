@@ -62,6 +62,11 @@ pub enum EntryKind {
     SessionName {
         name: String,
     },
+    /// The agent definition the branch runs as from here, so a reopened
+    /// session comes back with the same prompt and tools.
+    AgentChange {
+        agent: String,
+    },
 }
 
 /// The model a session last recorded, see [`Session::current_model`].
@@ -285,7 +290,9 @@ impl Session {
         for entry in self.branch() {
             match &entry.kind {
                 EntryKind::Message { message } => messages.push(message.clone()),
-                EntryKind::ModelChange { .. } | EntryKind::SessionName { .. } => {}
+                EntryKind::ModelChange { .. }
+                | EntryKind::SessionName { .. }
+                | EntryKind::AgentChange { .. } => {}
                 EntryKind::Compaction {
                     summary, keep_last, ..
                 } => {
@@ -351,7 +358,27 @@ impl Session {
                 }),
                 EntryKind::Message { .. }
                 | EntryKind::Compaction { .. }
-                | EntryKind::SessionName { .. } => None,
+                | EntryKind::SessionName { .. }
+                | EntryKind::AgentChange { .. } => None,
+            })
+    }
+
+    /// Record the agent the branch runs as from here.
+    pub fn append_agent_change(&mut self, agent: &str) -> std::io::Result<String> {
+        self.append(EntryKind::AgentChange {
+            agent: agent.to_string(),
+        })
+    }
+
+    /// Agent recorded last on the current branch.
+    #[must_use]
+    pub fn current_agent(&self) -> Option<String> {
+        self.branch()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.kind {
+                EntryKind::AgentChange { agent } => Some(agent.clone()),
+                _ => None,
             })
     }
 
@@ -413,7 +440,8 @@ impl From<&Session> for SessionSummary {
             EntryKind::Message { message } => Some(message),
             EntryKind::ModelChange { .. }
             | EntryKind::Compaction { .. }
-            | EntryKind::SessionName { .. } => None,
+            | EntryKind::SessionName { .. }
+            | EntryKind::AgentChange { .. } => None,
         });
         let first_prompt = messages.clone().find_map(|m| match m {
             Message::User(user) => Some(user.plain_text()),
@@ -467,6 +495,7 @@ mod tests {
         session
             .append_model_change("local", "qwen", Some(32_000))
             .unwrap();
+        session.append_agent_change("review").unwrap();
         session
             .append_message(&Message::User(UserMessage::text("hi")))
             .unwrap();
@@ -477,7 +506,8 @@ mod tests {
         let reopened = Session::open(session.path()).unwrap();
         assert_eq!(reopened.id(), session.id());
         assert_eq!(reopened.header().cwd, PathBuf::from("/work"));
-        assert_eq!(reopened.entries().len(), 3);
+        assert_eq!(reopened.entries().len(), 4);
+        assert_eq!(reopened.current_agent().as_deref(), Some("review"));
         assert_eq!(reopened.leaf_id(), session.leaf_id());
         assert_eq!(
             reopened.current_model(),

@@ -430,6 +430,10 @@ pub trait Translation: Send + Sync {
     fn agent_show_prompt(&self) -> &str;
     /// Agent panel: open the agent picker
     fn agent_change_agent(&self) -> &str;
+    /// Agent panel: open the prompt-template picker
+    fn agent_prompts(&self) -> &str;
+    /// Status message when no prompt templates exist
+    fn agent_no_prompts(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 

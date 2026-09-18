@@ -21,8 +21,8 @@ use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision, Message,
     Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules,
-    PersistRule, Provider, Session, SessionSummary, StreamEvent, ToolRegistry, ToolResultMessage,
-    ToolUpdate, UserMessage, DEFAULT_AGENT,
+    PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, ToolRegistry,
+    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
@@ -63,6 +63,8 @@ const MODE_ACTION: &str = "agent_mode";
 const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
 /// Status chip and context-menu action that opens the agent picker.
 const AGENT_ACTION: &str = "agent_agent";
+/// Context-menu action that opens the prompt-template picker.
+const PROMPTS_ACTION: &str = "agent_prompts";
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -115,6 +117,10 @@ pub struct AgentProfile {
 pub trait AgentCatalog: Send + Sync {
     fn list(&self) -> Vec<AgentEntry>;
     fn resolve(&self, name: &str) -> Option<AgentProfile>;
+    /// Prompt templates (`prompts/<name>.md`), for `/<name>` in the input.
+    fn prompts(&self) -> Vec<PromptTemplate> {
+        Vec::new()
+    }
 }
 
 pub struct AgentPanel {
@@ -130,6 +136,8 @@ pub struct AgentPanel {
     catalog: Arc<dyn AgentCatalog>,
     /// Agents offered by the last picker, in the order they were shown.
     agent_choices: Vec<String>,
+    /// Prompt templates offered by the last picker, in the order shown.
+    prompt_choices: Vec<PromptTemplate>,
     model: ModelSpec,
     /// The model from the configuration: the base every session's model is
     /// built on, since the log records only an id and a context window.
@@ -178,15 +186,23 @@ impl AgentPanel {
                 &setup.cwd,
                 setup.provider.name(),
                 &setup.model,
+                &setup.agent,
             )
         });
         let model = session_model(&setup.model, session.as_ref());
+        let (agent, system_prompt, tools) = session_agent(
+            setup.catalog.as_ref(),
+            &setup.agent,
+            setup.system_prompt,
+            setup.tools,
+            session.as_ref(),
+        );
         let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &setup.provider,
-            &setup.tools,
+            &tools,
             &model,
             &setup.cwd,
-            &setup.system_prompt,
+            &system_prompt,
             setup.rules.clone(),
             setup.compaction,
             setup.persist_rule,
@@ -202,17 +218,18 @@ impl AgentPanel {
             cwd: setup.cwd,
             model,
             configured_model: setup.model,
-            agent: setup.agent,
+            agent,
             catalog: setup.catalog,
             agent_choices: Vec::new(),
+            prompt_choices: Vec::new(),
             mode,
             model_choices: Vec::new(),
             model_fetch: None,
             pending_events: Vec::new(),
             provider: setup.provider,
-            tools: setup.tools,
+            tools,
             rules: setup.rules,
-            system_prompt: setup.system_prompt,
+            system_prompt,
             compaction: setup.compaction,
             persist_rule: setup.persist_rule,
             transcript,
@@ -243,15 +260,23 @@ impl AgentPanel {
                 &self.cwd,
                 self.provider.name(),
                 &self.model,
+                &self.agent,
             )
         });
         let model = session_model(&self.configured_model, session.as_ref());
+        let (agent, system_prompt, tools) = session_agent(
+            self.catalog.as_ref(),
+            &self.agent,
+            self.system_prompt.clone(),
+            self.tools.clone(),
+            session.as_ref(),
+        );
         let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &self.provider,
-            &self.tools,
+            &tools,
             &model,
             &self.cwd,
-            &self.system_prompt,
+            &system_prompt,
             self.rules.clone(),
             self.compaction,
             self.persist_rule,
@@ -264,6 +289,9 @@ impl AgentPanel {
         self.transcript = transcript;
         self.session = session;
         self.model = model;
+        self.agent = agent;
+        self.system_prompt = system_prompt;
+        self.tools = tools;
         self.mode = mode;
         self.model_choices.clear();
         self.model_fetch = None;
@@ -311,6 +339,25 @@ impl AgentPanel {
         if text.is_empty() {
             return vec![];
         }
+        let text = match slash_command(&text) {
+            Some((name, args)) => {
+                let prompts = self.catalog.prompts();
+                let Some(template) = prompts.iter().find(|p| p.name == name) else {
+                    let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
+                    self.notice(
+                        if names.is_empty() {
+                            format!("no prompt named {name}; there are no prompt templates")
+                        } else {
+                            format!("no prompt named {name}; available: {}", names.join(", "))
+                        },
+                        NoticeKind::Warn,
+                    );
+                    return vec![PanelEvent::NeedsRedraw];
+                };
+                template.expand(args)
+            }
+            None => text,
+        };
         self.input = TextArea::new();
         self.follow = true;
         let message = UserMessage::text(text);
@@ -666,6 +713,40 @@ impl AgentPanel {
         }
     }
 
+    /// Offer the prompt templates; choosing one puts `/<name> ` into the
+    /// input so arguments can follow.
+    fn prompt_picker(&mut self) -> Vec<PanelEvent> {
+        let t = termide_i18n::t();
+        let prompts = self.catalog.prompts();
+        if prompts.is_empty() {
+            return vec![PanelEvent::SetStatusMessage {
+                message: t.agent_no_prompts().to_string(),
+                is_error: false,
+            }];
+        }
+        let options = prompts
+            .iter()
+            .map(|p| {
+                let mut line = format!("/{}", p.name);
+                if !p.argument_hint.is_empty() {
+                    line.push(' ');
+                    line.push_str(&p.argument_hint);
+                }
+                if !p.description.is_empty() {
+                    line.push_str(" · ");
+                    line.push_str(&p.description);
+                }
+                line
+            })
+            .collect();
+        self.prompt_choices = prompts;
+        vec![PanelEvent::ShowSelect {
+            title: t.agent_prompts().to_string(),
+            options,
+            on_select: SelectAction::Custom(PROMPTS_ACTION.to_string()),
+        }]
+    }
+
     fn agent_picker(&mut self) -> PanelEvent {
         let t = termide_i18n::t();
         let entries = self.catalog.list();
@@ -734,6 +815,11 @@ impl AgentPanel {
         self.model = model;
         self.system_prompt = profile.system_prompt;
         self.tools = profile.tools;
+        if let Some(session) = &mut self.session {
+            if let Err(error) = session.append_agent_change(name) {
+                log::warn!("agent session write failed: {error}");
+            }
+        }
         if let Some(mode) = profile.mode {
             self.mode.set(mode);
             self.rules.mode = mode;
@@ -902,6 +988,21 @@ fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// `/<name> args` at the start of a message: the template name and the
+/// rest. A word with further slashes (`/usr/bin`) is text, not a command.
+fn slash_command(text: &str) -> Option<(&str, &str)> {
+    let rest = text.strip_prefix('/')?;
+    let (name, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    Some((name, args.trim()))
+}
+
 /// Picker prefix: `●` on the current entry, blank otherwise.
 fn current_mark(current: bool) -> &'static str {
     if current {
@@ -918,6 +1019,7 @@ fn start_session(
     cwd: &std::path::Path,
     provider: &str,
     model: &ModelSpec,
+    agent: &str,
 ) -> Option<Session> {
     let mut session = match Session::create(dir?, cwd) {
         Ok(session) => session,
@@ -930,7 +1032,33 @@ fn start_session(
     {
         log::warn!("agent session write failed: {error}");
     }
+    if let Err(error) = session.append_agent_change(agent) {
+        log::warn!("agent session write failed: {error}");
+    }
     Some(session)
+}
+
+/// The agent `session` last ran as, with its prompt and tools resolved
+/// through `catalog`, when that is not `current`; otherwise the current
+/// agent with the prompt and tools given. An agent the log names but no
+/// root defines any more is reported and the current one kept.
+fn session_agent(
+    catalog: &dyn AgentCatalog,
+    current: &str,
+    system_prompt: String,
+    tools: ToolRegistry,
+    session: Option<&Session>,
+) -> (String, String, ToolRegistry) {
+    match session.and_then(Session::current_agent) {
+        Some(name) if name != current => match catalog.resolve(&name) {
+            Some(profile) => (name, profile.system_prompt, profile.tools),
+            None => {
+                log::warn!("session ran as agent {name}, which no longer exists; using {current}");
+                (current.to_string(), system_prompt, tools)
+            }
+        },
+        _ => (current.to_string(), system_prompt, tools),
+    }
 }
 
 /// The configured model with the id and context window `session` last ran
@@ -1062,6 +1190,7 @@ impl Panel for AgentPanel {
             items.push((t.agent_new_session().to_string(), NEW_SESSION_ACTION));
             items.push((t.agent_resume().to_string(), RESUME_ACTION));
         }
+        items.push((t.agent_prompts().to_string(), PROMPTS_ACTION));
         items.push((t.agent_change_agent().to_string(), AGENT_ACTION));
         items.push((t.agent_change_model().to_string(), MODEL_ACTION));
         items.push((t.agent_change_mode().to_string(), MODE_ACTION));
@@ -1117,6 +1246,7 @@ impl Panel for AgentPanel {
                     on_select: SelectAction::Custom(RESUME_ACTION.to_string()),
                 }]
             }
+            PROMPTS_ACTION => self.prompt_picker(),
             AGENT_ACTION => vec![self.agent_picker()],
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
@@ -1349,6 +1479,15 @@ impl Panel for AgentPanel {
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
             }
+            PanelCommand::SelectionMade { action, index } if action == PROMPTS_ACTION => {
+                let choice = self.prompt_choices.get(index).cloned();
+                self.prompt_choices.clear();
+                if let Some(template) = choice {
+                    self.input = TextArea::new();
+                    self.input.insert_str(&format!("/{} ", template.name));
+                }
+                CommandResult::Handled(true)
+            }
             PanelCommand::SelectionMade { action, index } if action == AGENT_ACTION => {
                 let choice = self.agent_choices.get(index).cloned();
                 self.agent_choices.clear();
@@ -1574,6 +1713,14 @@ mod tests {
                     description: "Reviews diffs".into(),
                 },
             ]
+        }
+        fn prompts(&self) -> Vec<PromptTemplate> {
+            vec![PromptTemplate {
+                name: "review".into(),
+                description: "Review a file".into(),
+                argument_hint: "<path>".into(),
+                body: "Review $1 carefully.".into(),
+            }]
         }
         fn resolve(&self, name: &str) -> Option<AgentProfile> {
             match name {
@@ -1837,6 +1984,7 @@ mod tests {
                 "Rename session",
                 "New session",
                 "Open session",
+                "Insert prompt…",
                 "Change agent…",
                 "Change model…",
                 "Permission mode",
@@ -2278,11 +2426,65 @@ mod tests {
             "big"
         );
 
-        // Back to the default: prompt and tools change, model and mode stay.
+        // A new session starts as the current agent; reopening the first
+        // one comes back as the agent it last ran as, prompt and tools too.
+        let first_path = panel.session_path().unwrap().to_path_buf();
+        panel.handle_status_action(NEW_SESSION_ACTION);
+        assert_eq!(chip(&panel, AGENT_ACTION), "review");
         panel.switch_agent("default");
         assert_eq!(panel.system_prompt, "default prompt");
-        assert_eq!(chip(&panel, MODEL_ACTION), "big");
-        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
+        assert_eq!(chip(&panel, MODEL_ACTION), "big", "the model stays");
+        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits", "the mode stays");
+        panel.session_choices = panel.session_list();
+        let index = panel
+            .session_choices
+            .iter()
+            .position(|s| s.path == first_path)
+            .unwrap();
+        panel.resume_choice(index);
+        assert_eq!(chip(&panel, AGENT_ACTION), "review");
+        assert_eq!(panel.system_prompt, "You review diffs.");
+        assert_eq!(
+            Session::open(&first_path)
+                .unwrap()
+                .current_agent()
+                .as_deref(),
+            Some("review")
+        );
         assert!(!panel.switch_agent("missing"));
+    }
+    #[test]
+    fn slash_commands_expand_prompt_templates() {
+        let mut expanding = panel(vec![reply("done")]);
+        type_text(&mut expanding, "/review src/x.rs");
+        expanding.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut expanding);
+        let items = expanding.transcript().items();
+        assert!(
+            matches!(&items[0], Item::User { text } if text == "Review src/x.rs carefully."),
+            "{items:?}"
+        );
+
+        // An unknown command is refused with the names on offer; a path is text.
+        let mut panel = panel(vec![reply("ok")]);
+        type_text(&mut panel, "/nope");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(panel.transcript().items().iter().any(
+            |item| matches!(item, Item::Notice { text, .. } if text.contains("available: review"))
+        ));
+        assert_eq!(panel.input_text(), "/nope", "the input is kept for editing");
+        assert_eq!(slash_command("/usr/bin/ls -la"), None);
+        assert_eq!(slash_command("/review a b"), Some(("review", "a b")));
+        assert_eq!(slash_command("/"), None);
+
+        // The picker puts the command into the input, ready for arguments.
+        let events = panel.handle_status_action(PROMPTS_ACTION);
+        let picker = events.first().expect("picker");
+        let PanelEvent::ShowSelect { options, .. } = picker else {
+            panic!("expected a picker, got {picker:?}");
+        };
+        assert_eq!(options, &["/review <path> · Review a file"]);
+        select(&mut panel, picker, 0);
+        assert_eq!(panel.input_text(), "/review ");
     }
 }

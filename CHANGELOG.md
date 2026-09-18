@@ -74,13 +74,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools; the **Agent** chip switches between them. Skills in the
   agentskills.io shape (`skills/<name>/SKILL.md`, also `.agents/skills/`)
   are listed in the prompt by name and description and loaded on demand
-  with a `skill` tool.
+  with a `skill` tool. Prompt templates `prompts/<name>.md` are sent as
+  `/name args`, with `$ARGUMENTS` and `$1`…`$9` filled in.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
   the change reaches a task already running at its next tool call; the second
   lists the models the endpoint serves, or takes an id typed by hand when it
-  cannot, and the session remembers the model it was on when reopened. The
+  cannot, and the session remembers the model and the agent it was on when
+  reopened. The
   panel is part of the project's saved layout: reopening the project brings
   it back in the session it was in. See [`doc/en/agent.md`](doc/en/agent.md).
 

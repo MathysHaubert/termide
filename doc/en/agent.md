@@ -51,6 +51,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
@@ -174,7 +175,7 @@ ai/
   agents/<name>/SOUL.md    the template of a custom agent (optional)
   agents/<name>/agent.toml what else sets the agent apart (optional)
   skills/<name>/SKILL.md   skills, see below
-  prompts/                 prompt templates (reserved)
+  prompts/<name>.md        prompt templates, typed as /name
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -200,8 +201,9 @@ tools = ["read", "bash"]                         # a subset of the built-in tool
 
 Switching agents mid-session swaps the prompt and the tools for the next
 request; the model and the mode change only when the definition names them,
-and the session log records a model change as it does for the **Model** chip.
-A saved layout remembers the agent, so the panel comes back as it.
+and the session log records the switch, as it does for the **Model** chip.
+A reopened session comes back as the agent it last ran as, and a saved layout
+remembers it too.
 
 ### The system prompt
 
@@ -269,6 +271,32 @@ model loads the skill with the `skill` tool, which returns the text of
 skill never asks for permission. The tool exists only when at least one skill
 does, and it is not subject to an agent's `tools` list.
 
+### Prompt templates
+
+A prompt template is a Markdown file `prompts/<name>.md`, at any of the three
+levels, that you send as `/name` followed by arguments. The front matter is
+optional: `description` for the picker and `argument-hint` for what to type
+after the name. In the body `$ARGUMENTS` stands for everything after the
+name and `$1`…`$9` for its words; a body without placeholders gets the
+arguments appended on a line of their own.
+
+```markdown
+---
+description: Review a file for bugs and risks
+argument-hint: <path>
+---
+Review $1. Point at bugs first, style last, and quote the lines you mean.
+```
+
+`/review src/parser.rs` then sends the expanded text, which appears in the
+session as what the model actually received. **Insert prompt…** in the `[≡]`
+menu lists the templates and puts the chosen `/name ` into the input. A
+message starting with `/` that names no template is not sent; a path such as
+`/usr/bin/ls` is plain text.
+
+### Project instructions
+
+The agent reads `AGENTS.md` (or `CLAUDE.md` in the same directory) from every
 directory between the filesystem root and the panel's working directory,
 most specific last, so the panel directory's file outranks the project's. The
 project root's file is included even when the panel works outside it. Put
@@ -279,8 +307,9 @@ template `ai/AGENTS.md` itself. Files over 32 KiB are skipped.
 
 Every session is written to a log in JSON Lines, one file per session, under
 `ai/sessions/<path of the panel's directory>/` in the TermIDE configuration
-directory, beside the agents. The log records the model the session started on and every switch,
-so a reopened session continues on the model it last used. When a session
+directory, beside the agents. The log records the model and the agent the
+session started with and every switch, so a reopened session continues on
+the model and as the agent it last used. When a session
 approaches the model's context window, the agent replaces the older part with
 a summary it writes itself and keeps the recent messages verbatim; the panel
 says when this happens.

@@ -40,9 +40,9 @@ pub use context::{
     SEED_TEMPLATE,
 };
 pub use layers::{
-    ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec, SkillInfo,
-    DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR, ROOT_SOUL_FILE, SESSIONS_DIR,
-    SHARED_SKILLS_DIR, SKILLS_DIR, SKILL_FILE, SOUL_FILE, SPEC_FILE,
+    ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,
+    PromptTemplate, SkillInfo, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR, PROMPTS_DIR,
+    ROOT_SOUL_FILE, SESSIONS_DIR, SHARED_SKILLS_DIR, SKILLS_DIR, SKILL_FILE, SOUL_FILE, SPEC_FILE,
 };
 pub use message::{
     now_millis, AssistantContent, AssistantMessage, Message, StopReason, ToolCall,

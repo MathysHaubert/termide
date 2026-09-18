@@ -169,7 +169,9 @@ without knowing how they are stored. The switch is one `AgentRuntime::update`
 closure applied between runs (prompt, tools, model); the mode goes through
 the shared `ModeHandle`. Model and mode change only when the definition names
 them, so a user's runtime choice survives switching to an agent that has no
-opinion.
+opinion. The session log records the agent as it records the model
+(`agent_change` entries, one at the start), so a reopened session comes back
+with the prompt and tools it ran with.
 
 Skills (`skills/<name>/SKILL.md`, agentskills.io front matter) are a
 cross-agent format; how they reach the model differs:
@@ -195,6 +197,19 @@ Skills are found in each level's `ai/skills` and in `.agents/skills`, the
 shared directory, so nothing has to be copied to work with termide. The tool
 exists only when a skill does, and an agent's `tools` list does not remove
 it: skills are instructions, not a capability.
+
+Prompt templates: Claude Code (`commands/*.md`), Codex (`prompts/*.md`), pi
+(`prompts/*.md`) and OpenCode (`command/*.md`) agree on a Markdown file per
+`/name` with `description` and `argument-hint` front matter and `$ARGUMENTS`
+/ `$1`…`$9` in the body; Claude Code and OpenCode also splice shell output
+(`!`cmd``) and files (`@path`) into the template. Decision: the shared
+shape under `prompts/<name>.md`, merged across the three levels, without
+shell or file splicing — that is a second way to run commands outside the
+permission model, and a template can ask the agent to run them instead. The
+expanded text is what the transcript and the log show, since it is what the
+model received. A leading `/` is a command only when the first word is a
+plain name; an unknown name is refused rather than sent, so a typo does not
+reach the model.
 
 The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 `{{environment}}` and `{{project_instructions}}` placeholders: the `ai`

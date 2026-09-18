@@ -120,6 +120,10 @@ impl FsCatalog {
 }
 
 impl AgentCatalog for FsCatalog {
+    fn prompts(&self) -> Vec<termide_agent_core::PromptTemplate> {
+        self.dirs.prompts()
+    }
+
     fn list(&self) -> Vec<AgentEntry> {
         self.dirs
             .agents()
