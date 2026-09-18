@@ -250,6 +250,29 @@ pub trait PermissionPrompter: Send {
     fn ask(&mut self, request: &PermissionRequest) -> PermissionAnswer;
 }
 
+/// A prompter that answers every question with the same denial. A subagent
+/// runs with no one to ask, so anything the rules and mode do not already
+/// allow is refused with a reason the model reads, rather than blocking a
+/// user who is not watching this nested run.
+pub struct AutoDenyPrompter {
+    reason: String,
+}
+
+impl AutoDenyPrompter {
+    #[must_use]
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl PermissionPrompter for AutoDenyPrompter {
+    fn ask(&mut self, _request: &PermissionRequest) -> PermissionAnswer {
+        PermissionAnswer::DenyWithReason(self.reason.clone())
+    }
+}
+
 // Permission prompts across a thread boundary: the agent thread blocks
 // inside `before_tool_call` until the user answers, so the request travels
 // over a channel and the wait wakes regularly to notice an abort.

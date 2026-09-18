@@ -8,13 +8,15 @@ use std::sync::Arc;
 use anyhow::Result;
 use termide_agent_acp::AcpRuntime;
 use termide_agent_core::{
-    build_system_prompt, discover_context_files, ensure_global_layout, AgentDirs, Decision,
-    ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
+    build_system_prompt, discover_context_files, ensure_global_layout, Agent, AgentDirs,
+    AgentEvent, AutoDenyPrompter, CancelToken, CompactionPolicy, Decision, Message, ModelSpec,
+    PermissionHooks, PermissionRules, PromptOptions, Provider, Session, ToolRegistry, UserMessage,
+    DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
 use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
-use termide_agent_tools::{builtin_tools, SkillTool};
+use termide_agent_tools::{builtin_tools, SkillTool, SubagentRun, TaskTool};
 use termide_config::AgentSettings;
 use termide_panel_agent::{
     AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, BackendFactory,
@@ -103,6 +105,9 @@ struct FsCatalog {
     dirs: AgentDirs,
     /// The panel's MCP servers; connected once, shared by every agent.
     mcp: Arc<Connections>,
+    /// Builds and runs a named agent as a subagent for the `task` tool;
+    /// set once the provider and settings are known.
+    subagents: Option<Arc<Subagents>>,
 }
 
 impl FsCatalog {
@@ -125,6 +130,7 @@ impl FsCatalog {
             project_root: project_root.to_path_buf(),
             mcp: Connections::new(dirs.mcp_servers()),
             dirs,
+            subagents: None,
         }
     }
 }
@@ -169,26 +175,28 @@ impl AgentCatalog for FsCatalog {
         } else {
             builtin_tools()
         };
-        if let Some(allowed) = &definition.spec.tools {
-            for unknown in allowed.iter().filter(|name| tools.get(name).is_none()) {
-                log::warn!("agent {name}: no tool named {unknown}");
-            }
-            for tool in tools
-                .names()
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-            {
-                if !allowed.contains(&tool) {
-                    tools.remove(&tool);
-                }
-            }
-        }
+        restrict_tools(&mut tools, &definition.spec.tools, name);
         // Skills are instructions, not a capability, so an agent's `tools`
         // list does not govern them: the tool comes with the skills.
         let skills = self.dirs.skills();
         if !skills.is_empty() && backend.is_none() {
             tools.insert(Arc::new(SkillTool::new(skills.clone())));
+        }
+        // The `task` tool lets this agent hand work to the others; only when
+        // there are custom agents to delegate to, and never for an external
+        // agent (it drives its own tools) or a subagent (no nesting: the
+        // subagent build path adds no task tool).
+        if let Some(subagents) = &self.subagents {
+            if backend.is_none() {
+                let delegates = self.delegatable(name);
+                if !delegates.is_empty() {
+                    let runner = Arc::clone(subagents);
+                    let run: SubagentRun = Arc::new(move |agent, prompt, cancel, on_update| {
+                        runner.run(agent, prompt, cancel, on_update)
+                    });
+                    tools.insert(Arc::new(TaskTool::new(delegates, run)));
+                }
+            }
         }
         // The configuration's `ai/AGENTS.md` is the prompt template itself,
         // not an instruction file, so no global file joins the chain.
@@ -204,6 +212,179 @@ impl AgentCatalog for FsCatalog {
             late_tools: (!self.mcp.is_empty() && backend.is_none()).then(|| self.mcp.subscribe()),
             backend,
         })
+    }
+}
+
+impl FsCatalog {
+    /// The agents `caller` can delegate to with the `task` tool: every
+    /// built-in-loop agent, the default one included, except `caller`
+    /// itself (delegating to yourself is pointless) and external ones.
+    fn delegatable(&self, caller: &str) -> Vec<(String, String)> {
+        let mut names: Vec<String> = std::iter::once(DEFAULT_AGENT.to_string())
+            .chain(self.dirs.agents())
+            .collect();
+        names.dedup();
+        names
+            .into_iter()
+            .filter(|name| name != caller && self.dirs.spec(name).acp.is_none())
+            .map(|name| {
+                let description = self.dirs.spec(&name).description;
+                (name, description)
+            })
+            .collect()
+    }
+}
+
+/// Drop every tool not in `allowed`, warning about names that match none;
+/// `None` keeps them all. Shared by the catalog and the subagent builder so
+/// an agent's `tools` list means the same in both.
+fn restrict_tools(tools: &mut ToolRegistry, allowed: &Option<Vec<String>>, agent: &str) {
+    let Some(allowed) = allowed else { return };
+    for unknown in allowed.iter().filter(|name| tools.get(name).is_none()) {
+        log::warn!("agent {agent}: no tool named {unknown}");
+    }
+    for tool in tools
+        .names()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+    {
+        if !allowed.contains(&tool) {
+            tools.remove(&tool);
+        }
+    }
+}
+
+/// Builds a named agent and runs it to completion as a subagent: the engine
+/// behind the `task` tool. It shares the provider and the permission rules
+/// with the panel, but has no one to prompt, so anything the rules and mode
+/// do not already allow is refused.
+struct Subagents {
+    provider: Arc<dyn Provider>,
+    dirs: AgentDirs,
+    cwd: PathBuf,
+    project_root: PathBuf,
+    rules: PermissionRules,
+    default_model: String,
+    context_window: u64,
+    max_tokens: u64,
+    reasoning: bool,
+    compaction: CompactionPolicy,
+}
+
+/// A runaway subagent is cut off after this many model calls.
+const SUBAGENT_MAX_TURNS: usize = 50;
+
+impl Subagents {
+    fn run(
+        &self,
+        name: &str,
+        prompt: &str,
+        cancel: &CancelToken,
+        on_update: &mut dyn FnMut(termide_agent_core::ToolUpdate),
+    ) -> Result<String, String> {
+        let definition = self.dirs.agent(name);
+        if definition.spec.acp.is_some() {
+            return Err(format!(
+                "{name} is an external agent and cannot be run as a subagent"
+            ));
+        }
+        let mut tools = builtin_tools();
+        restrict_tools(&mut tools, &definition.spec.tools, name);
+        let skills = self.dirs.skills();
+        if !skills.is_empty() {
+            tools.insert(Arc::new(SkillTool::new(skills.clone())));
+        }
+        let context_files = discover_context_files(&self.cwd, Some(&self.project_root), None);
+        let mut options = PromptOptions::new(&self.cwd, &tools, &context_files);
+        options.skills = &skills;
+        options.soul = definition.soul.as_deref();
+        let system_prompt = build_system_prompt(&options);
+
+        let model = ModelSpec {
+            provider: "agent".to_string(),
+            id: definition
+                .spec
+                .model
+                .clone()
+                .unwrap_or_else(|| self.default_model.clone()),
+            context_window: self.context_window,
+            max_tokens: self.max_tokens,
+            reasoning: self.reasoning,
+        };
+        let mut rules = self.rules.clone();
+        if let Some(mode) = definition.spec.mode {
+            rules.mode = mode;
+        }
+        let mut agent = Agent::new(Arc::clone(&self.provider), tools, model, self.cwd.clone())
+            .with_system_prompt(system_prompt)
+            .with_compaction(self.compaction);
+        let mut hooks = PermissionHooks::new(
+            rules,
+            Box::new(AutoDenyPrompter::new(
+                "a subagent cannot prompt; it may only do what the permission rules and mode already allow",
+            )),
+        );
+
+        // Mirror the sub-run's own progress up as it goes, and stop a run
+        // that will not stop itself. The parent's cancel aborts it too.
+        let budget = CancelToken::new();
+        let mut turns = 0usize;
+        let mut progress = String::new();
+        {
+            let budget = budget.clone();
+            let mut emit = |event: AgentEvent| {
+                match &event {
+                    AgentEvent::MessageStart => {
+                        turns += 1;
+                        if turns > SUBAGENT_MAX_TURNS {
+                            budget.cancel();
+                        }
+                    }
+                    AgentEvent::MessageEnd(Message::Assistant(message)) => {
+                        let text = message.plain_text();
+                        if !text.trim().is_empty() {
+                            if !progress.is_empty() {
+                                progress.push_str(
+                                    "
+
+",
+                                );
+                            }
+                            progress.push_str(text.trim());
+                            on_update(termide_agent_core::ToolUpdate::Output(progress.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+                if cancel.is_cancelled() {
+                    budget.cancel();
+                }
+            };
+            agent.run(UserMessage::text(prompt), &mut hooks, &budget, &mut emit);
+        }
+
+        let answer = agent
+            .messages()
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::Assistant(assistant) => {
+                    let text = assistant.plain_text();
+                    (!text.trim().is_empty()).then(|| text.trim().to_string())
+                }
+                _ => None,
+            });
+        match answer {
+            Some(text) if turns > SUBAGENT_MAX_TURNS => Ok(format!(
+                "{text}
+
+(subagent stopped after {SUBAGENT_MAX_TURNS} steps)"
+            )),
+            Some(text) => Ok(text),
+            None if cancel.is_cancelled() => Err("the subagent was stopped".into()),
+            None => Err("the subagent produced no answer".into()),
+        }
     }
 }
 
@@ -232,7 +413,21 @@ fn agent_setup(
             }),
     );
 
-    let catalog = FsCatalog::new(&cwd, project_root);
+    let mut catalog = FsCatalog::new(&cwd, project_root);
+    // The subagent runner shares the provider, the rules and the model
+    // defaults, so a delegated agent runs like the panel would run it.
+    catalog.subagents = Some(Arc::new(Subagents {
+        provider: Arc::clone(&provider) as Arc<dyn Provider>,
+        dirs: catalog.dirs.clone(),
+        cwd: cwd.clone(),
+        project_root: project_root.to_path_buf(),
+        rules: settings.permissions.clone(),
+        default_model: settings.model.clone(),
+        context_window: settings.context_window,
+        max_tokens: settings.max_tokens,
+        reasoning: settings.reasoning,
+        compaction: settings.compaction,
+    }));
     let compaction_prompts = catalog.dirs.compaction_prompts();
     let plan_prompt = catalog.dirs.plan_prompt();
     let hooks: Option<HooksFactory> = {

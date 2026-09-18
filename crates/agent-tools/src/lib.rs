@@ -14,6 +14,7 @@ mod bash;
 mod edit;
 mod read;
 mod skill;
+mod task;
 mod truncate;
 mod write;
 
@@ -25,6 +26,7 @@ pub use bash::BashTool;
 pub use edit::EditTool;
 pub use read::ReadTool;
 pub use skill::SkillTool;
+pub use task::{SubagentRun, TaskTool};
 pub use write::WriteTool;
 
 /// The default registry: `read`, `edit`, `write`, `bash`, in prompt order.

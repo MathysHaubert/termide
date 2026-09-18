@@ -73,7 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SOUL.md` and an `agent.toml` naming a description, a model, a mode and a
   subset of the tools, or an `[acp]` table that makes the agent an external
   program driven over the Agent Client Protocol — Claude Code, Codex or Gemini
-  CLI through their adapters — in the same panel. Skills in the agentskills.io
+  CLI through their adapters — in the same panel. When more than one agent is
+  defined, a `task` tool lets one hand a self-contained job to another, whose
+  own run stays out of the main conversation and reports back a final
+  answer. Skills in the agentskills.io
   shape (`skills/<name>/SKILL.md`, also `.agents/skills/`) are listed in the
   prompt and loaded on demand with a `skill` tool; prompt templates
   `prompts/<name>.md` are sent as `/name args` and completed from a list as

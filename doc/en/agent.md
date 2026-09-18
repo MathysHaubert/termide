@@ -272,6 +272,24 @@ and the session log records the switch, as it does for the **Model** chip.
 A reopened session comes back as the agent it last ran as, and a saved layout
 remembers it too.
 
+### Subagents
+
+When there is more than one agent, each built-in-loop agent gets a `task`
+tool that hands a self-contained job to another agent. The delegate runs its
+own loop to the end — its own prompt, its own tools, its own model — and its
+final answer comes back as the tool's result; the steps and the files it read
+along the way stay out of the main conversation. It is how a terse reviewer
+or a focused searcher does its work without filling the session, the way
+Claude Code's `Task` tool and OpenCode's sub-sessions do.
+
+The delegate does not see the conversation, so the calling agent must put
+everything into the prompt. It runs with no one to prompt, so it can only do
+what the permission rules and the current mode already allow: anything that
+would otherwise ask is refused with a reason it reads. External (`[acp]`)
+agents cannot be delegates, and a subagent gets no `task` tool of its own, so
+delegation does not nest. A run that will not stop is cut off after fifty
+model calls.
+
 ### External agents
 
 An agent may be another program altogether: put an `[acp]` table in its

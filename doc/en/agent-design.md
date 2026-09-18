@@ -51,6 +51,33 @@ survive) and the full output saved to a file whose path is returned. No sandbox
 in the first version; the tool takes its environment from `ToolContext`, so a
 sandbox can be added later as a separate module without changing the contract.
 
+## 3a. Subagents
+
+Claude Code: a `Task` tool spawns a subagent of a chosen type, with its own
+system prompt, tool allow-list and model; it runs in its own context and
+returns a final report, and several can run in parallel. OpenCode: a `task`
+tool starts a sub-session as a named agent. Codex, Gemini CLI and pi: none in
+the same shape (pi leans on its extension host).
+
+Decision: a `task` tool, present on every built-in-loop agent once a custom
+agent exists, that runs one of the other agents to completion and returns its
+final message. It reuses the whole machinery — the same agent definitions
+(`SOUL.md`, `agent.toml` tools/model/mode), the same prompt builder, the same
+permission rules — so a subagent is just an agent run without a panel. Built
+in the app (`Subagents` in `agent_panel.rs`), not in `agent-tools`: the tool
+there holds only a closure, so the tools crate stays free of the provider and
+the catalog. The subagent shares the provider and the rules but has no one to
+prompt, so its prompter is `AutoDenyPrompter` — anything the rules and mode do
+not already allow is refused with a reason, rather than blocking a user who is
+not watching the nested run; this is the deliberate limit that keeps a
+subagent from doing more than the parent could without asking. No nesting: the
+subagent build path adds no `task` tool, and external (ACP) agents are refused
+as delegates, since driving one headlessly has no permission surface. A
+runaway is cut after fifty model calls (the emit closure trips a budget
+token), and the parent's cancel aborts the sub-run. Not done yet: parallel
+delegation (the loop runs one tool at a time) and streaming the sub-run as a
+foldable sub-transcript rather than the plain text it reports.
+
 ## 4. Permissions
 
 | Agent | Model |
