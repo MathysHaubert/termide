@@ -410,6 +410,22 @@ pub trait Translation: Send + Sync {
     fn agent_no_sessions(&self) -> &str;
     /// Status message when the agent panel has no model configured
     fn agent_not_configured(&self) -> &str;
+    /// Agent panel: open the model picker
+    fn agent_change_model(&self) -> &str;
+    /// Agent panel: open the permission-mode picker
+    fn agent_change_mode(&self) -> &str;
+    /// Prompt asking for a model id by hand
+    fn agent_model_prompt(&self) -> &str;
+    /// Model picker: last entry, type an id instead
+    fn agent_model_other(&self) -> &str;
+    /// Status message while the model list is fetched
+    fn agent_models_loading(&self) -> &str;
+    /// Permission-mode picker: ask
+    fn agent_mode_ask(&self) -> &str;
+    /// Permission-mode picker: accept-edits
+    fn agent_mode_accept_edits(&self) -> &str;
+    /// Permission-mode picker: auto
+    fn agent_mode_auto(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 

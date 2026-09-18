@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 use termide_agent_core::{
-    AssistantContent, AssistantMessage, CancelToken, Message, Provider, Request, StopReason,
-    StreamEvent, ThinkingLevel,
+    AssistantContent, AssistantMessage, CancelToken, Message, ModelInfo, Provider, Request,
+    StopReason, StreamEvent, ThinkingLevel,
 };
 
 use crate::sse::Accumulator;
@@ -312,6 +312,29 @@ impl Provider for OpenAiCompatProvider {
         &self.name
     }
 
+    /// `GET /models`, which every OpenAI-compatible server answers with the
+    /// ids it serves. One attempt, no retries: a picker is interactive.
+    fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
+        let url = format!("{}/models", self.base_url);
+        let mut http = self.agent.get(&url).set("Accept", "application/json");
+        if let Some(key) = &self.api_key {
+            http = http.set("Authorization", &format!("Bearer {key}"));
+        }
+        let body = match http.call() {
+            Ok(response) => response
+                .into_string()
+                .map_err(|error| format!("cannot read the model list: {error}"))?,
+            Err(ureq::Error::Status(code, response)) => {
+                let text = response.into_string().unwrap_or_default();
+                return Err(format!("HTTP {code}: {}", error_text(&text)));
+            }
+            Err(ureq::Error::Transport(transport)) => {
+                return Err(format!("transport error: {transport}"));
+            }
+        };
+        parse_model_list(&body)
+    }
+
     fn stream(
         &self,
         request: &Request<'_>,
@@ -397,6 +420,39 @@ fn reasoning_effort(level: ThinkingLevel) -> Option<&'static str> {
         ThinkingLevel::Medium => Some("medium"),
         ThinkingLevel::High => Some("high"),
     }
+}
+
+/// Models from a `GET /models` body: OpenAI's `{"data": [{"id": …}]}`, or a
+/// bare array of objects or strings as some servers return. Sorted by id,
+/// duplicates dropped. `max_model_len` (vLLM, omlx) becomes the context
+/// window when present.
+fn parse_model_list(body: &str) -> Result<Vec<ModelInfo>, String> {
+    let value: Value =
+        serde_json::from_str(body).map_err(|error| format!("model list is not JSON: {error}"))?;
+    let items = value
+        .get("data")
+        .and_then(Value::as_array)
+        .or_else(|| value.as_array())
+        .ok_or_else(|| "model list has no `data` array".to_string())?;
+    let mut models: Vec<ModelInfo> = items
+        .iter()
+        .filter_map(|item| {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .or_else(|| item.as_str())?;
+            Some(ModelInfo {
+                id: id.to_string(),
+                context_window: item
+                    .get("max_model_len")
+                    .and_then(Value::as_u64)
+                    .filter(|len| *len > 0),
+            })
+        })
+        .collect();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    Ok(models)
 }
 
 /// Pull the human-readable message out of an error body when it is the usual
@@ -740,5 +796,47 @@ data: [DONE]\n";
         let message = provider.stream(&request, &mut |_| {}, &cancel);
         assert_eq!(message.stop_reason, StopReason::Aborted);
         assert_eq!(message.plain_text(), "partial");
+    }
+    #[test]
+    fn model_list_is_fetched_from_get_models() {
+        let (url, _bodies) = serve(vec![status(
+            200,
+            r#"{"object":"list","data":[{"id":"qwen","object":"model","max_model_len":32000},{"id":"llama"},{"id":"qwen"}]}"#,
+        )]);
+        let models = provider(&url).list_models().unwrap();
+        assert_eq!(
+            models,
+            vec![
+                ModelInfo {
+                    id: "llama".into(),
+                    context_window: None
+                },
+                ModelInfo {
+                    id: "qwen".into(),
+                    context_window: Some(32_000)
+                },
+            ]
+        );
+
+        let (url, _bodies) = serve(vec![status(
+            404,
+            r#"{"error":{"message":"no such route"}}"#,
+        )]);
+        let error = provider(&url).list_models().unwrap_err();
+        assert_eq!(error, "HTTP 404: no such route");
+    }
+
+    #[test]
+    fn model_list_accepts_bare_arrays_and_rejects_other_shapes() {
+        let ids: Vec<String> = parse_model_list(r#"[{"id":"b"},"a"]"#)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+        assert!(parse_model_list(r#"{"models": []}"#)
+            .unwrap_err()
+            .contains("no `data` array"));
+        assert!(parse_model_list("<html>").unwrap_err().contains("not JSON"));
     }
 }

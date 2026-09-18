@@ -11,7 +11,7 @@ mod transcript;
 
 use std::any::Any;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -20,8 +20,9 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision, Message,
-    ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules, PersistRule, Provider, Session,
-    SessionSummary, StreamEvent, ToolRegistry, ToolUpdate, UserMessage,
+    Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules,
+    PersistRule, Provider, Session, SessionSummary, StreamEvent, ToolRegistry, ToolUpdate,
+    UserMessage,
 };
 use termide_config::Config;
 use termide_core::{
@@ -52,6 +53,12 @@ const RENAME_ACTION: &str = "agent_rename";
 const NEW_SESSION_ACTION: &str = "agent_new_session";
 /// Context-menu action that opens the session picker.
 const RESUME_ACTION: &str = "agent_resume";
+/// Status chip and context-menu action that opens the model picker.
+const MODEL_ACTION: &str = "agent_model";
+/// Input action carrying a model id typed by hand.
+const MODEL_INPUT_ACTION: &str = "agent_model_input";
+/// Status chip and context-menu action that opens the permission-mode picker.
+const MODE_ACTION: &str = "agent_mode";
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -88,7 +95,17 @@ pub struct AgentPanel {
     session_choices: Vec<SessionSummary>,
     cwd: PathBuf,
     model: ModelSpec,
-    mode_label: &'static str,
+    /// The model from the configuration: the base every session's model is
+    /// built on, since the log records only an id and a context window.
+    configured_model: ModelSpec,
+    /// Live permission mode, shared with the hooks on the agent thread.
+    mode: ModeHandle,
+    /// Models offered by the last picker, in the order they were shown.
+    model_choices: Vec<ModelInfo>,
+    /// Background `list_models` call, polled from `tick()`.
+    model_fetch: Option<Receiver<Result<Vec<ModelInfo>, String>>>,
+    /// Events produced by a command handler, delivered on the next tick.
+    pending_events: Vec<PanelEvent>,
 
     // Kept to rebuild the agent when switching sessions.
     provider: Arc<dyn Provider>,
@@ -119,25 +136,19 @@ pub struct AgentPanel {
 impl AgentPanel {
     #[must_use]
     pub fn new(setup: AgentPanelSetup) -> Self {
-        let mode_label = match setup.rules.mode {
-            termide_agent_core::Mode::Ask => "ask",
-            termide_agent_core::Mode::AcceptEdits => "accept-edits",
-            termide_agent_core::Mode::Auto => "auto",
-        };
         let session = setup.session.or_else(|| {
-            let dir = setup.session_dir.as_ref()?;
-            match Session::create(dir, &setup.cwd) {
-                Ok(session) => Some(session),
-                Err(error) => {
-                    log::warn!("cannot start an agent session log: {error}");
-                    None
-                }
-            }
+            start_session(
+                setup.session_dir.as_deref(),
+                &setup.cwd,
+                setup.provider.name(),
+                &setup.model,
+            )
         });
-        let (runtime, permission_rx, transcript) = spawn_runtime(
+        let model = session_model(&setup.model, session.as_ref());
+        let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &setup.provider,
             &setup.tools,
-            &setup.model,
+            &model,
             &setup.cwd,
             &setup.system_prompt,
             setup.rules.clone(),
@@ -153,8 +164,12 @@ impl AgentPanel {
             session_dir: setup.session_dir,
             session_choices: Vec::new(),
             cwd: setup.cwd,
-            model: setup.model,
-            mode_label,
+            model,
+            configured_model: setup.model,
+            mode,
+            model_choices: Vec::new(),
+            model_fetch: None,
+            pending_events: Vec::new(),
             provider: setup.provider,
             tools: setup.tools,
             rules: setup.rules,
@@ -184,19 +199,18 @@ impl AgentPanel {
             return false;
         }
         let session = session.or_else(|| {
-            let dir = self.session_dir.as_ref()?;
-            match Session::create(dir, &self.cwd) {
-                Ok(session) => Some(session),
-                Err(error) => {
-                    log::warn!("cannot start an agent session log: {error}");
-                    None
-                }
-            }
+            start_session(
+                self.session_dir.as_deref(),
+                &self.cwd,
+                self.provider.name(),
+                &self.model,
+            )
         });
-        let (runtime, permission_rx, transcript) = spawn_runtime(
+        let model = session_model(&self.configured_model, session.as_ref());
+        let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &self.provider,
             &self.tools,
-            &self.model,
+            &model,
             &self.cwd,
             &self.system_prompt,
             self.rules.clone(),
@@ -210,6 +224,10 @@ impl AgentPanel {
         self.pending_permission = None;
         self.transcript = transcript;
         self.session = session;
+        self.model = model;
+        self.mode = mode;
+        self.model_choices.clear();
+        self.model_fetch = None;
         self.input = TextArea::new();
         self.top = 0;
         self.follow = true;
@@ -493,6 +511,145 @@ impl AgentPanel {
         true
     }
 
+    /// Offer the endpoint's models. The list is fetched off the UI thread
+    /// and the picker opens from `tick()` when it arrives; an endpoint that
+    /// cannot list models falls back to a typed id.
+    fn request_model_list(&mut self) -> Vec<PanelEvent> {
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        if self.model_fetch.is_some() {
+            return vec![];
+        }
+        let provider = Arc::clone(&self.provider);
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(provider.list_models());
+        });
+        self.model_fetch = Some(rx);
+        vec![PanelEvent::SetStatusMessage {
+            message: termide_i18n::t().agent_models_loading().to_string(),
+            is_error: false,
+        }]
+    }
+
+    fn model_picker(&mut self, result: Result<Vec<ModelInfo>, String>) -> PanelEvent {
+        let t = termide_i18n::t();
+        let mut models = match result {
+            Ok(models) => models,
+            Err(error) => {
+                self.notice(format!("model list unavailable: {error}"), NoticeKind::Info);
+                Vec::new()
+            }
+        };
+        if models.is_empty() {
+            return self.model_input();
+        }
+        if !models.iter().any(|m| m.id == self.model.id) {
+            models.insert(
+                0,
+                ModelInfo {
+                    id: self.model.id.clone(),
+                    context_window: None,
+                },
+            );
+        }
+        let mut options: Vec<String> = models
+            .iter()
+            .map(|m| format!("{}{}", current_mark(m.id == self.model.id), m.id))
+            .collect();
+        options.push(format!("  {}", t.agent_model_other()));
+        self.model_choices = models;
+        PanelEvent::ShowSelect {
+            title: t.agent_change_model().to_string(),
+            options,
+            on_select: SelectAction::Custom(MODEL_ACTION.to_string()),
+        }
+    }
+
+    fn model_input(&self) -> PanelEvent {
+        PanelEvent::ShowInput {
+            prompt: termide_i18n::t().agent_model_prompt().to_string(),
+            initial_value: self.model.id.clone(),
+            on_submit: InputAction::Custom(MODEL_INPUT_ACTION.to_string()),
+        }
+    }
+
+    fn mode_picker(&self) -> PanelEvent {
+        let t = termide_i18n::t();
+        let current = self.mode.get();
+        let options = Mode::ALL
+            .iter()
+            .map(|mode| {
+                let text = match mode {
+                    Mode::Ask => t.agent_mode_ask(),
+                    Mode::AcceptEdits => t.agent_mode_accept_edits(),
+                    Mode::Auto => t.agent_mode_auto(),
+                };
+                format!("{}{text}", current_mark(*mode == current))
+            })
+            .collect();
+        PanelEvent::ShowSelect {
+            title: t.agent_change_mode().to_string(),
+            options,
+            on_select: SelectAction::Custom(MODE_ACTION.to_string()),
+        }
+    }
+
+    /// Switch the permission mode. The handle is shared with the hooks, so
+    /// a run in flight sees the new mode at its next tool call.
+    fn set_mode(&mut self, mode: Mode) -> PanelEvent {
+        self.mode.set(mode);
+        self.rules.mode = mode;
+        PanelEvent::SetStatusMessage {
+            message: format!(
+                "{}: {}",
+                termide_i18n::t().agent_change_mode(),
+                mode.label()
+            ),
+            is_error: false,
+        }
+    }
+
+    /// Continue the session on another model of the same endpoint. The
+    /// context window follows the endpoint's figure when it gave one and
+    /// stays as configured otherwise; the token limit is always the
+    /// configured one. Refused while a run is in flight.
+    fn switch_model(&mut self, id: &str, context_window: Option<u64>) -> bool {
+        let id = id.trim();
+        if id.is_empty() {
+            return false;
+        }
+        if id == self.model.id {
+            return true;
+        }
+        let model = ModelSpec {
+            id: id.to_string(),
+            context_window: context_window.unwrap_or(self.model.context_window),
+            ..self.model.clone()
+        };
+        if let Err(error) = self.runtime.set_model(model.clone()) {
+            self.notice(
+                format!("cannot switch the model: {error}"),
+                NoticeKind::Warn,
+            );
+            return false;
+        }
+        self.model = model;
+        if let Some(session) = &mut self.session {
+            if let Err(error) = session.append_model_change(
+                self.provider.name(),
+                id,
+                Some(self.model.context_window),
+            ) {
+                log::warn!("agent session write failed: {error}");
+            }
+        }
+        self.notice(format!("model: {id}"), NoticeKind::Info);
+        true
+    }
+
     fn viewport_height(&self) -> usize {
         self.transcript_area.height as usize
     }
@@ -600,8 +757,53 @@ fn unicode_display_width(c: char) -> usize {
     }
 }
 
-/// Spawn an agent worker, returning it with its permission channel and a
-/// transcript mirroring `session`'s history.
+/// Picker prefix: `●` on the current entry, blank otherwise.
+fn current_mark(current: bool) -> &'static str {
+    if current {
+        "● "
+    } else {
+        "  "
+    }
+}
+
+/// Create a session log in `dir` and record the model it starts on, so a
+/// later resume comes back on the same model.
+fn start_session(
+    dir: Option<&std::path::Path>,
+    cwd: &std::path::Path,
+    provider: &str,
+    model: &ModelSpec,
+) -> Option<Session> {
+    let mut session = match Session::create(dir?, cwd) {
+        Ok(session) => session,
+        Err(error) => {
+            log::warn!("cannot start an agent session log: {error}");
+            return None;
+        }
+    };
+    if let Err(error) = session.append_model_change(provider, &model.id, Some(model.context_window))
+    {
+        log::warn!("agent session write failed: {error}");
+    }
+    Some(session)
+}
+
+/// The configured model with the id and context window `session` last ran
+/// on, when it recorded them: a resumed conversation continues on its own
+/// model.
+fn session_model(configured: &ModelSpec, session: Option<&Session>) -> ModelSpec {
+    match session.and_then(Session::current_model) {
+        Some(recorded) if !recorded.id.is_empty() => ModelSpec {
+            id: recorded.id,
+            context_window: recorded.context_window.unwrap_or(configured.context_window),
+            ..configured.clone()
+        },
+        _ => configured.clone(),
+    }
+}
+
+/// Spawn an agent worker, returning it with its permission channel, a
+/// transcript mirroring `session`'s history and the live mode handle.
 #[allow(clippy::too_many_arguments)]
 fn spawn_runtime(
     provider: &Arc<dyn Provider>,
@@ -613,10 +815,16 @@ fn spawn_runtime(
     compaction: CompactionPolicy,
     persist_rule: Option<PersistFn>,
     session: Option<&Session>,
-) -> (AgentRuntime, Receiver<PermissionEnvelope>, Transcript) {
+) -> (
+    AgentRuntime,
+    Receiver<PermissionEnvelope>,
+    Transcript,
+    ModeHandle,
+) {
     let cancel = CancelToken::new();
     let (prompter, permission_rx) = prompter::channel(cancel.clone());
     let mut hooks = PermissionHooks::new(rules, Box::new(prompter));
+    let mode = hooks.mode_handle();
     if let Some(persist) = persist_rule {
         hooks = hooks.with_persist(Box::new(persist) as PersistRule);
     }
@@ -638,7 +846,7 @@ fn spawn_runtime(
         agent = agent.with_messages(messages);
     }
     let runtime = AgentRuntime::spawn_with_cancel(agent, Box::new(hooks), cancel);
-    (runtime, permission_rx, transcript)
+    (runtime, permission_rx, transcript, mode)
 }
 
 /// Mirror a session's message into transcript items when a session is
@@ -709,6 +917,8 @@ impl Panel for AgentPanel {
             items.push((t.agent_new_session().to_string(), NEW_SESSION_ACTION));
             items.push((t.agent_resume().to_string(), RESUME_ACTION));
         }
+        items.push((t.agent_change_model().to_string(), MODEL_ACTION));
+        items.push((t.agent_change_mode().to_string(), MODE_ACTION));
         items
     }
 
@@ -760,6 +970,8 @@ impl Panel for AgentPanel {
                     on_select: SelectAction::Custom(RESUME_ACTION.to_string()),
                 }]
             }
+            MODEL_ACTION => self.request_model_list(),
+            MODE_ACTION => vec![self.mode_picker()],
             _ => vec![],
         }
     }
@@ -872,6 +1084,10 @@ impl Panel for AgentPanel {
                 let expand = !self.transcript.any_expanded();
                 self.transcript.set_all_expanded(expand);
             }
+            KeyCode::BackTab => {
+                let next = self.mode.get().next();
+                return vec![self.set_mode(next), PanelEvent::NeedsRedraw];
+            }
             KeyCode::PageUp => self.scroll_by(-page),
             KeyCode::PageDown => self.scroll_by(page),
             KeyCode::Home if ctrl => {
@@ -947,6 +1163,19 @@ impl Panel for AgentPanel {
             changed = true;
         }
         let mut events = self.poll_permissions();
+        events.append(&mut self.pending_events);
+        let fetched = self.model_fetch.as_ref().map(Receiver::try_recv);
+        match fetched {
+            Some(Ok(result)) => {
+                self.model_fetch = None;
+                events.push(self.model_picker(result));
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.model_fetch = None;
+                events.push(self.model_picker(Err("the request was dropped".to_string())));
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
+        }
         if changed || !events.is_empty() {
             events.push(PanelEvent::NeedsRedraw);
         }
@@ -961,6 +1190,31 @@ impl Panel for AgentPanel {
             }
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
+            }
+            PanelCommand::SelectionMade { action, index } if action == MODE_ACTION => {
+                if let Some(mode) = Mode::ALL.get(index).copied() {
+                    let event = self.set_mode(mode);
+                    self.pending_events.push(event);
+                }
+                CommandResult::Handled(true)
+            }
+            PanelCommand::SelectionMade { action, index } if action == MODEL_ACTION => {
+                let choice = self.model_choices.get(index).cloned();
+                self.model_choices.clear();
+                match choice {
+                    Some(model) => {
+                        self.switch_model(&model.id, model.context_window);
+                    }
+                    // The entry after the list: type an id instead.
+                    None => {
+                        let event = self.model_input();
+                        self.pending_events.push(event);
+                    }
+                }
+                CommandResult::Handled(true)
+            }
+            PanelCommand::InputSubmitted { action, text } if action == MODEL_INPUT_ACTION => {
+                CommandResult::Handled(self.switch_model(&text, None))
             }
             PanelCommand::SelectionMade { action, index } => {
                 CommandResult::Handled(self.answer_permission(&action, index))
@@ -986,11 +1240,11 @@ impl Panel for AgentPanel {
         let sep = || StatusSegment::new(" │ ", SegmentKind::Label);
         let mut segments = vec![
             StatusSegment::new(" ", SegmentKind::Label),
-            StatusSegment::new("Mode: ", SegmentKind::Label),
-            StatusSegment::new(self.mode_label, SegmentKind::Value),
+            StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
+            StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
             sep(),
-            StatusSegment::new("Model: ", SegmentKind::Label),
-            StatusSegment::new(self.model.id.clone(), SegmentKind::Value),
+            StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
+            StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
         ];
         if self.model.context_window > 0 && self.context_tokens > 0 {
             let percent = self.context_tokens * 100 / self.model.context_window;
@@ -1049,8 +1303,32 @@ mod tests {
     use termide_agent_core::{AssistantContent, AssistantMessage, Request, StopReason, Usage};
     use termide_core::PanelConfig;
 
-    /// Replays one scripted assistant message per model call.
-    struct Scripted(Mutex<Vec<AssistantMessage>>);
+    /// Replays one scripted assistant message per model call and records
+    /// which model each call asked for.
+    struct Scripted {
+        replies: Mutex<Vec<AssistantMessage>>,
+        models: Result<Vec<ModelInfo>, String>,
+        seen_models: Mutex<Vec<String>>,
+    }
+
+    impl Scripted {
+        fn new(replies: Vec<AssistantMessage>) -> Self {
+            Self {
+                replies: Mutex::new(replies),
+                models: Ok(vec![
+                    ModelInfo {
+                        id: "big".into(),
+                        context_window: Some(64_000),
+                    },
+                    ModelInfo {
+                        id: "m".into(),
+                        context_window: None,
+                    },
+                ]),
+                seen_models: Mutex::new(Vec::new()),
+            }
+        }
+    }
 
     impl Provider for Scripted {
         fn name(&self) -> &str {
@@ -1058,17 +1336,24 @@ mod tests {
         }
         fn stream(
             &self,
-            _request: &Request<'_>,
+            request: &Request<'_>,
             on_event: &mut dyn FnMut(StreamEvent),
             _cancel: &CancelToken,
         ) -> AssistantMessage {
-            let mut replies = self.0.lock().unwrap();
+            self.seen_models
+                .lock()
+                .unwrap()
+                .push(request.model.id.clone());
+            let mut replies = self.replies.lock().unwrap();
             if replies.is_empty() {
                 return AssistantMessage::failed("scripted", "m", StopReason::Error, "exhausted");
             }
             let reply = replies.remove(0);
             on_event(StreamEvent::TextDelta(reply.plain_text()));
             reply
+        }
+        fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
+            self.models.clone()
         }
     }
 
@@ -1094,9 +1379,13 @@ mod tests {
     }
 
     fn setup(replies: Vec<AssistantMessage>) -> AgentPanelSetup {
+        setup_with(Arc::new(Scripted::new(replies)))
+    }
+
+    fn setup_with(provider: Arc<Scripted>) -> AgentPanelSetup {
         AgentPanelSetup {
             cwd: PathBuf::from("/tmp"),
-            provider: Arc::new(Scripted(Mutex::new(replies))),
+            provider,
             model: ModelSpec {
                 provider: "scripted".into(),
                 id: "m".into(),
@@ -1138,6 +1427,42 @@ mod tests {
             assert!(Instant::now() < deadline, "agent did not finish");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Tick until an event matching `wanted` arrives, returning it.
+    fn wait_for(panel: &mut AgentPanel, wanted: fn(&PanelEvent) -> bool) -> PanelEvent {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(event) = panel.tick().into_iter().find(&wanted) {
+                return event;
+            }
+            assert!(Instant::now() < deadline, "event did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Text of the bold chip that carries `action`.
+    fn chip(panel: &AgentPanel, action: &str) -> String {
+        panel
+            .status_segments()
+            .into_iter()
+            .find(|s| s.action == Some(action) && s.kind == SegmentKind::Active)
+            .map(|s| s.text)
+            .expect("chip present")
+    }
+
+    fn select(panel: &mut AgentPanel, event: &PanelEvent, index: usize) -> CommandResult {
+        let PanelEvent::ShowSelect {
+            on_select: SelectAction::Custom(action),
+            ..
+        } = event
+        else {
+            panic!("expected a picker, got {event:?}");
+        };
+        panel.handle_command(PanelCommand::SelectionMade {
+            action: action.clone(),
+            index,
+        })
     }
 
     fn render_text(panel: &mut AgentPanel, width: u16, height: u16) -> Vec<String> {
@@ -1291,7 +1616,13 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["Rename session", "New session", "Open session"]
+            vec![
+                "Rename session",
+                "New session",
+                "Open session",
+                "Change model…",
+                "Permission mode"
+            ]
         );
         panel.handle_status_action(NEW_SESSION_ACTION);
         assert!(panel.transcript().items().is_empty());
@@ -1415,5 +1746,153 @@ mod tests {
         let result = panel.handle_command(PanelCommand::SelectionMade { action, index: 1 });
         assert!(matches!(result, CommandResult::Handled(true)));
         assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
+    }
+    #[test]
+    fn mode_switches_from_the_chip_and_with_shift_tab() {
+        let mut panel = panel(vec![]);
+        let hooks_mode = panel.mode.clone();
+        assert_eq!(chip(&panel, MODE_ACTION), "ask");
+
+        // Shift+Tab cycles and reports the new mode in the status line.
+        let events = panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            PanelEvent::SetStatusMessage { message, .. } if message.ends_with("accept-edits")
+        )));
+        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
+        assert_eq!(hooks_mode.get(), Mode::AcceptEdits);
+
+        // The chip opens a picker with the current mode marked.
+        let events = panel.handle_status_action(MODE_ACTION);
+        let picker = events.first().expect("picker");
+        let PanelEvent::ShowSelect { options, .. } = picker else {
+            panic!("expected a picker, got {picker:?}");
+        };
+        assert_eq!(options.len(), 3);
+        assert!(options[1].starts_with("● accept-edits"), "{:?}", options[1]);
+        assert!(matches!(
+            select(&mut panel, picker, 2),
+            CommandResult::Handled(true)
+        ));
+        assert_eq!(chip(&panel, MODE_ACTION), "auto");
+        assert_eq!(hooks_mode.get(), Mode::Auto);
+        let events = panel.tick();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            PanelEvent::SetStatusMessage { message, .. } if message.ends_with("auto")
+        )));
+
+        // Cycling wraps, and a rebuilt agent starts in the chosen mode.
+        panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(chip(&panel, MODE_ACTION), "ask");
+        panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        panel.switch_session(None);
+        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
+        assert_eq!(panel.mode.get(), Mode::AcceptEdits);
+    }
+
+    #[test]
+    fn model_switches_are_recorded_and_followed_on_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(Scripted::new(vec![reply("one"), reply("two")]));
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup_with(Arc::clone(&provider))
+        });
+        let first_path = panel.session_path().unwrap().to_path_buf();
+        // A fresh session records the model it starts on.
+        assert_eq!(
+            Session::open(&first_path).unwrap().current_model(),
+            Some(termide_agent_core::SessionModel {
+                provider: "scripted".into(),
+                id: "m".into(),
+                context_window: Some(1000),
+            })
+        );
+        assert_eq!(chip(&panel, MODEL_ACTION), "m");
+
+        // The chip fetches the list off-thread; the picker marks the current
+        // model and ends with the typed-id entry.
+        let events = panel.handle_status_action(MODEL_ACTION);
+        assert!(matches!(
+            events.first(),
+            Some(PanelEvent::SetStatusMessage { .. })
+        ));
+        let picker = wait_for(&mut panel, |e| matches!(e, PanelEvent::ShowSelect { .. }));
+        let PanelEvent::ShowSelect { options, .. } = &picker else {
+            unreachable!()
+        };
+        assert_eq!(options, &["  big", "● m", "  Enter a model id…"]);
+        select(&mut panel, &picker, 0);
+        assert_eq!(chip(&panel, MODEL_ACTION), "big");
+        // The endpoint's context window comes along with the id.
+        assert_eq!(panel.model.context_window, 64_000);
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice { text, .. } if text == "model: big")));
+
+        // The next run goes to the new model.
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(
+            *provider.seen_models.lock().unwrap(),
+            vec!["big".to_string()]
+        );
+
+        // A new session starts on the current model; the last picker entry
+        // asks for an id by hand.
+        panel.handle_status_action(NEW_SESSION_ACTION);
+        assert_eq!(chip(&panel, MODEL_ACTION), "big");
+        panel.handle_status_action(MODEL_ACTION);
+        let picker = wait_for(&mut panel, |e| matches!(e, PanelEvent::ShowSelect { .. }));
+        select(&mut panel, &picker, 2);
+        let input = wait_for(&mut panel, |e| matches!(e, PanelEvent::ShowInput { .. }));
+        let PanelEvent::ShowInput {
+            initial_value,
+            on_submit: InputAction::Custom(action),
+            ..
+        } = input
+        else {
+            panic!("expected an input prompt, got {input:?}");
+        };
+        assert_eq!(initial_value, "big");
+        panel.handle_command(PanelCommand::InputSubmitted {
+            action,
+            text: " typed ".to_string(),
+        });
+        assert_eq!(chip(&panel, MODEL_ACTION), "typed");
+        // A typed id keeps the window of the model it replaced.
+        assert_eq!(panel.model.context_window, 64_000);
+
+        // Reopening the first session returns to the model it last used.
+        panel.session_choices = panel.session_list();
+        let index = panel
+            .session_choices
+            .iter()
+            .position(|s| s.path == first_path)
+            .unwrap();
+        panel.resume_choice(index);
+        assert_eq!(chip(&panel, MODEL_ACTION), "big");
+        // The window comes back from the log too.
+        assert_eq!(panel.model.context_window, 64_000);
+    }
+
+    #[test]
+    fn model_picker_falls_back_to_a_typed_id() {
+        let mut provider = Scripted::new(vec![]);
+        provider.models = Err("HTTP 404: no such route".into());
+        let mut panel = AgentPanel::new(setup_with(Arc::new(provider)));
+        panel.handle_status_action(MODEL_ACTION);
+        let input = wait_for(&mut panel, |e| matches!(e, PanelEvent::ShowInput { .. }));
+        assert!(
+            matches!(input, PanelEvent::ShowInput { initial_value, .. } if initial_value == "m")
+        );
+        assert!(panel.transcript().items().iter().any(|item| matches!(
+            item,
+            Item::Notice { text, .. } if text.contains("HTTP 404")
+        )));
     }
 }

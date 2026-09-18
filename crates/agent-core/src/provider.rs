@@ -38,6 +38,16 @@ pub struct ModelSpec {
     pub reasoning: bool,
 }
 
+/// One entry of a provider's model list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfo {
+    /// Model id as the provider expects it.
+    pub id: String,
+    /// Context window in tokens when the endpoint reports it (vLLM and omlx
+    /// do as `max_model_len`; Ollama and llama.cpp do not).
+    pub context_window: Option<u64>,
+}
+
 /// Tool description in the shape model APIs expect: name, description and a
 /// JSON Schema for the arguments.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,4 +114,11 @@ pub trait Provider: Send + Sync {
         on_event: &mut dyn FnMut(StreamEvent),
         cancel: &CancelToken,
     ) -> AssistantMessage;
+
+    /// The models the endpoint serves, for a picker. Blocking; call it off
+    /// the UI thread. The default says the provider cannot enumerate them,
+    /// and callers fall back to a typed id.
+    fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
+        Err("this provider cannot list its models".to_string())
+    }
 }

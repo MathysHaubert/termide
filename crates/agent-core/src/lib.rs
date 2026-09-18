@@ -42,10 +42,10 @@ pub use message::{
     ToolResultContent, ToolResultMessage, Usage, UserContent, UserMessage,
 };
 pub use permissions::{
-    Decision, Mode, PermissionAnswer, PermissionHooks, PermissionPrompter, PermissionRequest,
-    PermissionRules, PersistRule,
+    Decision, Mode, ModeHandle, PermissionAnswer, PermissionHooks, PermissionPrompter,
+    PermissionRequest, PermissionRules, PersistRule,
 };
-pub use provider::{ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
+pub use provider::{ModelInfo, ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
 pub use runtime::{AgentRuntime, PromptError};
-pub use session::{Entry, EntryKind, Session, SessionHeader, SessionSummary};
+pub use session::{Entry, EntryKind, Session, SessionHeader, SessionModel, SessionSummary};
 pub use tool::{Tool, ToolContext, ToolRegistry, ToolUpdate};

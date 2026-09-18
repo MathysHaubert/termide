@@ -16,6 +16,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 use crate::agent::{Hooks, ToolDecision};
 use crate::message::ToolCall;
@@ -32,6 +34,63 @@ pub enum Mode {
     AcceptEdits,
     /// Allow everything; for containers and unattended runs.
     Auto,
+}
+
+impl Mode {
+    /// Every mode, in the order the UI cycles through them.
+    pub const ALL: [Mode; 3] = [Mode::Ask, Mode::AcceptEdits, Mode::Auto];
+
+    /// The kebab-case spelling used in configuration and the status bar.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Ask => "ask",
+            Mode::AcceptEdits => "accept-edits",
+            Mode::Auto => "auto",
+        }
+    }
+
+    /// The mode after this one, wrapping from `auto` back to `ask`.
+    #[must_use]
+    pub fn next(self) -> Mode {
+        match self {
+            Mode::Ask => Mode::AcceptEdits,
+            Mode::AcceptEdits => Mode::Auto,
+            Mode::Auto => Mode::Ask,
+        }
+    }
+}
+
+/// The permission mode shared between the UI and the agent thread.
+///
+/// Like [`crate::CancelToken`], a cloneable atomic: the panel flips it and
+/// the hooks read it on the next tool call, so a switch made during a run
+/// applies to that run without a channel round-trip.
+#[derive(Debug, Clone)]
+pub struct ModeHandle {
+    mode: Arc<AtomicU8>,
+}
+
+impl ModeHandle {
+    #[must_use]
+    pub fn new(mode: Mode) -> Self {
+        let handle = Self {
+            mode: Arc::new(AtomicU8::new(0)),
+        };
+        handle.set(mode);
+        handle
+    }
+
+    #[must_use]
+    pub fn get(&self) -> Mode {
+        let index = self.mode.load(Ordering::Acquire) as usize;
+        Mode::ALL.get(index).copied().unwrap_or_default()
+    }
+
+    pub fn set(&self, mode: Mode) {
+        let index = Mode::ALL.iter().position(|m| *m == mode).unwrap_or(0);
+        self.mode.store(index as u8, Ordering::Release);
+    }
 }
 
 /// Ordered from most to least permissive so `max` yields the strictest.
@@ -142,6 +201,8 @@ pub type PersistRule = Box<dyn FnMut(&str, &str, Decision) + Send>;
 pub struct PermissionHooks {
     rules: PermissionRules,
     session: PermissionRules,
+    /// The live mode; `rules.mode` is only its initial value.
+    mode: ModeHandle,
     prompter: Box<dyn PermissionPrompter>,
     persist: Option<PersistRule>,
 }
@@ -150,6 +211,7 @@ impl PermissionHooks {
     #[must_use]
     pub fn new(rules: PermissionRules, prompter: Box<dyn PermissionPrompter>) -> Self {
         Self {
+            mode: ModeHandle::new(rules.mode),
             rules,
             session: PermissionRules::default(),
             prompter,
@@ -163,13 +225,27 @@ impl PermissionHooks {
         self
     }
 
+    /// The configured rules plus any "allow always" grants. The mode in
+    /// them is the starting one; [`PermissionHooks::mode`] is the live one.
     #[must_use]
     pub fn rules(&self) -> &PermissionRules {
         &self.rules
     }
 
-    pub fn set_mode(&mut self, mode: Mode) {
-        self.rules.mode = mode;
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.mode.get()
+    }
+
+    pub fn set_mode(&self, mode: Mode) {
+        self.mode.set(mode);
+    }
+
+    /// A handle the UI keeps to switch the mode while the hooks run on the
+    /// agent thread.
+    #[must_use]
+    pub fn mode_handle(&self) -> ModeHandle {
+        self.mode.clone()
     }
 
     /// The verdict before any prompt: rules, then session grants, then the
@@ -184,7 +260,7 @@ impl PermissionHooks {
                 .chain(self.session.evaluate(&call.name, text))
                 .max()
         };
-        let mode = self.rules.mode;
+        let mode = self.mode.get();
 
         if call.name == "bash" {
             let parsed = split_shell(&subject);
@@ -806,5 +882,42 @@ mod tests {
             subject_of(&call("mcp_tool", json!({ "query": "q" })), &ctx()),
             "q"
         );
+    }
+    #[test]
+    fn mode_handle_switches_the_live_mode() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let mut hooks = PermissionHooks::new(
+            PermissionRules::default(),
+            Box::new(Scripted {
+                answers: vec![],
+                asked: asked.clone(),
+            }),
+        );
+        let handle = hooks.mode_handle();
+        assert_eq!(handle.get(), Mode::Ask);
+        assert_eq!(
+            hooks.decide(&call("write", json!({ "path": "a" })), &ctx()),
+            Decision::Ask
+        );
+
+        handle.set(Mode::AcceptEdits);
+        assert_eq!(hooks.mode(), Mode::AcceptEdits);
+        assert_eq!(
+            hooks.decide(&call("write", json!({ "path": "a" })), &ctx()),
+            Decision::Allow
+        );
+        assert_eq!(hooks.decide(&bash("cargo build"), &ctx()), Decision::Ask);
+
+        handle.set(Mode::Auto);
+        assert_eq!(hooks.decide(&bash("cargo build"), &ctx()), Decision::Allow);
+        assert_eq!(
+            hooks.before_tool_call(&bash("cargo build"), &ctx()),
+            ToolDecision::Allow
+        );
+        assert!(asked.lock().unwrap().is_empty());
+
+        assert_eq!(Mode::Ask.next(), Mode::AcceptEdits);
+        assert_eq!(Mode::Auto.next(), Mode::Ask);
+        assert_eq!(Mode::AcceptEdits.label(), "accept-edits");
     }
 }

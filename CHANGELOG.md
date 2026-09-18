@@ -51,7 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session by itself when it approaches the model's context window. Every
   session is logged as JSON Lines beside the project's saved layout, and the
   panel's `[≡]` menu starts a new one, renames the current one or reopens an
-  earlier one. The panel is titled by that name, or by your first request. See
+  earlier one. The panel is titled by that name, or by your first request.
+
+  The **Mode** and **Model** status chips are buttons: the first switches the
+  permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
+  the change reaches a task already running at its next tool call; the second
+  lists the models the endpoint serves, or takes an id typed by hand when it
+  cannot, and the session remembers the model it was on when reopened. See
   [`doc/en/agent.md`](doc/en/agent.md).
 
 ## [0.35.0] - 2026-09-13

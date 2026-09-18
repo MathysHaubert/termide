@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use crate::agent::{Agent, AgentEvent, Hooks, QueueHandle};
 use crate::cancel::CancelToken;
 use crate::message::UserMessage;
+use crate::provider::ModelSpec;
 
 /// Why a prompt was not accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,7 @@ impl std::error::Error for PromptError {}
 
 enum WorkerCommand {
     Prompt(UserMessage),
+    SetModel(ModelSpec),
     Shutdown,
 }
 
@@ -84,6 +86,7 @@ impl AgentRuntime {
                             });
                             worker_busy.store(false, Ordering::Release);
                         }
+                        WorkerCommand::SetModel(model) => agent.set_model(model),
                         WorkerCommand::Shutdown => break,
                     }
                 }
@@ -121,6 +124,21 @@ impl AgentRuntime {
                 self.busy.store(false, Ordering::Release);
                 PromptError::Stopped
             })
+    }
+
+    /// Switch the model for the runs that follow. Refused while a run is
+    /// active: the worker reads commands only between runs, so the change
+    /// would otherwise land silently after the current one.
+    pub fn set_model(&self, model: ModelSpec) -> Result<(), PromptError> {
+        if self.worker.is_none() {
+            return Err(PromptError::Stopped);
+        }
+        if self.is_busy() {
+            return Err(PromptError::Busy);
+        }
+        self.commands
+            .send(WorkerCommand::SetModel(model))
+            .map_err(|_| PromptError::Stopped)
     }
 
     /// Queue a message for the next turn boundary of the active run.
@@ -356,5 +374,34 @@ mod tests {
             e,
             AgentEvent::MessageEnd(crate::Message::Assistant(a)) if a.stop_reason == StopReason::Stop
         )));
+    }
+    #[test]
+    fn set_model_applies_between_runs_and_is_refused_during_one() {
+        let (release, gate) = mpsc::channel::<()>();
+        let provider = Arc::new(GatedProvider {
+            gate: Mutex::new(Some(gate)),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        });
+        let agent = Agent::new(
+            provider,
+            ToolRegistry::new(),
+            model(),
+            PathBuf::from("/tmp"),
+        );
+        let runtime = AgentRuntime::spawn(agent, Box::new(NoHooks));
+        let other = ModelSpec {
+            id: "other".into(),
+            ..model()
+        };
+
+        runtime.prompt(UserMessage::text("first")).unwrap();
+        assert_eq!(runtime.set_model(other.clone()), Err(PromptError::Busy));
+        release.send(()).unwrap();
+        wait_for_end(&runtime);
+        wait_until_idle(&runtime);
+
+        runtime.set_model(other.clone()).unwrap();
+        let agent = runtime.shutdown().expect("worker returns the agent");
+        assert_eq!(agent.model(), &other);
     }
 }

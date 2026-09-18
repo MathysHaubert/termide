@@ -47,6 +47,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
+| `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
@@ -57,6 +58,23 @@ scroll back to the bottom.
 
 The status chips show the permission mode, the model, how much of the context
 window is used, whether the agent is working and how many messages are queued.
+The first two are buttons, and the same two entries sit in the `[≡]` menu.
+
+**Model** asks the endpoint for the models it serves and lists them, the
+current one marked `●`; the last entry lets you type an id instead, which is
+also what you get when the endpoint cannot list its models. The switch takes
+effect on your next request and stays with the session: it is written to the
+session log, so reopening that session brings its model back, and a new
+session starts on whatever model the panel is on. When the endpoint reports
+a model's context window (vLLM and omlx do), the panel adopts it; otherwise
+the window and the token limit stay as configured. Switching waits for the
+current task, like switching sessions.
+
+**Mode** offers the three permission modes described below. `Shift+Tab` cycles
+through them without the picker. A change applies at the agent's next tool
+call, so you can loosen the mode while a long task is running instead of
+answering the same prompt again and again. Neither switch touches the
+configuration file; the panel starts from `[agent]` again the next time.
 
 ## Tools
 
@@ -108,7 +126,9 @@ per part: `cargo build && rm -rf target` needs both halves allowed, and a deny
 on either half stops the whole command. Command substitution (`$(…)`, backticks)
 is never allowed automatically.
 
-The mode decides what happens to anything no rule covers:
+The mode decides what happens to anything no rule covers. `mode` in the
+configuration is the starting point; the panel's **Mode** chip and `Shift+Tab`
+change it for the current panel.
 
 - **ask** (the default) asks before every change and every command.
 - **accept-edits** also lets the agent edit and create files inside the project
@@ -133,9 +153,11 @@ Files over 32 KiB are skipped.
 
 Every session is written to a log in JSON Lines, one file per session, in an
 `agent` folder beside the project's saved layout under the TermIDE data
-directory. When a session approaches the model's context window, the agent
-replaces the older part with a summary it writes itself and keeps the recent
-messages verbatim; the panel says when this happens.
+directory. The log records the model the session started on and every switch,
+so a reopened session continues on the model it last used. When a session
+approaches the model's context window, the agent replaces the older part with
+a summary it writes itself and keeps the recent messages verbatim; the panel
+says when this happens.
 
 The agent panel is not restored when TermIDE reopens a saved layout. Reopen it
 with `Alt+A` and pick the session you were in from **Open session**.

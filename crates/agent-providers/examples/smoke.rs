@@ -66,7 +66,7 @@ fn main() {
     let session_dir = std::env::temp_dir().join("termide-agent-smoke");
     let mut session = Session::create(&session_dir, &cwd).expect("create session");
     session
-        .append_model_change("local", &model.id)
+        .append_model_change("local", &model.id, Some(model.context_window))
         .expect("record model");
     let mut agent = Agent::new(provider, tools, model, cwd)
         .with_system_prompt(system_prompt)

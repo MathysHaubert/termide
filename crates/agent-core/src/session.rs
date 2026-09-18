@@ -41,9 +41,14 @@ pub enum EntryKind {
     Message {
         message: Message,
     },
+    /// The model the branch runs on from here. The context window is the
+    /// figure the panel knew at the time (configured or reported by the
+    /// endpoint), so a resume needs nothing but the log.
     ModelChange {
         provider: String,
         model: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
     },
     /// The `keep_last` messages before this entry stay verbatim; everything
     /// earlier on the branch is replaced by `summary`.
@@ -57,6 +62,14 @@ pub enum EntryKind {
     SessionName {
         name: String,
     },
+}
+
+/// The model a session last recorded, see [`Session::current_model`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionModel {
+    pub provider: String,
+    pub id: String,
+    pub context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -219,10 +232,16 @@ impl Session {
         })
     }
 
-    pub fn append_model_change(&mut self, provider: &str, model: &str) -> std::io::Result<String> {
+    pub fn append_model_change(
+        &mut self,
+        provider: &str,
+        model: &str,
+        context_window: Option<u64>,
+    ) -> std::io::Result<String> {
         self.append(EntryKind::ModelChange {
             provider: provider.to_string(),
             model: model.to_string(),
+            context_window,
         })
     }
 
@@ -314,16 +333,22 @@ impl Session {
         })
     }
 
-    /// Model recorded last on the current branch, `(provider, model)`.
+    /// Model recorded last on the current branch.
     #[must_use]
-    pub fn current_model(&self) -> Option<(String, String)> {
+    pub fn current_model(&self) -> Option<SessionModel> {
         self.branch()
             .into_iter()
             .rev()
             .find_map(|entry| match &entry.kind {
-                EntryKind::ModelChange { provider, model } => {
-                    Some((provider.clone(), model.clone()))
-                }
+                EntryKind::ModelChange {
+                    provider,
+                    model,
+                    context_window,
+                } => Some(SessionModel {
+                    provider: provider.clone(),
+                    id: model.clone(),
+                    context_window: *context_window,
+                }),
                 EntryKind::Message { .. }
                 | EntryKind::Compaction { .. }
                 | EntryKind::SessionName { .. } => None,
@@ -439,7 +464,9 @@ mod tests {
     fn create_append_reopen_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let mut session = Session::create(dir.path(), Path::new("/work")).unwrap();
-        session.append_model_change("local", "qwen").unwrap();
+        session
+            .append_model_change("local", "qwen", Some(32_000))
+            .unwrap();
         session
             .append_message(&Message::User(UserMessage::text("hi")))
             .unwrap();
@@ -454,7 +481,11 @@ mod tests {
         assert_eq!(reopened.leaf_id(), session.leaf_id());
         assert_eq!(
             reopened.current_model(),
-            Some(("local".into(), "qwen".into()))
+            Some(SessionModel {
+                provider: "local".into(),
+                id: "qwen".into(),
+                context_window: Some(32_000),
+            })
         );
         let messages = reopened.context_messages();
         assert_eq!(messages.len(), 2);

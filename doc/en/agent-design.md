@@ -214,6 +214,34 @@ draining the old worker, and it never leaves a half-finished turn in a log.
 Session logs live in `<data>/sessions/<project>/agent/`, beside the
 project's saved layout, rather than in a directory of their own.
 
+Switching model and mode at runtime:
+
+| Agent | Model | Permission mode |
+|---|---|---|
+| Claude Code | `/model` picker over a fixed list plus a typed id | `Shift+Tab` cycles default → accept-edits → plan; not persisted |
+| Codex CLI | `/model` picker | `/approvals` picker |
+| pi | `/model` picker over its registry, `Ctrl+P` cycles | none (no modes) |
+| OpenCode | `Ctrl+X M` list from models.dev | `Tab` toggles the build/plan agents |
+| Aider | `/model <id>` typed | none |
+
+Decisions: the two status chips are buttons, mirrored in the `[≡]` menu, and
+`Shift+Tab` cycles the mode as in Claude Code. The model list comes from the
+endpoint's own `GET /models` (every OpenAI-compatible server answers it),
+fetched on a helper thread and shown when it arrives, with a typed-id entry
+last and as the whole picker when the endpoint cannot list; a config-side
+model list would be a second place to keep in sync with the server. vLLM and
+omlx put `max_model_len` on each entry, and the panel takes it as the context
+window of the model it switches to, since the configured figure belongs to
+the configured model. The mode
+is a `ModeHandle` — an atomic shared with the hooks on the agent thread, the
+way `CancelToken` is — so a switch applies to the next tool call of a run in
+flight; the model goes to the worker as a `SetModel` command and is refused
+while a run is active, since the worker reads commands only between runs. A
+switch is recorded as a `model_change` entry in the session log and a new
+session records its starting model, so resume continues on the session's model
+(pi's behaviour) rather than the config's. Neither switch is written to the
+config: the chips are per-panel state, as Claude Code's `Shift+Tab` is.
+
 Not persisted in a termide layout session: rebuilding the panel needs the
 config, which the session-restore constructor does not have. Reopening with
 `Alt+A` starts a fresh session; the JSONL log of the old one is kept.
