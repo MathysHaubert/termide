@@ -19,10 +19,11 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
-    civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision,
-    LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks,
-    PermissionRules, PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent,
-    Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, ChainedHooks, CompactionPolicy,
+    Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
+    PermissionHooks, PermissionRules, PersistRule, PromptTemplate, Provider, Session,
+    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
+    DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
@@ -78,6 +79,9 @@ pub struct AgentPanelSetup {
     pub catalog: Arc<dyn AgentCatalog>,
     /// Tools that arrive after the start (MCP servers connecting).
     pub late_tools: Option<Receiver<LateTools>>,
+    /// Builds the hooks that run before the permission rules (command hooks);
+    /// a factory, since every session switch spawns a fresh agent.
+    pub hooks: Option<HooksFactory>,
     pub provider: Arc<dyn Provider>,
     pub model: ModelSpec,
     pub tools: ToolRegistry,
@@ -96,6 +100,9 @@ pub struct AgentPanelSetup {
 
 /// Records an "allow always" rule outside the panel (in the project config).
 pub type PersistFn = fn(&str, &str, Decision);
+
+/// Makes the extra hooks of one agent (command hooks from `hooks.toml`).
+pub type HooksFactory = Arc<dyn Fn() -> Box<dyn Hooks> + Send + Sync>;
 
 /// One agent the picker offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +167,7 @@ pub struct AgentPanel {
     pending_events: Vec<PanelEvent>,
 
     // Kept to rebuild the agent when switching sessions.
+    hooks: Option<HooksFactory>,
     provider: Arc<dyn Provider>,
     tools: ToolRegistry,
     rules: PermissionRules,
@@ -221,6 +229,7 @@ impl AgentPanel {
             setup.rules.clone(),
             setup.compaction,
             setup.persist_rule,
+            setup.hooks.as_ref(),
             session.as_ref(),
         );
         Self {
@@ -243,6 +252,7 @@ impl AgentPanel {
             model_choices: Vec::new(),
             model_fetch: None,
             pending_events: Vec::new(),
+            hooks: setup.hooks,
             provider: setup.provider,
             tools,
             rules: setup.rules,
@@ -304,6 +314,7 @@ impl AgentPanel {
             self.rules.clone(),
             self.compaction,
             self.persist_rule,
+            self.hooks.as_ref(),
             session.as_ref(),
         );
         // Dropping the old runtime cancels it and asks its worker to stop.
@@ -1171,6 +1182,7 @@ fn spawn_runtime(
     rules: PermissionRules,
     compaction: CompactionPolicy,
     persist_rule: Option<PersistFn>,
+    extra_hooks: Option<&HooksFactory>,
     session: Option<&Session>,
 ) -> (
     AgentRuntime,
@@ -1202,7 +1214,13 @@ fn spawn_runtime(
         }
         agent = agent.with_messages(messages);
     }
-    let runtime = AgentRuntime::spawn_with_cancel(agent, Box::new(hooks), cancel);
+    // Command hooks run first: one may block or approve before anyone is
+    // asked, and its rewritten arguments are what the rules then judge.
+    let hooks: Box<dyn Hooks> = match extra_hooks {
+        Some(factory) => Box::new(ChainedHooks::new(vec![factory(), Box::new(hooks)])),
+        None => Box::new(hooks),
+    };
+    let runtime = AgentRuntime::spawn_with_cancel(agent, hooks, cancel);
     (runtime, permission_rx, transcript, mode)
 }
 
@@ -1834,6 +1852,7 @@ mod tests {
             agent: "default".into(),
             catalog: Arc::new(Agents),
             late_tools: None,
+            hooks: None,
             provider,
             model: ModelSpec {
                 provider: "scripted".into(),

@@ -1,0 +1,72 @@
+//! Configuration of command hooks, `ai/hooks.toml`: one table per hook.
+//!
+//! The shape is data the agent directories carry; the runner that starts
+//! the programs is the `termide-agent-hooks` crate.
+//!
+//! ```toml
+//! [no-force-push]
+//! event = "before_tool_call"
+//! tools = ["bash"]
+//! command = "scripts/guard.sh"
+//! ```
+
+use serde::{Deserialize, Serialize};
+
+/// The file, at any level of the `ai` directory.
+pub const HOOKS_FILE: &str = "hooks.toml";
+
+/// Where in the loop a hook runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    /// Before a tool runs; may block it, rewrite its arguments or approve
+    /// it in place of the permission prompt.
+    BeforeToolCall,
+    /// After a tool ran; may rewrite its result.
+    AfterToolCall,
+}
+
+/// One external program run on an event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookConfig {
+    pub event: HookEvent,
+    /// Program to run, with the working directory of the panel.
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Tool names the hook applies to (`*` wildcards); every tool when empty.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Seconds before the program is killed and ignored.
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+    /// `false` at a higher level switches off a hook a lower level defines.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_timeout() -> u64 {
+    30
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn a_hook_table_parses_with_defaults() {
+        let hooks: BTreeMap<String, HookConfig> = toml::from_str(
+            "[guard]\nevent = \"before_tool_call\"\ntools = [\"bash\"]\ncommand = \"guard.sh\"\n\n[log]\nevent = \"after_tool_call\"\ncommand = \"log.sh\"\nenabled = false\n",
+        )
+        .unwrap();
+        assert_eq!(hooks["guard"].event, HookEvent::BeforeToolCall);
+        assert_eq!(hooks["guard"].timeout_secs, 30);
+        assert!(hooks["guard"].args.is_empty());
+        assert!(!hooks["log"].enabled);
+    }
+}

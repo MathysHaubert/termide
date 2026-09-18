@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::context::SEED_TEMPLATE;
+use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
 use crate::permissions::Mode;
 
@@ -211,6 +212,32 @@ impl AgentDirs {
             skill_roots.push(global.join(SKILLS_DIR));
         }
         Self { roots, skill_roots }
+    }
+
+    /// Command hooks from every root's `hooks.toml`, by name; a higher root's
+    /// table for a name wins, and `enabled = false` there drops the hook.
+    /// They run in name order.
+    #[must_use]
+    pub fn hooks(&self) -> BTreeMap<String, HookConfig> {
+        let mut hooks: BTreeMap<String, HookConfig> = BTreeMap::new();
+        for root in &self.roots {
+            let path = root.join(HOOKS_FILE);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let parsed: BTreeMap<String, HookConfig> = match toml::from_str(&text) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    log::warn!("ignoring {}: {error}", path.display());
+                    continue;
+                }
+            };
+            for (name, config) in parsed {
+                hooks.entry(name).or_insert(config);
+            }
+        }
+        hooks.retain(|_, config| config.enabled);
+        hooks
     }
 
     /// MCP servers from every root's `mcp.toml`, by name; a higher root's
@@ -635,5 +662,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["db"]
         );
+    }
+    #[test]
+    fn hooks_merge_by_name_like_servers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("ai");
+        std::fs::create_dir_all(project.join(".termide/ai")).unwrap();
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join(HOOKS_FILE),
+            "[audit]\nevent = \"after_tool_call\"\ncommand = \"audit.sh\"\n\n[guard]\nevent = \"before_tool_call\"\ncommand = \"guard.sh\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.join(".termide/ai").join(HOOKS_FILE),
+            "[audit]\nevent = \"after_tool_call\"\ncommand = \"x\"\nenabled = false\n",
+        )
+        .unwrap();
+        let hooks = AgentDirs::new(&project, None, Some(&global)).hooks();
+        assert_eq!(hooks.keys().collect::<Vec<_>>(), ["guard"]);
     }
 }

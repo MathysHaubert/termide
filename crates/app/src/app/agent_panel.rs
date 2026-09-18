@@ -10,11 +10,14 @@ use termide_agent_core::{
     build_system_prompt, discover_context_files, ensure_global_layout, AgentDirs, Decision,
     ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
+use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool};
 use termide_config::AgentSettings;
-use termide_panel_agent::{AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile};
+use termide_panel_agent::{
+    AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, HooksFactory,
+};
 
 use super::App;
 
@@ -211,6 +214,16 @@ fn agent_setup(
     );
 
     let catalog = FsCatalog::new(&cwd, project_root);
+    let hooks: Option<HooksFactory> = {
+        let configs = catalog.dirs.hooks();
+        let hook_cwd = cwd.clone();
+        (!configs.is_empty()).then(|| {
+            Arc::new(move || {
+                Box::new(CommandHooks::new(configs.clone(), hook_cwd.clone()))
+                    as Box<dyn termide_agent_core::Hooks>
+            }) as HooksFactory
+        })
+    };
     let (agent, profile) = match catalog.resolve(agent) {
         Some(profile) => (agent.to_string(), profile),
         None => {
@@ -246,6 +259,7 @@ fn agent_setup(
         agent,
         catalog: Arc::new(catalog),
         late_tools: profile.late_tools,
+        hooks,
         provider,
         model,
         tools: profile.tools,

@@ -178,6 +178,7 @@ ai/
   skills/<name>/SKILL.md   skills, see below
   prompts/<name>.md        prompt templates, typed as /name
   mcp.toml                 MCP servers, see below
+  hooks.toml               command hooks, see below
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -328,6 +329,33 @@ except in `auto` mode. "Allow always" writes a rule for the tool name:
 [agent.permissions.github__search_issues]
 "*" = "allow"
 ```
+
+### Hooks
+
+A hook is a program TermIDE runs around a tool call, declared in
+`hooks.toml` at any of the three levels (same merging as MCP servers). It
+gets the event as JSON on standard input and answers with JSON on standard
+output, the shape Claude Code, Gemini CLI and Cursor share:
+
+```toml
+[no-force-push]
+event = "before_tool_call"      # or after_tool_call
+tools = ["bash"]                # patterns; every tool when absent
+command = "scripts/guard.sh"    # run in the panel's directory
+timeout_secs = 30
+```
+
+Before a call the input is `{"event","hook","cwd","tool","arguments"}`. The
+program may print `{"decision": "block", "reason": "…"}` to skip the call
+(the reason goes to the model), `{"decision": "allow"}` to run it without a
+permission prompt, or `{"arguments": {…}}` to run it with other arguments;
+no decision, or `"ask"`, leaves the permission rules to decide. Exiting with
+code 2 blocks too, with standard error as the reason. After a call the input
+also carries `"result": {"text", "is_error"}`, and `{"text": "…"}` rewrites
+what the model sees; exit code 2 turns the result into an error with
+standard error as its text. Hooks run in name order before the permission
+rules; a hook that fails in any other way, or exceeds its timeout, is logged
+and ignored, so a broken hook never stops the agent.
 
 ### Project instructions
 

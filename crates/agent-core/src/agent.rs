@@ -109,15 +109,16 @@ fn take(queue: &mut VecDeque<UserMessage>, mode: QueueMode) -> Vec<UserMessage> 
 /// Verdict of [`Hooks::before_tool_call`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolDecision {
+    /// No objection; later hooks in a chain still have their say.
     Allow,
-    /// Run the call with these arguments instead of the model's.
-    Replace {
-        arguments: Value,
-    },
+    /// Run the call with these arguments instead of the model's; later hooks
+    /// see the new arguments.
+    Replace { arguments: Value },
+    /// Run the call and ask nobody else: a hook standing in for the
+    /// permission prompt. `arguments` replaces the model's when given.
+    Approve { arguments: Option<Value> },
     /// Skip the call; `reason` is returned to the model as an error result.
-    Block {
-        reason: String,
-    },
+    Block { reason: String },
 }
 
 /// Extension points of the loop. All methods have permissive defaults.
@@ -151,6 +152,62 @@ pub trait Hooks: Send {
 pub struct NoHooks;
 
 impl Hooks for NoHooks {}
+
+/// Hooks run one after another: `before_tool_call` stops at the first
+/// `Block` or `Approve`, threading a `Replace` into the calls the rest see;
+/// `after_tool_call` passes the result through each; the turn stops when
+/// any says so.
+pub struct ChainedHooks {
+    hooks: Vec<Box<dyn Hooks>>,
+}
+
+impl ChainedHooks {
+    #[must_use]
+    pub fn new(hooks: Vec<Box<dyn Hooks>>) -> Self {
+        Self { hooks }
+    }
+}
+
+impl Hooks for ChainedHooks {
+    fn before_tool_call(&mut self, call: &ToolCall, ctx: &ToolContext) -> ToolDecision {
+        let mut current = call.clone();
+        let mut replaced = false;
+        for hook in &mut self.hooks {
+            match hook.before_tool_call(&current, ctx) {
+                ToolDecision::Allow => {}
+                ToolDecision::Replace { arguments } => {
+                    current.arguments = arguments;
+                    replaced = true;
+                }
+                ToolDecision::Approve { arguments } => {
+                    return ToolDecision::Approve {
+                        arguments: arguments.or_else(|| replaced.then_some(current.arguments)),
+                    };
+                }
+                block @ ToolDecision::Block { .. } => return block,
+            }
+        }
+        if replaced {
+            ToolDecision::Replace {
+                arguments: current.arguments,
+            }
+        } else {
+            ToolDecision::Allow
+        }
+    }
+
+    fn after_tool_call(&mut self, call: &ToolCall, result: ToolResultMessage) -> ToolResultMessage {
+        self.hooks
+            .iter_mut()
+            .fold(result, |result, hook| hook.after_tool_call(call, result))
+    }
+
+    fn should_stop_after_turn(&mut self, message: &AssistantMessage) -> bool {
+        self.hooks
+            .iter_mut()
+            .any(|hook| hook.should_stop_after_turn(message))
+    }
+}
 
 /// What the loop reports while it runs. Every transcript change is announced
 /// through `MessageEnd`, so a consumer can mirror the transcript from events
@@ -473,8 +530,11 @@ impl Agent {
         };
 
         let effective = match hooks.before_tool_call(call, &ctx) {
-            ToolDecision::Allow => call.clone(),
-            ToolDecision::Replace { arguments } => ToolCall {
+            ToolDecision::Allow | ToolDecision::Approve { arguments: None } => call.clone(),
+            ToolDecision::Replace { arguments }
+            | ToolDecision::Approve {
+                arguments: Some(arguments),
+            } => ToolCall {
                 arguments,
                 ..call.clone()
             },
@@ -1300,5 +1360,94 @@ mod tests {
         assert_eq!(steering.len(), 1);
         assert_eq!(follow_up.len(), 2);
         assert!(!queues.has_pending());
+    }
+    #[test]
+    fn chained_hooks_thread_replacements_and_stop_at_a_verdict() {
+        struct Rewriter;
+        impl Hooks for Rewriter {
+            fn before_tool_call(&mut self, call: &ToolCall, _ctx: &ToolContext) -> ToolDecision {
+                ToolDecision::Replace {
+                    arguments: serde_json::json!({ "command": format!("{} --dry-run", call.arguments["command"].as_str().unwrap()) }),
+                }
+            }
+            fn after_tool_call(
+                &mut self,
+                _call: &ToolCall,
+                mut result: ToolResultMessage,
+            ) -> ToolResultMessage {
+                result.content.push(crate::ToolResultContent::Text {
+                    text: " +rewriter".into(),
+                });
+                result
+            }
+        }
+        struct Judge(Vec<String>);
+        impl Hooks for Judge {
+            fn before_tool_call(&mut self, call: &ToolCall, _ctx: &ToolContext) -> ToolDecision {
+                let command = call.arguments["command"].as_str().unwrap().to_string();
+                self.0.push(command.clone());
+                if command.contains("rm") {
+                    ToolDecision::Block {
+                        reason: "no rm".into(),
+                    }
+                } else if command.contains("ls") {
+                    ToolDecision::Approve { arguments: None }
+                } else {
+                    ToolDecision::Allow
+                }
+            }
+            fn should_stop_after_turn(&mut self, _message: &AssistantMessage) -> bool {
+                true
+            }
+        }
+        struct Never;
+        impl Hooks for Never {
+            fn before_tool_call(&mut self, _call: &ToolCall, _ctx: &ToolContext) -> ToolDecision {
+                panic!("a verdict must stop the chain");
+            }
+        }
+        let call = |command: &str| ToolCall {
+            id: "c".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({ "command": command }),
+        };
+        let ctx = ToolContext {
+            cwd: PathBuf::from("/p"),
+        };
+
+        // Replace flows into the next hook and out of the chain.
+        let mut chain = ChainedHooks::new(vec![Box::new(Rewriter), Box::new(Judge(vec![]))]);
+        assert_eq!(
+            chain.before_tool_call(&call("cargo build"), &ctx),
+            ToolDecision::Replace {
+                arguments: serde_json::json!({ "command": "cargo build --dry-run" })
+            }
+        );
+        // Approve keeps the rewritten arguments and skips the rest.
+        let mut chain = ChainedHooks::new(vec![
+            Box::new(Rewriter),
+            Box::new(Judge(vec![])),
+            Box::new(Never),
+        ]);
+        assert_eq!(
+            chain.before_tool_call(&call("ls"), &ctx),
+            ToolDecision::Approve {
+                arguments: Some(serde_json::json!({ "command": "ls --dry-run" }))
+            }
+        );
+        assert!(matches!(
+            chain.before_tool_call(&call("rm x"), &ctx),
+            ToolDecision::Block { .. }
+        ));
+        let result =
+            chain.after_tool_call(&call("ls"), ToolResultMessage::text(&call("ls"), "out"));
+        assert_eq!(result.plain_text(), "out +rewriter");
+        assert!(chain.should_stop_after_turn(&text_reply("x")));
+        let mut plain = ChainedHooks::new(vec![Box::new(NoHooks)]);
+        assert_eq!(
+            plain.before_tool_call(&call("x"), &ctx),
+            ToolDecision::Allow
+        );
+        assert!(!plain.should_stop_after_turn(&text_reply("x")));
     }
 }

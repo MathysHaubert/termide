@@ -114,10 +114,24 @@ files.
 
 Every Rust agent (Codex, Goose, jcode) extends through MCP and data files, none
 embeds a scripting language. Decision: **levels 0–2 only** for now: data files,
-external processes (MCP for tools, command hooks with a JSON protocol modelled on
-Claude Code's `PreToolUse`/`PostToolUse` shape: `permissionDecision`,
-`updatedInput`, `additionalContext`, exit code 2 = block), and Rust traits.
-Embedded Lua stays a documented option, not a plan.
+external processes (MCP for tools, command hooks), and Rust traits. Embedded
+Lua stays a documented option, not a plan.
+
+Command hooks (`crates/agent-hooks`, configured in `ai/hooks.toml` at the
+three levels): the JSON-on-stdin, JSON-on-stdout, exit-code-2-blocks protocol
+that Claude Code, Gemini CLI and Cursor share, reduced to two events —
+`before_tool_call` and `after_tool_call`, the two extension points the
+`Hooks` trait already had. A before-hook answers `decision` (`block`,
+`allow`, `ask`) and optionally `arguments`; `allow` maps to a new
+`ToolDecision::Approve`, which runs the call and skips the remaining hooks,
+including the permission rules — the way Claude Code's `permissionDecision:
+allow` bypasses its prompt — so a policy script can stand in for the user.
+Hooks compose through `ChainedHooks` in agent-core: command hooks first, the
+rules last, a `Replace` from one hook being what the next one judges. Any
+failure other than exit 2 is logged and ignored: a hook is a guard, not a
+dependency, and a broken one must not stop the agent. Cursor's per-event
+names (`beforeShellExecution`) and Claude Code's `Stop`/`SessionStart` events
+are left out until something needs them.
 
 ## 5a. Instruction files and system prompt
 

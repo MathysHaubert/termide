@@ -22,6 +22,7 @@ pub mod agent;
 pub mod cancel;
 pub mod compaction;
 pub mod context;
+pub mod hooks;
 pub mod layers;
 pub mod mcp;
 pub mod message;
@@ -32,7 +33,8 @@ pub mod session;
 pub mod tool;
 
 pub use agent::{
-    Agent, AgentConfig, AgentEvent, Hooks, NoHooks, QueueHandle, QueueMode, ToolDecision,
+    Agent, AgentConfig, AgentEvent, ChainedHooks, Hooks, NoHooks, QueueHandle, QueueMode,
+    ToolDecision,
 };
 pub use cancel::CancelToken;
 pub use compaction::{CompactionPolicy, CompactionReason};
@@ -40,6 +42,7 @@ pub use context::{
     build_system_prompt, civil_date, discover_context_files, ContextFile, PromptOptions,
     SEED_TEMPLATE,
 };
+pub use hooks::{HookConfig, HookEvent, HOOKS_FILE};
 pub use layers::{
     ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,
     PromptTemplate, SkillInfo, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR, PROMPTS_DIR,

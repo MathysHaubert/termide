@@ -78,7 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/name args`, with `$ARGUMENTS` and `$1`…`$9` filled in. MCP servers
   declared in `mcp.toml` are started over stdio when the panel opens and
   their tools join the agent's as `server__tool`, under the same permission
-  rules.
+  rules. Command hooks in `hooks.toml` run before and after tool calls with
+  the JSON-in, JSON-out protocol other agents use, and may block a call,
+  rewrite its arguments, approve it in place of the prompt or rewrite its
+  result.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
