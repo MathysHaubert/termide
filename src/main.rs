@@ -68,6 +68,20 @@ struct Cli {
     #[arg(long, value_name = "SHELL", num_args = 0..=1, value_parser = completions::SHELLS)]
     install_completions: Option<Option<String>>,
 
+    /// Run one agent task without the UI and print the answer to stdout,
+    /// then exit: `termide --prompt "summarise src/main.rs"`. With `-` the
+    /// prompt is read from stdin. Tool activity and errors go to stderr.
+    /// The agent runs under the configured permission rules and mode with
+    /// anything else refused, since nothing can prompt; set `mode = "auto"`
+    /// or add allow rules for unattended use.
+    #[arg(long, value_name = "PROMPT")]
+    prompt: Option<String>,
+
+    /// Which agent definition the `--prompt` run uses; the default agent
+    /// otherwise.
+    #[arg(long, value_name = "NAME", requires = "prompt")]
+    agent: Option<String>,
+
     /// File(s) to open. Given a path, termide starts in a clean editor view
     /// (no session is restored or saved), so it works as $EDITOR for tools
     /// like git, crontab and visudo: `EDITOR=termide git commit`.
@@ -348,6 +362,28 @@ fn main() -> Result<()> {
     // Initialize translation system with language from config
     init_with_language(&config.general.language)?;
 
+    // Headless agent run: no UI, plain stdout, like --diagnostics. Config and
+    // translations are up; the terminal is still untouched.
+    if let Some(prompt) = cli.prompt.clone() {
+        let prompt = if prompt == "-" {
+            use std::io::Read;
+            let mut buffer = String::new();
+            std::io::stdin().read_to_string(&mut buffer)?;
+            buffer
+        } else {
+            prompt
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| project_root.clone());
+        let code = termide_app::run_agent_headless(
+            &config.agent,
+            &cwd,
+            &project_root,
+            cli.agent.as_deref(),
+            prompt.trim(),
+        );
+        std::process::exit(code);
+    }
+
     // Check for git on the system
     let git_available = check_git_available();
 
@@ -494,6 +530,18 @@ mod cli_tests {
     fn no_arguments_means_no_files() {
         let cli = Cli::try_parse_from(["termide"]).unwrap();
         assert!(cli.files.is_empty());
+    }
+
+    #[test]
+    fn prompt_flag_carries_the_text_and_optional_agent() {
+        let cli = Cli::try_parse_from(["termide", "--prompt", "do a thing"]).unwrap();
+        assert_eq!(cli.prompt.as_deref(), Some("do a thing"));
+        assert!(cli.agent.is_none());
+        let named =
+            Cli::try_parse_from(["termide", "--prompt", "review", "--agent", "reviewer"]).unwrap();
+        assert_eq!(named.agent.as_deref(), Some("reviewer"));
+        // --agent without --prompt is rejected.
+        assert!(Cli::try_parse_from(["termide", "--agent", "reviewer"]).is_err());
     }
 
     #[test]

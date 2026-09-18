@@ -62,8 +62,8 @@ pub use message::{
     ToolResultContent, ToolResultMessage, Usage, UserContent, UserMessage,
 };
 pub use permissions::{
-    is_read_only_call, permission_channel, AutoDenyPrompter, ChannelPrompter, Decision, Mode,
-    ModeHandle, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionPrompter,
+    is_read_only_call, permission_channel, subject_of, AutoDenyPrompter, ChannelPrompter, Decision,
+    Mode, ModeHandle, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionPrompter,
     PermissionRequest, PermissionRules, PersistRule, PlanGuard, PLAN_MODE_REASON,
 };
 pub use plan::{PlanPrompt, SEED_PLAN};

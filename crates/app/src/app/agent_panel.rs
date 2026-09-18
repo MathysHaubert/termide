@@ -10,9 +10,10 @@ use termide_agent_acp::AcpRuntime;
 use termide_agent_core::{
     build_system_prompt, discover_context_files, ensure_global_layout, Agent, AgentDirs,
     AgentEvent, AutoDenyPrompter, CancelToken, CompactionPolicy, Decision, Message, ModelSpec,
-    PermissionHooks, PermissionRules, PromptOptions, Provider, Session, ToolRegistry, UserMessage,
-    DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
+    PermissionHooks, PermissionRules, PromptOptions, Provider, Session, StopReason, StreamEvent,
+    ToolRegistry, UserMessage, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
+use termide_agent_core::{subject_of, Mode, ToolContext};
 use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
@@ -481,6 +482,154 @@ fn agent_setup(
         persist_rule: Some(persist_rule),
         session_dir,
         session,
+    }
+}
+
+/// Run one agent task without the UI and stream the answer to stdout, for
+/// scripting and CI: `termide --agent "..."`. Text goes to stdout, tool
+/// activity and errors to stderr. There is no one to answer a permission
+/// prompt, so it runs under the configured rules and mode with everything
+/// else refused (as a subagent does); set `mode = "auto"` or add allow rules
+/// for unattended use. Returns the process exit code.
+pub fn run_agent_headless(
+    settings: &AgentSettings,
+    cwd: &Path,
+    project_root: &Path,
+    agent_name: Option<&str>,
+    prompt: &str,
+) -> i32 {
+    use std::io::Write;
+
+    if settings.model.trim().is_empty() {
+        eprintln!("termide: no agent model configured (set [agent].model)");
+        return 1;
+    }
+    let api_key = (!settings.api_key_env.is_empty())
+        .then(|| std::env::var(&settings.api_key_env).ok())
+        .flatten();
+    let provider = build_provider(settings, api_key);
+
+    let global = termide_config::get_config_dir()
+        .ok()
+        .map(|dir| dir.join(GLOBAL_AGENT_DIR));
+    if let Some(global) = &global {
+        let _ = ensure_global_layout(global);
+    }
+    let dirs = AgentDirs::new(cwd, Some(project_root), global.as_deref());
+    let name = agent_name.unwrap_or(DEFAULT_AGENT);
+    if agent_name.is_some_and(|n| n != DEFAULT_AGENT && !dirs.agents().iter().any(|a| a == n)) {
+        eprintln!("termide: no agent named {name}");
+        return 2;
+    }
+    let definition = dirs.agent(name);
+    if definition.spec.acp.is_some() {
+        eprintln!("termide: headless mode cannot drive an external (ACP) agent");
+        return 2;
+    }
+
+    let mut tools = builtin_tools();
+    restrict_tools(&mut tools, &definition.spec.tools, name);
+    let skills = dirs.skills();
+    if !skills.is_empty() {
+        tools.insert(Arc::new(SkillTool::new(skills.clone())));
+    }
+    let context_files = discover_context_files(cwd, Some(project_root), None);
+    let mut options = PromptOptions::new(cwd, &tools, &context_files);
+    options.skills = &skills;
+    options.soul = definition.soul.as_deref();
+    let system_prompt = build_system_prompt(&options);
+
+    let model = ModelSpec {
+        provider: "agent".to_string(),
+        id: definition
+            .spec
+            .model
+            .clone()
+            .unwrap_or_else(|| settings.model.clone()),
+        context_window: settings.context_window,
+        max_tokens: settings.max_tokens,
+        reasoning: settings.reasoning,
+    };
+    let mut rules = settings.permissions.clone();
+    if let Some(mode) = definition.spec.mode {
+        rules.mode = mode;
+    }
+    // Plan mode is a UI affordance (it waits for a card); headless has no
+    // one to accept a plan, so treat it as ask.
+    if rules.mode == Mode::Plan {
+        eprintln!("termide: plan mode has no meaning without the panel; using ask");
+        rules.mode = Mode::Ask;
+    }
+
+    let mut agent = Agent::new(Arc::clone(&provider), tools, model, cwd.to_path_buf())
+        .with_system_prompt(system_prompt)
+        .with_compaction(settings.compaction)
+        .with_compaction_prompts(dirs.compaction_prompts());
+    let mut hooks = PermissionHooks::new(
+        rules,
+        Box::new(AutoDenyPrompter::new(
+            "running headless with no one to ask; allowed only what the rules and mode permit",
+        )),
+    );
+
+    let cancel = CancelToken::new();
+    let stdout = std::io::stdout();
+    let mut wrote_text = false;
+    {
+        let mut emit = |event: AgentEvent| match event {
+            AgentEvent::MessageUpdate(StreamEvent::TextDelta(text)) => {
+                let mut out = stdout.lock();
+                let _ = out.write_all(text.as_bytes());
+                let _ = out.flush();
+                wrote_text = true;
+            }
+            AgentEvent::ToolExecutionStart { call } => {
+                let subject = subject_of(
+                    &call,
+                    &ToolContext {
+                        cwd: cwd.to_path_buf(),
+                    },
+                );
+                if subject.is_empty() {
+                    eprintln!("· {}", call.name);
+                } else {
+                    eprintln!("· {} {subject}", call.name);
+                }
+            }
+            AgentEvent::ToolExecutionEnd { result } => {
+                if result.is_error {
+                    eprintln!("  ! {}", result.plain_text());
+                }
+            }
+            _ => {}
+        };
+        agent.run(UserMessage::text(prompt), &mut hooks, &cancel, &mut emit);
+    }
+    if wrote_text {
+        println!();
+    }
+
+    match agent
+        .messages()
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::Assistant(assistant) => Some(assistant),
+            _ => None,
+        }) {
+        Some(last) if last.error_message.is_some() => {
+            eprintln!(
+                "termide: {}",
+                last.error_message.as_deref().unwrap_or("the run failed")
+            );
+            1
+        }
+        Some(last) if last.stop_reason == StopReason::Aborted => 130,
+        Some(_) => 0,
+        None => {
+            eprintln!("termide: the agent produced no answer");
+            1
+        }
     }
 }
 

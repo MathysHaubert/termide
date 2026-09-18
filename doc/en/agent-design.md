@@ -577,3 +577,25 @@ boundaries, follow-up when the agent would stop; `before_tool_call` may block.
 Added after the comparison: an `after_tool_call` hook (Claude Code
 `PostToolUse`, pi `afterToolCall`) so an external hook can rewrite a result, and
 an `updated_input` field on allow so a hook can rewrite arguments.
+
+## 10. Headless mode
+
+Claude Code has `-p/--print` (one prompt, prints the result, `--output-format`
+json/stream-json) and Codex `exec`; both run the same agent without the TUI
+for scripts and CI. Gemini CLI and pi have similar non-interactive paths.
+
+Decision: `termide --prompt "<prompt>"`, an early-exit CLI branch beside
+`--diagnostics`, before the terminal is touched, so stdout stays plain
+(`run_agent_headless` in `agent_panel.rs`). It reuses the whole stack — the
+provider (OpenAI or Anthropic), the agent definitions, the tools, the prompt
+builder and the permission rules — so the headless agent is the panel's agent
+without the panel, the way the subagent runner is. Streaming: text deltas to
+stdout so the answer pipes cleanly, tool activity and errors to stderr, one
+tool line per call. Permissions: no one to prompt, so `AutoDenyPrompter` as in
+a subagent — the run does only what the rules and mode already allow, and
+`mode = "auto"` or `allow` rules opt into more; plan mode collapses to ask,
+and an ACP agent is refused (no headless permission surface, as for
+subagents). `-` reads the prompt from stdin. Exit code: 0, 1 on a failed
+message, 130 on abort. Not done yet: a JSON output format, and `--agent`
+delegation to the `task` tool (headless carries the built-in tools and skills
+only).

@@ -562,3 +562,28 @@ continues the session it was in, on that session's model and as its agent. If
 the log has been
 deleted the panel starts a fresh session; if no model is configured any more
 the panel is left out of the layout.
+
+## From the command line
+
+`termide --prompt "<prompt>"` runs one agent task without opening the UI and
+prints the answer to stdout, then exits. It is the panel's agent — the same
+`ai` directory, agents, tools and permission rules — driven headless, for
+scripts, pipelines and CI.
+
+```
+termide --prompt "summarise what changed in src/main.rs"
+git diff | termide --prompt -          # read the prompt from stdin
+termide --prompt "run the tests and report failures" --agent runner
+```
+
+The answer is the only thing on stdout, so it pipes cleanly; tool activity
+and errors go to stderr. `--agent` picks one of the defined agents, the
+default agent otherwise. The exit code is `0` on success, `1` on failure and
+`130` when interrupted.
+
+No one is watching to answer a permission card, so a headless run does only
+what the rules and the mode already allow: anything that would ask is refused
+with a reason the model reads. For unattended work set `mode = "auto"` in the
+configuration, or add `allow` rules for the exact commands and paths the task
+needs. Plan mode has no meaning without the panel and is treated as `ask`,
+and an external (`[acp]`) agent cannot be run this way.

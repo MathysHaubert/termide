@@ -90,7 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Works with any OpenAI-compatible endpoint (local servers, OpenAI,
   OpenRouter and most gateways) or, with `provider = "anthropic"`, natively
-  with an Anthropic subscription over the Messages API.
+  with an Anthropic subscription over the Messages API. `termide --prompt
+  "..."` runs one task without the UI and prints the answer, for scripts and
+  CI.
 
   Every session is logged as JSON Lines under `ai/sessions/` in the
   configuration directory; the log records the model and the agent, so a
