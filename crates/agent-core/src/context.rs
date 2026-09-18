@@ -1,8 +1,9 @@
 //! System prompt composition and project instruction discovery.
 //!
-//! The prompt is a template — the agent's `SOUL.md` — with four placeholders
-//! the builder fills: `{{tools}}` (the tool list with one-line snippets),
-//! `{{guidelines}}` (the rules the tools contribute), `{{environment}}` and
+//! The prompt is a template — the agent's `SOUL.md` — with placeholders the
+//! builder fills: `{{tools}}` (the tool list with one-line snippets),
+//! `{{guidelines}}` (the rules the tools contribute), `{{skills}}` (the
+//! skills by name and description), `{{environment}}` and
 //! `{{project_instructions}}`. No prompt text lives in code: the seed
 //! template is the data file `assets/AGENTS.md`, written to the
 //! configuration directory as `ai/AGENTS.md` on first use and read from
@@ -14,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::layers::SkillInfo;
 use crate::tool::ToolRegistry;
 
 /// Instruction files larger than this are skipped with a warning.
@@ -114,9 +116,12 @@ pub struct PromptOptions<'a> {
     pub cwd: &'a Path,
     pub tools: &'a ToolRegistry,
     pub context_files: &'a [ContextFile],
-    /// Prompt template with `{{tools}}`, `{{guidelines}}`, `{{environment}}`
-    /// and `{{project_instructions}}` placeholders; the shipped seed
-    /// [`SEED_TEMPLATE`] when `None`.
+    /// Skills listed under `{{skills}}`; the model loads one with the
+    /// `skill` tool.
+    pub skills: &'a [SkillInfo],
+    /// Prompt template with `{{tools}}`, `{{guidelines}}`, `{{skills}}`,
+    /// `{{environment}}` and `{{project_instructions}}` placeholders; the
+    /// shipped seed [`SEED_TEMPLATE`] when `None`.
     pub soul: Option<&'a str>,
     /// Appended verbatim at the end.
     pub append: Option<&'a str>,
@@ -131,6 +136,7 @@ impl<'a> PromptOptions<'a> {
             cwd,
             tools,
             context_files,
+            skills: &[],
             soul: None,
             append: None,
             now_millis: None,
@@ -197,10 +203,28 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
         }
     }
 
+    let skills = if options.skills.is_empty() {
+        "(none)".to_string()
+    } else {
+        options
+            .skills
+            .iter()
+            .map(|skill| {
+                if skill.description.is_empty() {
+                    format!("- {}", skill.name)
+                } else {
+                    format!("- {}: {}", skill.name, skill.description)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
     let template = options.soul.unwrap_or(SEED_TEMPLATE);
     let mut out = template
         .replace("{{tools}}", &tools)
         .replace("{{guidelines}}", &guidelines)
+        .replace("{{skills}}", &skills)
         .replace("{{environment}}", &environment)
         .replace("{{project_instructions}}", instructions.trim_end());
     if let Some(append) = options.append.filter(|a| !a.trim().is_empty()) {
@@ -340,6 +364,27 @@ mod tests {
         assert!(prompt.contains("# Project instructions"));
         assert!(prompt.contains("Use conventional commits."));
         assert!(prompt.ends_with("Answer in Russian.\n"));
+        assert!(prompt.contains("# Skills\n"), "seed template lists skills");
+        assert!(prompt.contains("\n(none)\n"));
+
+        let skills = vec![
+            crate::layers::SkillInfo {
+                name: "deploy".into(),
+                description: "Ship a release".into(),
+                path: dir.path().join("SKILL.md"),
+            },
+            crate::layers::SkillInfo {
+                name: "notes".into(),
+                description: String::new(),
+                path: dir.path().join("SKILL.md"),
+            },
+        ];
+        options.skills = &skills;
+        let listed = build_system_prompt(&options);
+        assert!(
+            listed.contains("- deploy: Ship a release\n- notes\n"),
+            "{listed}"
+        );
 
         // A soul replaces the template whole; unknown placeholders stay.
         options.soul =

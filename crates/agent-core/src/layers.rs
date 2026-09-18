@@ -30,6 +30,52 @@ pub const SPEC_FILE: &str = "agent.toml";
 pub const DEFAULT_AGENT: &str = "default";
 /// Session logs under the `ai` directory: `sessions/<working directory>/`.
 pub const SESSIONS_DIR: &str = "sessions";
+/// Skills under an `ai` directory: `skills/<name>/SKILL.md`.
+pub const SKILLS_DIR: &str = "skills";
+/// The cross-agent skills directory of a project (agentskills.io), read
+/// beside termide's own so skills written for other agents work unchanged.
+pub const SHARED_SKILLS_DIR: &str = ".agents/skills";
+/// The file that makes a directory a skill.
+pub const SKILL_FILE: &str = "SKILL.md";
+
+/// One skill as the prompt lists it: name, one-line description and where
+/// its `SKILL.md` is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillInfo {
+    pub name: String,
+    pub description: String,
+    pub path: PathBuf,
+}
+
+/// Split the YAML front matter (`---` fenced `key: value` lines) off a
+/// Markdown file. Returns the fields and the body; a file without front
+/// matter is all body.
+#[must_use]
+pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
+    let mut fields = BTreeMap::new();
+    let Some(rest) = text.strip_prefix("---") else {
+        return (fields, text);
+    };
+    let Some(rest) = rest
+        .strip_prefix('\n')
+        .or_else(|| rest.strip_prefix("\r\n"))
+    else {
+        return (fields, text);
+    };
+    let Some(end) = rest.find("\n---") else {
+        return (fields, text);
+    };
+    for line in rest[..end].lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        fields.insert(key.trim().to_string(), value.to_string());
+    }
+    let body = &rest[end + 4..];
+    let body = body.strip_prefix('\n').unwrap_or(body);
+    (fields, body)
+}
 
 /// Lay out the `ai` directory of the configuration so the prompt is a file
 /// one can read and edit: `AGENTS.md` seeded from the shipped template when
@@ -76,6 +122,9 @@ pub struct AgentDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentDirs {
     roots: Vec<PathBuf>,
+    /// Skill directories in priority order: each level's `ai/skills`
+    /// followed by its `.agents/skills`.
+    skill_roots: Vec<PathBuf>,
 }
 
 impl AgentDirs {
@@ -86,16 +135,56 @@ impl AgentDirs {
     #[must_use]
     pub fn new(cwd: &Path, project_root: Option<&Path>, global: Option<&Path>) -> Self {
         let mut roots = vec![cwd.join(PROJECT_AGENT_DIR)];
+        let mut skill_roots = vec![
+            cwd.join(PROJECT_AGENT_DIR).join(SKILLS_DIR),
+            cwd.join(SHARED_SKILLS_DIR),
+        ];
         if let Some(root) = project_root {
             let dir = root.join(PROJECT_AGENT_DIR);
             if !roots.contains(&dir) {
-                roots.push(dir);
+                roots.push(dir.clone());
+                skill_roots.push(dir.join(SKILLS_DIR));
+                skill_roots.push(root.join(SHARED_SKILLS_DIR));
             }
         }
         if let Some(global) = global {
             roots.push(global.to_path_buf());
+            skill_roots.push(global.join(SKILLS_DIR));
         }
-        Self { roots }
+        Self { roots, skill_roots }
+    }
+
+    /// Every skill the roots define, by name, sorted; a name in a higher
+    /// root hides the same name below. A skill is a directory holding a
+    /// `SKILL.md`; the name and description come from its front matter, the
+    /// directory name standing in for a missing name.
+    #[must_use]
+    pub fn skills(&self) -> Vec<SkillInfo> {
+        let mut skills: BTreeMap<String, SkillInfo> = BTreeMap::new();
+        for root in &self.skill_roots {
+            let Ok(read_dir) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in read_dir.flatten() {
+                let path = entry.path().join(SKILL_FILE);
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let (fields, _) = split_front_matter(&text);
+                let dir_name = entry.file_name().to_string_lossy().into_owned();
+                let name = fields
+                    .get("name")
+                    .filter(|n| !n.is_empty())
+                    .cloned()
+                    .unwrap_or(dir_name);
+                skills.entry(name.clone()).or_insert(SkillInfo {
+                    name,
+                    description: fields.get("description").cloned().unwrap_or_default(),
+                    path,
+                });
+            }
+        }
+        skills.into_values().collect()
     }
 
     /// Roots in priority order.
@@ -308,5 +397,44 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&soul).unwrap(), "mine");
         let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
         assert_eq!(dirs.soul(DEFAULT_AGENT).as_deref(), Some("mine"));
+    }
+    #[test]
+    fn skills_merge_termide_and_shared_directories_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("proj/sub");
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("ai");
+        let write = |dir: &Path, body: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(SKILL_FILE), body).unwrap();
+        };
+        write(
+            &cwd.join(".termide/ai/skills/deploy"),
+            "---\nname: deploy\ndescription: \"Ship it\"\n---\nSteps here.\n",
+        );
+        write(
+            &project.join(".agents/skills/deploy"),
+            "---\nname: deploy\ndescription: hidden\n---\n",
+        );
+        write(
+            &project.join(".agents/skills/review"),
+            "---\ndescription: Review a diff\nallowed-tools: read\n---\nHow to review.\n",
+        );
+        write(&global.join("skills/notes"), "No front matter at all.\n");
+        std::fs::create_dir_all(global.join("skills/not-a-skill")).unwrap();
+
+        let dirs = AgentDirs::new(&cwd, Some(&project), Some(&global));
+        let skills = dirs.skills();
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["deploy", "notes", "review"]);
+        assert_eq!(skills[0].description, "Ship it");
+        assert!(skills[0].path.starts_with(cwd.join(".termide/ai/skills")));
+        assert_eq!(skills[1].description, "");
+        assert_eq!(skills[2].description, "Review a diff");
+
+        let (fields, body) = split_front_matter("---\nname: x\n---\nbody\n");
+        assert_eq!(fields["name"], "x");
+        assert_eq!(body, "body\n");
+        assert_eq!(split_front_matter("plain").1, "plain");
     }
 }

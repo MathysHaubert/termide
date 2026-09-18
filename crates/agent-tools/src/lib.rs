@@ -1,8 +1,9 @@
 //! Built-in tools of the termide coding agent.
 //!
 //! Four tools cover what a coding agent needs on a local checkout: `read`,
-//! `edit`, `write` and `bash`. Search is left to the shell (`rg`, `find`),
-//! which every model already knows. Contracts follow the cross-agent
+//! `edit`, `write` and `bash`; `skill` joins them when the project or the
+//! user defines skills. Search is left to the shell (`rg`, `find`), which
+//! every model already knows. Contracts follow the cross-agent
 //! comparison in `doc/en/agent-design.md`: numbered lines on read,
 //! search/replace with a unique anchor and tolerant whitespace matching on
 //! edit, head-and-tail truncation of shell output with the full log saved to
@@ -12,6 +13,7 @@ mod args;
 mod bash;
 mod edit;
 mod read;
+mod skill;
 mod truncate;
 mod write;
 
@@ -22,6 +24,7 @@ use termide_agent_core::ToolRegistry;
 pub use bash::BashTool;
 pub use edit::EditTool;
 pub use read::ReadTool;
+pub use skill::SkillTool;
 pub use write::WriteTool;
 
 /// The default registry: `read`, `edit`, `write`, `bash`, in prompt order.

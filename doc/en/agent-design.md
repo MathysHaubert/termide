@@ -171,6 +171,31 @@ the shared `ModeHandle`. Model and mode change only when the definition names
 them, so a user's runtime choice survives switching to an agent that has no
 opinion.
 
+Skills (`skills/<name>/SKILL.md`, agentskills.io front matter) are a
+cross-agent format; how they reach the model differs:
+
+| Agent | In the prompt | Loading the body |
+|---|---|---|
+| Claude Code | names and descriptions | a `Skill` tool pulls the body into the context |
+| Codex CLI | names, descriptions and paths | the model reads the file with its read tool |
+| pi | names, descriptions and paths | the same, through `read` |
+| OpenCode | explicitly enabled skills in full | none |
+
+Decision: names and descriptions under `{{skills}}`, one line each, and a
+`skill` tool that takes the name. Per request the two options cost the same
+— a list line per skill, cached with the prompt prefix — and the tool's
+schema adds a few dozen tokens, also cached. The difference is on the load:
+a name is two or three tokens and an `enum` in the schema, where a path is
+thirty and a thing a local model mistypes; the body comes back verbatim,
+without `read`'s line-number prefixes (a few tokens per line), together with
+the skill's companion files, which `read` would need a second call to
+discover; and a skill in the configuration directory lies outside the
+project, where `read` would have to ask permission — `skill` never does.
+Skills are found in each level's `ai/skills` and in `.agents/skills`, the
+shared directory, so nothing has to be copied to work with termide. The tool
+exists only when a skill does, and an agent's `tools` list does not remove
+it: skills are instructions, not a capability.
+
 The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 `{{environment}}` and `{{project_instructions}}` placeholders: the `ai`
 directory's root `AGENTS.md` for the default agent (the user's decision — the

@@ -11,7 +11,7 @@ use termide_agent_core::{
     ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
-use termide_agent_tools::builtin_tools;
+use termide_agent_tools::{builtin_tools, SkillTool};
 use termide_config::AgentSettings;
 use termide_panel_agent::{AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile};
 
@@ -154,10 +154,17 @@ impl AgentCatalog for FsCatalog {
                 }
             }
         }
+        // Skills are instructions, not a capability, so an agent's `tools`
+        // list does not govern them: the tool comes with the skills.
+        let skills = self.dirs.skills();
+        if !skills.is_empty() {
+            tools.insert(Arc::new(SkillTool::new(skills.clone())));
+        }
         // The configuration's `ai/AGENTS.md` is the prompt template itself,
         // not an instruction file, so no global file joins the chain.
         let context_files = discover_context_files(&self.cwd, Some(&self.project_root), None);
         let mut options = PromptOptions::new(&self.cwd, &tools, &context_files);
+        options.skills = &skills;
         options.soul = definition.soul.as_deref();
         Some(AgentProfile {
             system_prompt: build_system_prompt(&options),
@@ -316,7 +323,7 @@ mod tests {
             "description = \"Reviews diffs\"\nmodel = \"big\"\nmode = \"auto\"\ntools = [\"read\", \"bash\", \"nope\"]\n",
         )
         .unwrap();
-        let catalog = FsCatalog::with_global(tmp.path(), tmp.path(), Some(global));
+        let catalog = FsCatalog::with_global(tmp.path(), tmp.path(), Some(global.clone()));
 
         let names: Vec<String> = catalog.list().into_iter().map(|e| e.name).collect();
         assert_eq!(names, ["default", "review"]);
@@ -333,5 +340,19 @@ mod tests {
             .starts_with("Root template.\n\n- read:"));
         assert!(default.model.is_none());
         assert!(catalog.resolve("missing").is_none());
+
+        // A skill adds the `skill` tool, to every agent, and a prompt line.
+        let skill = global.join("skills/deploy");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Ship it\n---\nSteps.\n",
+        )
+        .unwrap();
+        std::fs::write(global.join("AGENTS.md"), "{{skills}}\n").unwrap();
+        let review = catalog.resolve("review").unwrap();
+        assert_eq!(review.tools.names(), ["read", "bash", "skill"]);
+        let default = catalog.resolve(DEFAULT_AGENT).unwrap();
+        assert_eq!(default.system_prompt, "- deploy: Ship it\n");
     }
 }

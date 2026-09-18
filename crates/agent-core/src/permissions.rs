@@ -293,6 +293,8 @@ impl PermissionHooks {
         match call.name.as_str() {
             _ if mode == Mode::Auto => Decision::Allow,
             "read" if inside_project(call, ctx) => Decision::Allow,
+            // Loads a skill's own text, which may live outside the project.
+            "skill" => Decision::Allow,
             "edit" | "write" if mode == Mode::AcceptEdits && inside_project(call, ctx) => {
                 Decision::Allow
             }
@@ -919,5 +921,19 @@ mod tests {
         assert_eq!(Mode::Ask.next(), Mode::AcceptEdits);
         assert_eq!(Mode::Auto.next(), Mode::Ask);
         assert_eq!(Mode::AcceptEdits.label(), "accept-edits");
+    }
+    #[test]
+    fn loading_a_skill_never_asks() {
+        let hooks = PermissionHooks::new(
+            PermissionRules::default(),
+            Box::new(Scripted {
+                answers: vec![],
+                asked: Arc::new(Mutex::new(Vec::new())),
+            }),
+        );
+        assert_eq!(
+            hooks.decide(&call("skill", json!({ "name": "deploy" })), &ctx()),
+            Decision::Allow
+        );
     }
 }

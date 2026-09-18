@@ -71,7 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[≡]` menu opens the assembled text. Further agents are directories under
   `agents/`, each with an optional `SOUL.md` of its own and an `agent.toml`
   naming a description, a model, a permission mode and a subset of the
-  tools; the **Agent** chip switches between them.
+  tools; the **Agent** chip switches between them. Skills in the
+  agentskills.io shape (`skills/<name>/SKILL.md`, also `.agents/skills/`)
+  are listed in the prompt by name and description and loaded on demand
+  with a `skill` tool.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and

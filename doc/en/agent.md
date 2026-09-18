@@ -95,6 +95,9 @@ The agent has four tools.
 Searching is done through `bash` with the tools you already have (`rg`,
 `find`), rather than through a separate search tool.
 
+A fifth tool, **skill**, appears when skills are defined; see
+[Skills](#skills).
+
 A file the agent edits while it is open in an editor is reloaded there at
 once, cursor and scroll position kept, unless that editor has unsaved changes;
 then the editor keeps them and marks the conflict, as with any change on disk
@@ -170,8 +173,8 @@ ai/
   AGENTS.md                the system prompt template of the default agent
   agents/<name>/SOUL.md    the template of a custom agent (optional)
   agents/<name>/agent.toml what else sets the agent apart (optional)
-  skills/                  skills, see below
-  prompts/                 prompt templates, see below
+  skills/<name>/SKILL.md   skills, see below
+  prompts/                 prompt templates (reserved)
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -237,9 +240,35 @@ not sent. **Show system prompt** in the
 panel's `[≡]` menu opens the assembled result, so you can see exactly what
 the model gets.
 
-### Project instructions
+### Skills
 
-The agent reads `AGENTS.md` (or `CLAUDE.md` in the same directory) from every
+A skill is a directory with a `SKILL.md` in the [agentskills.io](https://agentskills.io)
+shape: YAML front matter with `name` and `description`, then the
+instructions, plus any files the instructions refer to (scripts, checklists,
+examples):
+
+```markdown
+---
+name: release
+description: Cut a release: version bump, changelog, tag, packages
+---
+# Release
+
+1. Run `scripts/check.sh` …
+```
+
+Skills are read from `skills/` at the three levels of the `ai` directory and
+also from `.agents/skills/` in the panel's directory and in the project root,
+the directory other agents share, so a skill written for Claude Code, Codex
+or pi works unchanged. The same name at a higher level hides the lower one.
+
+Only the names and descriptions go into the prompt, one line per skill under
+`{{skills}}`; the instructions themselves enter the conversation when the
+model loads the skill with the `skill` tool, which returns the text of
+`SKILL.md` and lists the files beside it for the model to `read`. Loading a
+skill never asks for permission. The tool exists only when at least one skill
+does, and it is not subject to an agent's `tools` list.
+
 directory between the filesystem root and the panel's working directory,
 most specific last, so the panel directory's file outranks the project's. The
 project root's file is included even when the panel works outside it. Put
