@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
+use termide_agent_acp::AcpRuntime;
 use termide_agent_core::{
     build_system_prompt, discover_context_files, ensure_global_layout, AgentDirs, Decision,
     ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
@@ -16,7 +17,8 @@ use termide_agent_providers::{Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool};
 use termide_config::AgentSettings;
 use termide_panel_agent::{
-    AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, HooksFactory,
+    AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, BackendFactory,
+    HooksFactory,
 };
 
 use super::App;
@@ -150,7 +152,19 @@ impl AgentCatalog for FsCatalog {
             return None;
         }
         let definition = self.dirs.agent(name);
-        let mut tools = builtin_tools();
+        // An external agent brings its own tools; ours would only confuse it.
+        let backend: Option<BackendFactory> = definition.spec.acp.clone().map(|config| {
+            let agent = name.to_string();
+            Arc::new(move |setup: termide_agent_core::BackendSetup| {
+                AcpRuntime::start(&agent, &config, setup)
+                    .map(|runtime| Box::new(runtime) as Box<dyn termide_agent_core::Backend>)
+            }) as BackendFactory
+        });
+        let mut tools = if backend.is_some() {
+            termide_agent_core::ToolRegistry::new()
+        } else {
+            builtin_tools()
+        };
         if let Some(allowed) = &definition.spec.tools {
             for unknown in allowed.iter().filter(|name| tools.get(name).is_none()) {
                 log::warn!("agent {name}: no tool named {unknown}");
@@ -169,7 +183,7 @@ impl AgentCatalog for FsCatalog {
         // Skills are instructions, not a capability, so an agent's `tools`
         // list does not govern them: the tool comes with the skills.
         let skills = self.dirs.skills();
-        if !skills.is_empty() {
+        if !skills.is_empty() && backend.is_none() {
             tools.insert(Arc::new(SkillTool::new(skills.clone())));
         }
         // The configuration's `ai/AGENTS.md` is the prompt template itself,
@@ -183,7 +197,8 @@ impl AgentCatalog for FsCatalog {
             tools,
             model: definition.spec.model,
             mode: definition.spec.mode,
-            late_tools: (!self.mcp.is_empty()).then(|| self.mcp.subscribe()),
+            late_tools: (!self.mcp.is_empty() && backend.is_none()).then(|| self.mcp.subscribe()),
+            backend,
         })
     }
 }
@@ -260,6 +275,7 @@ fn agent_setup(
         catalog: Arc::new(catalog),
         late_tools: profile.late_tools,
         hooks,
+        backend: profile.backend,
         provider,
         model,
         tools: profile.tools,
@@ -377,6 +393,19 @@ mod tests {
         std::fs::write(global.join("AGENTS.md"), "{{skills}}\n").unwrap();
         let review = catalog.resolve("review").unwrap();
         assert_eq!(review.tools.names(), ["read", "bash", "skill"]);
+
+        // An [acp] table makes an external agent: no tools of ours, a backend.
+        let outside = global.join("agents/outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("agent.toml"),
+            "description = \"Claude Code\"\n[acp]\ncommand = \"npx\"\nargs = [\"-y\", \"@zed-industries/claude-code-acp\"]\n",
+        )
+        .unwrap();
+        let outside = catalog.resolve("outside").unwrap();
+        assert!(outside.backend.is_some());
+        assert!(outside.tools.is_empty());
+        assert!(outside.late_tools.is_none());
         let default = catalog.resolve(DEFAULT_AGENT).unwrap();
         assert_eq!(default.system_prompt, "- deploy: Ship it\n");
     }

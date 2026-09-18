@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::acp::AcpConfig;
 use crate::context::SEED_TEMPLATE;
 use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
@@ -168,6 +169,10 @@ pub struct AgentSpec {
     /// Tools the agent may use, by name; all built-in tools when absent.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// An external agent spoken to over ACP instead of the built-in loop;
+    /// `model`, `mode` and `tools` then do not apply.
+    #[serde(default)]
+    pub acp: Option<AcpConfig>,
 }
 
 /// An agent as the roots define it: its prompt template and its settings,

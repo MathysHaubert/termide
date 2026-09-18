@@ -81,7 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules. Command hooks in `hooks.toml` run before and after tool calls with
   the JSON-in, JSON-out protocol other agents use, and may block a call,
   rewrite its arguments, approve it in place of the prompt or rewrite its
-  result.
+  result. An agent with an `[acp]` table in its `agent.toml` is an external
+  program driven over the Agent Client Protocol — Claude Code, Codex or
+  Gemini CLI through their adapters — in the same panel, with the same
+  permission dialog and editor reloads.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and

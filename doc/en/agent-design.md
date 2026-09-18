@@ -398,8 +398,27 @@ Code and Codex have adapters, Zed, Neovim and JetBrains are clients. Decision:
 shape the panel's contract after ACP (`prompt`, `session/update` with
 `tool_call` status `pending`/`in_progress`/`completed`/`failed`,
 `request_permission` with the four answers). The built-in agent is the first
-backend; an ACP client over stdio can be a second one later and reuse the same
-panel. No dependency on the `agent-client-protocol` crate for now.
+backend; an ACP client over stdio is the second and reuses the same panel.
+
+Done (`crates/agent-acp`): the panel drives a `Backend` trait (agent-core)
+with two implementations, `AgentRuntime` and `AcpRuntime`. termide is the
+ACP client: it starts the agent from an `[acp]` table in `agent.toml`, runs
+`initialize` and `session/new` on a thread (adapters started through `npx`
+take seconds), and turns `session/update` into the loop's own `AgentEvent`s
+— `agent_message_chunk` into `MessageStart`/`TextDelta`, a `tool_call`
+closing the streamed text as a `ToolUse` message before `ToolExecutionStart`,
+its kind standing as the tool name so an `edit` reloads the editor. The
+agent's requests are served in the client: `session/request_permission`
+through the same `ChannelPrompter` as the built-in prompt (answers mapped
+onto the offered `allow_once`/`allow_always`/`reject_once` options),
+`fs/read_text_file` and `fs/write_text_file` from the working directory (a
+write surfaces as a `write` tool call for the editor reload), terminals not
+advertised. Model and mode chips are hidden for an external agent —
+`Backend::update` answers `Unsupported` — and switching between engines
+rebuilds the runtime on the same session log, whose history is shown but not
+known to the external agent (ACP's `session/load` is the way to change that
+later). Still hand-written JSON-RPC rather than the `agent-client-protocol`
+crate: the surface used is small, and the crate would bring tokio.
 
 ## 8. Provider
 

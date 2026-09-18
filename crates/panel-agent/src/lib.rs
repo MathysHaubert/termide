@@ -6,7 +6,6 @@
 //! [`Transcript`] from `tick()`, so it never blocks the UI thread. Every
 //! transcript change also goes to the JSONL [`Session`] when one is attached.
 
-mod prompter;
 mod transcript;
 
 use std::any::Any;
@@ -19,12 +18,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
-    civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, ChainedHooks, CompactionPolicy,
-    Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
-    PermissionHooks, PermissionRules, PersistRule, PromptTemplate, Provider, Session,
-    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
-    DEFAULT_AGENT,
+    civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
+    ChainedHooks, CompactionPolicy, Decision, Hooks, LateTools, Message, Mode, ModeHandle,
+    ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules,
+    PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool,
+    ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
+use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
 use termide_core::{
     CommandResult, InputAction, KeyChord, Panel, PanelCommand, PanelEvent, RenderContext,
@@ -34,7 +34,6 @@ use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
 use termide_ui::ScrollBar;
 
-use prompter::PermissionEnvelope;
 pub use transcript::{Item, NoticeKind, Transcript};
 
 /// Prefix of the `SelectAction::Custom` payload for permission prompts.
@@ -82,6 +81,8 @@ pub struct AgentPanelSetup {
     /// Builds the hooks that run before the permission rules (command hooks);
     /// a factory, since every session switch spawns a fresh agent.
     pub hooks: Option<HooksFactory>,
+    /// An external agent to drive instead of the built-in loop.
+    pub backend: Option<BackendFactory>,
     pub provider: Arc<dyn Provider>,
     pub model: ModelSpec,
     pub tools: ToolRegistry,
@@ -104,6 +105,10 @@ pub type PersistFn = fn(&str, &str, Decision);
 /// Makes the extra hooks of one agent (command hooks from `hooks.toml`).
 pub type HooksFactory = Arc<dyn Fn() -> Box<dyn Hooks> + Send + Sync>;
 
+/// Starts an external agent (ACP) in place of the built-in loop.
+pub type BackendFactory =
+    Arc<dyn Fn(BackendSetup) -> Result<Box<dyn Backend>, String> + Send + Sync>;
+
 /// One agent the picker offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentEntry {
@@ -121,6 +126,8 @@ pub struct AgentProfile {
     pub mode: Option<Mode>,
     /// Tools still connecting (MCP servers); they join `tools` as they come.
     pub late_tools: Option<Receiver<LateTools>>,
+    /// An external agent to drive instead of the built-in loop.
+    pub backend: Option<BackendFactory>,
 }
 
 /// The app's view of the agent definitions (`agents/<name>/` across the
@@ -135,7 +142,9 @@ pub trait AgentCatalog: Send + Sync {
 }
 
 pub struct AgentPanel {
-    runtime: AgentRuntime,
+    runtime: Box<dyn Backend>,
+    /// The runtime is an external agent: model and mode are not ours to set.
+    external: bool,
     permission_rx: Receiver<PermissionEnvelope>,
     pending_permission: Option<PermissionEnvelope>,
     session: Option<Session>,
@@ -168,6 +177,7 @@ pub struct AgentPanel {
 
     // Kept to rebuild the agent when switching sessions.
     hooks: Option<HooksFactory>,
+    backend: Option<BackendFactory>,
     provider: Arc<dyn Provider>,
     tools: ToolRegistry,
     rules: PermissionRules,
@@ -206,11 +216,12 @@ impl AgentPanel {
             )
         });
         let model = session_model(&setup.model, session.as_ref());
-        let (mut agent, mut system_prompt, mut tools, mut late_tools) = (
+        let (mut agent, mut system_prompt, mut tools, mut late_tools, mut backend) = (
             setup.agent,
             setup.system_prompt,
             setup.tools,
             setup.late_tools,
+            setup.backend,
         );
         if let Some((name, profile)) =
             session_agent(setup.catalog.as_ref(), &agent, session.as_ref())
@@ -219,8 +230,15 @@ impl AgentPanel {
             system_prompt = profile.system_prompt;
             tools = profile.tools;
             late_tools = profile.late_tools;
+            backend = profile.backend;
         }
-        let (runtime, permission_rx, transcript, mode) = spawn_runtime(
+        let Spawned {
+            runtime,
+            permission_rx,
+            transcript,
+            mode,
+            external,
+        } = spawn_runtime(
             &setup.provider,
             &tools,
             &model,
@@ -230,10 +248,12 @@ impl AgentPanel {
             setup.compaction,
             setup.persist_rule,
             setup.hooks.as_ref(),
+            backend.as_ref(),
             session.as_ref(),
         );
         Self {
             runtime,
+            external,
             permission_rx,
             pending_permission: None,
             session,
@@ -253,6 +273,7 @@ impl AgentPanel {
             model_fetch: None,
             pending_events: Vec::new(),
             hooks: setup.hooks,
+            backend,
             provider: setup.provider,
             tools,
             rules: setup.rules,
@@ -303,9 +324,16 @@ impl AgentPanel {
             system_prompt = profile.system_prompt;
             tools = profile.tools;
             self.late_tools = profile.late_tools;
+            self.backend = profile.backend;
             self.waiting_tools.clear();
         }
-        let (runtime, permission_rx, transcript, mode) = spawn_runtime(
+        let Spawned {
+            runtime,
+            permission_rx,
+            transcript,
+            mode,
+            external,
+        } = spawn_runtime(
             &self.provider,
             &tools,
             &model,
@@ -315,10 +343,12 @@ impl AgentPanel {
             self.compaction,
             self.persist_rule,
             self.hooks.as_ref(),
+            self.backend.as_ref(),
             session.as_ref(),
         );
         // Dropping the old runtime cancels it and asks its worker to stop.
         self.runtime = runtime;
+        self.external = external;
         self.permission_rx = permission_rx;
         self.pending_permission = None;
         self.transcript = transcript;
@@ -398,7 +428,7 @@ impl AgentPanel {
         let message = UserMessage::text(text);
         if self.is_busy() {
             self.runtime.steer(message);
-            self.queued = self.runtime.queues().lens();
+            self.queued = self.runtime.queue_lens();
             self.notice("queued for the next turn", NoticeKind::Info);
         } else {
             match self.runtime.prompt(message) {
@@ -429,7 +459,7 @@ impl AgentPanel {
             AgentEvent::AgentStart => self.busy = true,
             AgentEvent::AgentEnd => {
                 self.busy = false;
-                self.queued = self.runtime.queues().lens();
+                self.queued = self.runtime.queue_lens();
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => self.transcript.push(Item::Assistant {
@@ -792,11 +822,11 @@ impl AgentPanel {
         if !self.waiting_tools.is_empty() && !self.is_busy() {
             let batch = std::mem::take(&mut self.waiting_tools);
             let for_worker = batch.clone();
-            match self.runtime.update(move |agent| {
+            match self.runtime.update(Box::new(move |agent| {
                 for tool in for_worker {
                     agent.tools_mut().insert(tool);
                 }
-            }) {
+            })) {
                 Ok(()) => {
                     for tool in batch {
                         self.tools.insert(tool);
@@ -875,6 +905,34 @@ impl AgentPanel {
             self.notice(format!("no agent named {name}"), NoticeKind::Warn);
             return false;
         };
+        // An external agent, or leaving one: the runtime is rebuilt on the
+        // same session log, which is replayed into the transcript only.
+        if profile.backend.is_some() || self.external {
+            if self.is_busy() {
+                self.notice("finish or stop the current task first", NoticeKind::Warn);
+                return false;
+            }
+            if let Some(session) = &mut self.session {
+                if let Err(error) = session.append_agent_change(name) {
+                    log::warn!("agent session write failed: {error}");
+                }
+            }
+            self.agent = name.to_string();
+            self.system_prompt = profile.system_prompt;
+            self.tools = profile.tools;
+            self.late_tools = profile.late_tools;
+            self.backend = profile.backend;
+            if let Some(mode) = profile.mode {
+                self.rules.mode = mode;
+            }
+            if let Some(id) = profile.model {
+                self.model.id = id;
+            }
+            let session = self.session.take();
+            self.switch_session(session);
+            self.notice(format!("agent: {name}"), NoticeKind::Info);
+            return true;
+        }
         let model = match profile.model {
             Some(id) if id != self.model.id => ModelSpec {
                 id,
@@ -885,11 +943,11 @@ impl AgentPanel {
         let prompt = profile.system_prompt.clone();
         let tools = profile.tools.clone();
         let worker_model = model.clone();
-        if let Err(error) = self.runtime.update(move |agent| {
+        if let Err(error) = self.runtime.update(Box::new(move |agent| {
             agent.set_system_prompt(prompt);
             *agent.tools_mut() = tools;
             agent.set_model(worker_model);
-        }) {
+        })) {
             self.notice(
                 format!("cannot switch the agent: {error}"),
                 NoticeKind::Warn,
@@ -943,7 +1001,11 @@ impl AgentPanel {
             context_window: context_window.unwrap_or(self.model.context_window),
             ..self.model.clone()
         };
-        if let Err(error) = self.runtime.set_model(model.clone()) {
+        let worker_model = model.clone();
+        if let Err(error) = self
+            .runtime
+            .update(Box::new(move |agent| agent.set_model(worker_model)))
+        {
             self.notice(
                 format!("cannot switch the model: {error}"),
                 NoticeKind::Warn,
@@ -1170,8 +1232,20 @@ fn session_model(configured: &ModelSpec, session: Option<&Session>) -> ModelSpec
     }
 }
 
-/// Spawn an agent worker, returning it with its permission channel, a
-/// transcript mirroring `session`'s history and the live mode handle.
+/// What [`spawn_runtime`] hands back.
+struct Spawned {
+    runtime: Box<dyn Backend>,
+    permission_rx: Receiver<PermissionEnvelope>,
+    transcript: Transcript,
+    mode: ModeHandle,
+    external: bool,
+}
+
+/// Spawn the agent — the built-in loop on a worker thread, or the external
+/// agent `backend` makes — with its permission channel, a transcript
+/// mirroring `session`'s history and the live mode handle. An external agent
+/// that cannot start is reported in the transcript and the built-in loop
+/// runs instead.
 #[allow(clippy::too_many_arguments)]
 fn spawn_runtime(
     provider: &Arc<dyn Provider>,
@@ -1183,37 +1257,64 @@ fn spawn_runtime(
     compaction: CompactionPolicy,
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
+    backend: Option<&BackendFactory>,
     session: Option<&Session>,
-) -> (
-    AgentRuntime,
-    Receiver<PermissionEnvelope>,
-    Transcript,
-    ModeHandle,
-) {
+) -> Spawned {
     let cancel = CancelToken::new();
-    let (prompter, permission_rx) = prompter::channel(cancel.clone());
+    let (prompter, permission_rx) = permission_channel(cancel.clone());
     let mut hooks = PermissionHooks::new(rules, Box::new(prompter));
     let mode = hooks.mode_handle();
     if let Some(persist) = persist_rule {
         hooks = hooks.with_persist(Box::new(persist) as PersistRule);
     }
-    let mut agent = Agent::new(
+
+    let mut transcript = Transcript::default();
+    let messages = session.map(Session::context_messages).unwrap_or_default();
+    for message in &messages {
+        push_history(&mut transcript, message);
+    }
+
+    if let Some(factory) = backend {
+        // The external agent gets its own prompter on a channel of its own;
+        // the permission hooks built above are not used for it.
+        let (external_prompter, external_rx) = permission_channel(cancel.clone());
+        match factory(BackendSetup {
+            cwd: cwd.to_path_buf(),
+            prompter: external_prompter,
+            cancel: cancel.clone(),
+        }) {
+            Ok(runtime) => {
+                if !messages.is_empty() {
+                    transcript.push(Item::Notice {
+                        text: "earlier messages are shown but not known to the external agent"
+                            .into(),
+                        kind: NoticeKind::Info,
+                    });
+                }
+                return Spawned {
+                    runtime,
+                    permission_rx: external_rx,
+                    transcript,
+                    mode,
+                    external: true,
+                };
+            }
+            Err(error) => transcript.push(Item::Notice {
+                text: format!("cannot start the external agent: {error}; using the built-in one"),
+                kind: NoticeKind::Error,
+            }),
+        }
+    }
+
+    let agent = Agent::new(
         Arc::clone(provider),
         tools.clone(),
         model.clone(),
         cwd.to_path_buf(),
     )
     .with_system_prompt(system_prompt)
-    .with_compaction(compaction);
-
-    let mut transcript = Transcript::default();
-    if let Some(session) = session {
-        let messages = session.context_messages();
-        for message in &messages {
-            push_history(&mut transcript, message);
-        }
-        agent = agent.with_messages(messages);
-    }
+    .with_compaction(compaction)
+    .with_messages(messages);
     // Command hooks run first: one may block or approve before anyone is
     // asked, and its rewritten arguments are what the rules then judge.
     let hooks: Box<dyn Hooks> = match extra_hooks {
@@ -1221,7 +1322,13 @@ fn spawn_runtime(
         None => Box::new(hooks),
     };
     let runtime = AgentRuntime::spawn_with_cancel(agent, hooks, cancel);
-    (runtime, permission_rx, transcript, mode)
+    Spawned {
+        runtime: Box::new(runtime),
+        permission_rx,
+        transcript,
+        mode,
+        external: false,
+    }
 }
 
 /// Mirror a session's message into transcript items when a session is
@@ -1350,6 +1457,10 @@ impl Panel for AgentPanel {
             }
             PROMPTS_ACTION => self.prompt_picker(),
             AGENT_ACTION => vec![self.agent_picker()],
+            MODEL_ACTION | MODE_ACTION if self.external => {
+                self.notice(PromptError::Unsupported.to_string(), NoticeKind::Warn);
+                vec![PanelEvent::NeedsRedraw]
+            }
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
             SHOW_PROMPT_ACTION => match self.write_system_prompt() {
@@ -1474,7 +1585,7 @@ impl Panel for AgentPanel {
                 let expand = !self.transcript.any_expanded();
                 self.transcript.set_all_expanded(expand);
             }
-            KeyCode::BackTab => {
+            KeyCode::BackTab if !self.external => {
                 let next = self.mode.get().next();
                 return vec![self.set_mode(next), PanelEvent::NeedsRedraw];
             }
@@ -1643,17 +1754,25 @@ impl Panel for AgentPanel {
         // Separators are the panel's job: the status bar concatenates the
         // segments as given.
         let sep = || StatusSegment::new(" │ ", SegmentKind::Label);
-        let mut segments = vec![
-            StatusSegment::new(" ", SegmentKind::Label),
-            StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
-            StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
-            sep(),
-            StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
-            StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
-            sep(),
+        let mut segments = vec![StatusSegment::new(" ", SegmentKind::Label)];
+        if !self.external {
+            // An external agent has its own model and permission model.
+            segments.extend([
+                StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
+                StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
+                sep(),
+                StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
+                StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
+                sep(),
+            ]);
+        }
+        segments.extend([
             StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
             StatusSegment::clickable(self.agent.clone(), SegmentKind::Active, AGENT_ACTION),
-        ];
+        ]);
+        if self.external {
+            segments.push(StatusSegment::new(" (acp)", SegmentKind::Label));
+        }
         if self.model.context_window > 0 && self.context_tokens > 0 {
             let percent = self.context_tokens * 100 / self.model.context_window;
             let kind = if percent >= 80 {
@@ -1815,6 +1934,10 @@ mod tests {
                     name: "review".into(),
                     description: "Reviews diffs".into(),
                 },
+                AgentEntry {
+                    name: "outside".into(),
+                    description: "An external agent".into(),
+                },
             ]
         }
         fn prompts(&self) -> Vec<PromptTemplate> {
@@ -1833,6 +1956,7 @@ mod tests {
                     model: None,
                     mode: None,
                     late_tools: None,
+                    backend: None,
                 }),
                 "review" => Some(AgentProfile {
                     system_prompt: "You review diffs.".into(),
@@ -1840,6 +1964,17 @@ mod tests {
                     model: Some("big".into()),
                     mode: Some(Mode::AcceptEdits),
                     late_tools: None,
+                    backend: None,
+                }),
+                "outside" => Some(AgentProfile {
+                    system_prompt: String::new(),
+                    tools: ToolRegistry::new(),
+                    model: None,
+                    mode: None,
+                    late_tools: None,
+                    backend: Some(Arc::new(|setup: BackendSetup| {
+                        Ok(Box::new(External::new(setup)) as Box<dyn Backend>)
+                    })),
                 }),
                 _ => None,
             }
@@ -1853,6 +1988,7 @@ mod tests {
             catalog: Arc::new(Agents),
             late_tools: None,
             hooks: None,
+            backend: None,
             provider,
             model: ModelSpec {
                 provider: "scripted".into(),
@@ -2176,7 +2312,7 @@ mod tests {
     #[test]
     fn permission_prompt_round_trips_through_the_selection_command() {
         let mut panel = panel(vec![]);
-        let (mut prompter, rx) = prompter::channel(CancelToken::new());
+        let (mut prompter, rx) = permission_channel(CancelToken::new());
         panel.permission_rx = rx;
         let worker = std::thread::spawn(move || {
             prompter.ask(&termide_agent_core::PermissionRequest {
@@ -2493,7 +2629,14 @@ mod tests {
         let PanelEvent::ShowSelect { options, .. } = picker else {
             panic!("expected a picker, got {picker:?}");
         };
-        assert_eq!(options, &["● default", "  review · Reviews diffs"]);
+        assert_eq!(
+            options,
+            &[
+                "● default",
+                "  review · Reviews diffs",
+                "  outside · An external agent"
+            ]
+        );
         assert!(matches!(
             select(&mut panel, picker, 1),
             CommandResult::Handled(true)
@@ -2655,7 +2798,142 @@ mod tests {
             ]
         );
         // The worker got them too: the next run sees the tool in its registry.
-        let agent = panel.runtime.shutdown().expect("agent");
+        let runtime = std::mem::replace(&mut panel.runtime, Box::new(Idle));
+        let agent = runtime.into_agent().expect("agent");
         assert!(agent.tools().get("github__search").is_some());
+    }
+    /// A backend with nothing behind it, to swap out of a panel in a test.
+    struct Idle;
+
+    impl Backend for Idle {
+        fn prompt(&self, _message: UserMessage) -> Result<(), PromptError> {
+            Err(PromptError::Stopped)
+        }
+        fn steer(&self, _message: UserMessage) {}
+        fn queue_lens(&self) -> (usize, usize) {
+            (0, 0)
+        }
+        fn abort(&self) {}
+        fn is_busy(&self) -> bool {
+            false
+        }
+        fn drain(&self) -> Vec<AgentEvent> {
+            Vec::new()
+        }
+        fn update(&self, _update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
+        fn into_agent(self: Box<Self>) -> Option<Agent> {
+            None
+        }
+    }
+
+    /// An "external agent" for tests: answers every prompt with one text
+    /// message, through the same events as the real ACP backend.
+    struct External {
+        events: Mutex<Vec<AgentEvent>>,
+    }
+
+    impl External {
+        fn new(_setup: BackendSetup) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Backend for External {
+        fn prompt(&self, message: UserMessage) -> Result<(), PromptError> {
+            let mut events = self.events.lock().unwrap();
+            events.push(AgentEvent::AgentStart);
+            events.push(AgentEvent::MessageEnd(Message::User(message)));
+            events.push(AgentEvent::MessageEnd(Message::Assistant(
+                AssistantMessage {
+                    content: vec![AssistantContent::Text {
+                        text: "from outside".into(),
+                    }],
+                    stop_reason: StopReason::Stop,
+                    usage: Usage::default(),
+                    provider: "acp".into(),
+                    model: "outside".into(),
+                    error_message: None,
+                    timestamp: 0,
+                },
+            )));
+            events.push(AgentEvent::AgentEnd);
+            Ok(())
+        }
+        fn steer(&self, _message: UserMessage) {}
+        fn queue_lens(&self) -> (usize, usize) {
+            (0, 0)
+        }
+        fn abort(&self) {}
+        fn is_busy(&self) -> bool {
+            false
+        }
+        fn drain(&self) -> Vec<AgentEvent> {
+            std::mem::take(&mut *self.events.lock().unwrap())
+        }
+        fn update(&self, _update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
+        fn into_agent(self: Box<Self>) -> Option<Agent> {
+            None
+        }
+    }
+
+    #[test]
+    fn an_external_agent_replaces_the_loop_and_hides_its_knobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("native")])
+        });
+        type_text(&mut panel, "hello");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+
+        assert!(panel.switch_agent("outside"));
+        assert_eq!(chip(&panel, AGENT_ACTION), "outside");
+        let texts: Vec<String> = panel
+            .status_segments()
+            .into_iter()
+            .map(|s| s.text)
+            .collect();
+        assert!(!texts.iter().any(|t| t.starts_with("Mode")), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.starts_with("Model")), "{texts:?}");
+        assert!(texts.contains(&" (acp)".to_string()));
+        // The earlier conversation is shown, and marked as unknown to the agent.
+        let items = panel.transcript().items();
+        assert!(matches!(&items[0], Item::User { text } if text == "hello"));
+        assert!(items.iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("not known to the external agent"))
+        ));
+
+        // Model and mode are not ours any more.
+        let events = panel.handle_status_action(MODE_ACTION);
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, PanelEvent::ShowSelect { .. })));
+        panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(panel.mode.get(), Mode::Ask);
+
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Assistant { text, .. } if text == "from outside")));
+        // The log records both the switch and the external agent's answer.
+        let session = Session::open(panel.session_path().unwrap()).unwrap();
+        assert_eq!(session.current_agent().as_deref(), Some("outside"));
+        assert_eq!(session.context_messages().len(), 4);
+
+        // Back to the built-in loop.
+        assert!(panel.switch_agent("default"));
+        assert!(!panel.external);
+        assert_eq!(chip(&panel, MODE_ACTION), "ask");
     }
 }

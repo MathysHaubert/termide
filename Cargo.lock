@@ -4849,6 +4849,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "termide-agent-acp"
+version = "0.35.0"
+dependencies = [
+ "log",
+ "serde_json",
+ "tempfile",
+ "termide-agent-core",
+]
+
+[[package]]
 name = "termide-agent-core"
 version = "0.35.0"
 dependencies = [
@@ -4913,6 +4923,7 @@ dependencies = [
  "open",
  "ratatui",
  "tempfile",
+ "termide-agent-acp",
  "termide-agent-core",
  "termide-agent-hooks",
  "termide-agent-mcp",

@@ -109,23 +109,31 @@ impl Transcript {
     }
 
     /// Finish the streaming assistant item with the authoritative message.
+    /// Complete the assistant message being streamed; a message that
+    /// arrives whole, without a `MessageStart` (an external agent's failure,
+    /// for one), is appended as it is.
     pub fn finish_assistant(&mut self, text: String, error: Option<String>) {
-        let index = self.items.len().checked_sub(1);
-        let Some(index) = index else {
-            return;
-        };
-        if let Item::Assistant {
-            text: current,
-            streaming,
-            error: current_error,
-            ..
-        } = &mut self.items[index]
-        {
-            *current = text;
-            *streaming = false;
-            *current_error = error;
-            self.invalidate(index);
+        if let Some(index) = self.items.len().checked_sub(1) {
+            if let Item::Assistant {
+                text: current,
+                streaming: streaming @ true,
+                error: current_error,
+                ..
+            } = &mut self.items[index]
+            {
+                *current = text;
+                *streaming = false;
+                *current_error = error;
+                self.invalidate(index);
+                return;
+            }
         }
+        self.push(Item::Assistant {
+            text,
+            thinking_chars: 0,
+            streaming: false,
+            error,
+        });
     }
 
     pub fn with_tool(&mut self, call_id: &str, f: impl FnOnce(&mut Item)) -> bool {

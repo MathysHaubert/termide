@@ -13,7 +13,9 @@ use std::thread::JoinHandle;
 use crate::agent::{Agent, AgentEvent, Hooks, QueueHandle};
 use crate::cancel::CancelToken;
 use crate::message::UserMessage;
+use crate::permissions::ChannelPrompter;
 use crate::provider::ModelSpec;
+use std::path::PathBuf;
 
 /// Why a prompt was not accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,9 @@ pub enum PromptError {
     Busy,
     /// The worker thread is gone.
     Stopped,
+    /// The backend has no such knob: an external agent takes no model,
+    /// tool or prompt changes from the panel.
+    Unsupported,
 }
 
 impl std::fmt::Display for PromptError {
@@ -29,6 +34,7 @@ impl std::fmt::Display for PromptError {
         match self {
             Self::Busy => f.write_str("agent is busy"),
             Self::Stopped => f.write_str("agent runtime has stopped"),
+            Self::Unsupported => f.write_str("not available for an external agent"),
         }
     }
 }
@@ -40,6 +46,64 @@ enum WorkerCommand {
     /// Applied to the agent between runs.
     Update(Box<dyn FnOnce(&mut Agent) + Send>),
     Shutdown,
+}
+
+/// What the panel hands an external backend when it starts it.
+pub struct BackendSetup {
+    pub cwd: PathBuf,
+    /// Permission prompts go to the user through this.
+    pub prompter: ChannelPrompter,
+    /// Set by the panel's abort.
+    pub cancel: CancelToken,
+}
+
+/// What the panel drives: the built-in agent on its worker thread, or an
+/// external agent speaking ACP. Events come out through [`Backend::drain`]
+/// from the panel's `tick()` either way.
+pub trait Backend: Send {
+    /// Start a run; [`PromptError::Busy`] while one is active.
+    fn prompt(&self, message: UserMessage) -> Result<(), PromptError>;
+    /// Queue a message for the running turn's next boundary.
+    fn steer(&self, message: UserMessage);
+    /// Queued messages: `(steering, follow_up)`.
+    fn queue_lens(&self) -> (usize, usize);
+    /// Ask the active run to stop.
+    fn abort(&self);
+    fn is_busy(&self) -> bool;
+    /// Everything that happened since the last call, without blocking.
+    fn drain(&self) -> Vec<AgentEvent>;
+    /// Change the built-in agent between runs; [`PromptError::Unsupported`]
+    /// for an external one.
+    fn update(&self, update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError>;
+    /// Stop and hand the built-in agent back, when there is one.
+    fn into_agent(self: Box<Self>) -> Option<Agent>;
+}
+
+impl Backend for AgentRuntime {
+    fn prompt(&self, message: UserMessage) -> Result<(), PromptError> {
+        AgentRuntime::prompt(self, message)
+    }
+    fn steer(&self, message: UserMessage) {
+        AgentRuntime::steer(self, message);
+    }
+    fn queue_lens(&self) -> (usize, usize) {
+        self.queues().lens()
+    }
+    fn abort(&self) {
+        AgentRuntime::abort(self);
+    }
+    fn is_busy(&self) -> bool {
+        AgentRuntime::is_busy(self)
+    }
+    fn drain(&self) -> Vec<AgentEvent> {
+        AgentRuntime::drain(self)
+    }
+    fn update(&self, update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
+        AgentRuntime::update(self, update)
+    }
+    fn into_agent(self: Box<Self>) -> Option<Agent> {
+        (*self).shutdown()
+    }
 }
 
 /// Owns the worker thread that runs the agent.

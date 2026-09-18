@@ -18,6 +18,7 @@
 //! - Tool calls can be vetoed by [`Hooks::before_tool_call`]; that is where a
 //!   permission prompt plugs in.
 
+pub mod acp;
 pub mod agent;
 pub mod cancel;
 pub mod compaction;
@@ -32,6 +33,7 @@ pub mod runtime;
 pub mod session;
 pub mod tool;
 
+pub use acp::AcpConfig;
 pub use agent::{
     Agent, AgentConfig, AgentEvent, ChainedHooks, Hooks, NoHooks, QueueHandle, QueueMode,
     ToolDecision,
@@ -54,10 +56,11 @@ pub use message::{
     ToolResultContent, ToolResultMessage, Usage, UserContent, UserMessage,
 };
 pub use permissions::{
-    Decision, Mode, ModeHandle, PermissionAnswer, PermissionHooks, PermissionPrompter,
-    PermissionRequest, PermissionRules, PersistRule,
+    permission_channel, ChannelPrompter, Decision, Mode, ModeHandle, PermissionAnswer,
+    PermissionEnvelope, PermissionHooks, PermissionPrompter, PermissionRequest, PermissionRules,
+    PersistRule,
 };
 pub use provider::{ModelInfo, ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
-pub use runtime::{AgentRuntime, PromptError};
+pub use runtime::{AgentRuntime, Backend, BackendSetup, PromptError};
 pub use session::{Entry, EntryKind, Session, SessionHeader, SessionModel, SessionSummary};
 pub use tool::{LateTools, Tool, ToolContext, ToolRegistry, ToolUpdate};

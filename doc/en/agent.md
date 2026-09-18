@@ -208,6 +208,34 @@ and the session log records the switch, as it does for the **Model** chip.
 A reopened session comes back as the agent it last ran as, and a saved layout
 remembers it too.
 
+### External agents
+
+An agent may be another program altogether: put an `[acp]` table in its
+`agent.toml` and the panel drives it over the
+[Agent Client Protocol](https://agentclientprotocol.com) instead of running
+the built-in loop. Claude Code, Codex and Gemini CLI have ACP adapters or
+speak it natively:
+
+```toml
+description = "Claude Code through its ACP adapter"
+
+[acp]
+command = "npx"
+args = ["-y", "@zed-industries/claude-code-acp"]
+env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
+```
+
+The program starts in the background when you switch to the agent; the first
+request waits for it. Its answers, thoughts and tool calls appear in the
+session like the built-in agent's, its permission requests use the same
+dialog, and it reads and writes files through TermIDE, so an open editor
+follows its edits. The **Model** and **Mode** chips disappear while an
+external agent is active: it has its own. Skills, prompt templates and MCP
+servers are the agent's own affair too; `model`, `mode` and `tools` in
+`agent.toml` do not apply. Switching agents rebuilds the conversation on the
+same session log: earlier messages stay on screen but the external agent
+does not know them, and the panel says so.
+
 ### The system prompt
 
 The prompt the model receives is assembled from files: the template

@@ -17,9 +17,12 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::agent::{Hooks, ToolDecision};
+use crate::cancel::CancelToken;
 use crate::message::ToolCall;
 use crate::tool::ToolContext;
 
@@ -190,6 +193,62 @@ pub enum PermissionAnswer {
 /// Blocks on the agent thread until the user answers.
 pub trait PermissionPrompter: Send {
     fn ask(&mut self, request: &PermissionRequest) -> PermissionAnswer;
+}
+
+// Permission prompts across a thread boundary: the agent thread blocks
+// inside `before_tool_call` until the user answers, so the request travels
+// over a channel and the wait wakes regularly to notice an abort.
+
+/// One outstanding prompt: the request and the channel for its answer.
+pub struct PermissionEnvelope {
+    pub id: u64,
+    pub request: PermissionRequest,
+    pub reply: Sender<PermissionAnswer>,
+}
+
+pub struct ChannelPrompter {
+    tx: Sender<PermissionEnvelope>,
+    cancel: CancelToken,
+    next_id: u64,
+}
+
+/// Build a prompter and the receiver the panel polls from `tick()`.
+pub fn permission_channel(cancel: CancelToken) -> (ChannelPrompter, Receiver<PermissionEnvelope>) {
+    let (tx, rx) = mpsc::channel();
+    (
+        ChannelPrompter {
+            tx,
+            cancel,
+            next_id: 0,
+        },
+        rx,
+    )
+}
+
+impl PermissionPrompter for ChannelPrompter {
+    fn ask(&mut self, request: &PermissionRequest) -> PermissionAnswer {
+        let (reply, answer) = mpsc::channel();
+        self.next_id += 1;
+        let envelope = PermissionEnvelope {
+            id: self.next_id,
+            request: request.clone(),
+            reply,
+        };
+        if self.tx.send(envelope).is_err() {
+            // The panel is gone; nobody can approve anything.
+            return PermissionAnswer::Deny;
+        }
+        loop {
+            match answer.recv_timeout(Duration::from_millis(100)) {
+                Ok(answer) => return answer,
+                Err(RecvTimeoutError::Timeout) if self.cancel.is_cancelled() => {
+                    return PermissionAnswer::Deny;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return PermissionAnswer::Deny,
+            }
+        }
+    }
 }
 
 /// Called when the user chose "allow always", so the host can persist the
@@ -935,5 +994,57 @@ mod tests {
             hooks.decide(&call("skill", json!({ "name": "deploy" })), &ctx()),
             Decision::Allow
         );
+    }
+}
+
+#[cfg(test)]
+mod prompter_tests {
+    use super::*;
+    use crate::message::ToolCall;
+    use serde_json::json;
+
+    fn request() -> PermissionRequest {
+        PermissionRequest {
+            tool: "bash".into(),
+            subject: "git push".into(),
+            call: ToolCall {
+                id: "c".into(),
+                name: "bash".into(),
+                arguments: json!({ "command": "git push" }),
+            },
+            suggested_pattern: "git push *".into(),
+        }
+    }
+
+    #[test]
+    fn answer_travels_back_and_abort_denies() {
+        let cancel = CancelToken::new();
+        let (mut prompter, rx) = permission_channel(cancel.clone());
+
+        let worker = std::thread::spawn({
+            let request = request();
+            move || prompter.ask(&request)
+        });
+        let envelope = rx.recv().unwrap();
+        assert_eq!(envelope.id, 1);
+        assert_eq!(envelope.request.subject, "git push");
+        envelope.reply.send(PermissionAnswer::AllowSession).unwrap();
+        assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
+
+        let (mut prompter, rx) = permission_channel(cancel.clone());
+        let worker = std::thread::spawn({
+            let request = request();
+            move || prompter.ask(&request)
+        });
+        let _pending = rx.recv().unwrap();
+        cancel.cancel();
+        assert_eq!(worker.join().unwrap(), PermissionAnswer::Deny);
+    }
+
+    #[test]
+    fn dropped_panel_denies() {
+        let (mut prompter, rx) = permission_channel(CancelToken::new());
+        drop(rx);
+        assert_eq!(prompter.ask(&request()), PermissionAnswer::Deny);
     }
 }
