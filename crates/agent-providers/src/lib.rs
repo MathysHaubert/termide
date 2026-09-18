@@ -9,7 +9,11 @@
 //! rest of termide (no async runtime); cancellation is polled between SSE
 //! lines.
 
+mod anthropic;
 mod openai;
+mod retry;
 mod sse;
 
-pub use openai::{Compat, OpenAiCompatProvider, RetryPolicy};
+pub use anthropic::AnthropicProvider;
+pub use openai::{Compat, OpenAiCompatProvider};
+pub use retry::RetryPolicy;

@@ -551,8 +551,12 @@ way pi's per-model `compat` table works, instead of one code path per vendor.
 Reasoning between turns: Anthropic requires thinking blocks to be echoed with
 their signature; DeepSeek rejects an echoed `reasoning_content`; vLLM and Qwen
 accept it for the current turn. Decision: keep thinking in the transcript for
-the UI and the session, do not send it back by default, `send_reasoning`
-opts in. An Anthropic provider will need a signature on the thinking block.
+the UI and the session, do not send it back by default; `send_reasoning` opts
+in for OpenAI, and the Anthropic provider drops prior thinking blocks rather
+than replay them, since the transcript does not keep the block signature the
+API demands. Extended thinking for the current turn is requested with a
+`thinking` budget derived from the thinking level and capped below
+`max_tokens`.
 
 Retries: pi retries at the session level (3 attempts, 2 s base), Claude Code and
 Codex inside the client. Decision: inside the provider, only while no content

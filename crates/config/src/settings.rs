@@ -90,7 +90,13 @@ pub struct Config {
 /// holds a secret.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSettings {
+    /// Wire protocol: `openai` (the default, for omlx, OpenAI, OpenRouter and
+    /// most gateways) or `anthropic` (the Messages API).
+    #[serde(default = "agent_defaults::provider")]
+    pub provider: String,
+
     /// Base URL including the API prefix, e.g. `http://127.0.0.1:10000/v1`.
+    /// For `anthropic` it is left at the default unless a gateway is used.
     #[serde(default = "agent_defaults::base_url")]
     pub base_url: String,
 
@@ -126,6 +132,7 @@ pub struct AgentSettings {
 impl Default for AgentSettings {
     fn default() -> Self {
         Self {
+            provider: agent_defaults::provider(),
             base_url: agent_defaults::base_url(),
             model: String::new(),
             api_key_env: agent_defaults::api_key_env(),
@@ -491,6 +498,9 @@ fn default_theme_name() -> String {
 }
 
 mod agent_defaults {
+    pub fn provider() -> String {
+        "openai".to_string()
+    }
     pub fn base_url() -> String {
         "http://127.0.0.1:10000/v1".to_string()
     }

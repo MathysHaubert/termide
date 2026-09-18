@@ -10,12 +10,14 @@ Open it with `Alt+A`, from **Windows → Agent**, or from the command palette
 
 ## Configuring a model
 
-The agent talks to any OpenAI-compatible endpoint. That covers local servers
-(llama.cpp, Ollama, vLLM, omlx) and most hosted gateways. Without a configured
-model the panel refuses to open and says so.
+The agent talks to any OpenAI-compatible endpoint, or to Anthropic's Messages
+API. The OpenAI protocol covers local servers (llama.cpp, Ollama, vLLM, omlx)
+and most hosted gateways, OpenAI and OpenRouter among them. Without a
+configured model the panel refuses to open and says so.
 
 ```toml
 [agent]
+provider = "openai"          # "openai" (the default) or "anthropic"
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
 context_window = 32000
@@ -27,6 +29,15 @@ api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 The API key is read from the environment variable named by `api_key_env`, so
 the configuration file never holds a secret. Local servers usually need no key
 at all; leave the variable unset.
+
+For a hosted OpenAI-compatible endpoint, keep `provider = "openai"` and point
+`base_url` and `api_key_env` at it, for example OpenAI itself
+(`https://api.openai.com/v1`, `OPENAI_API_KEY`) or OpenRouter
+(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). For an Anthropic
+subscription set `provider = "anthropic"`, drop `base_url` (the API root is
+built in; set it only for a gateway) and point `api_key_env` at your
+`ANTHROPIC_API_KEY`; `reasoning = true` then turns on extended thinking. The
+**Model** chip lists the endpoint's models for each.
 
 ## Using the panel
 

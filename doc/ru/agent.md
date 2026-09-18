@@ -10,12 +10,14 @@
 
 ## Настройка модели
 
-Агент работает с любым сервером, совместимым с API OpenAI. Это покрывает
-локальные серверы (llama.cpp, Ollama, vLLM, omlx) и большинство облачных
-шлюзов. Без настроенной модели панель не открывается и сообщает об этом.
+Агент работает с любым сервером, совместимым с API OpenAI, или с Anthropic
+Messages API. Протокол OpenAI покрывает локальные серверы (llama.cpp, Ollama,
+vLLM, omlx) и большинство облачных шлюзов, включая OpenAI и OpenRouter. Без
+настроенной модели панель не открывается и сообщает об этом.
 
 ```toml
 [agent]
+provider = "openai"          # "openai" (по умолчанию) или "anthropic"
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
 context_window = 32000
@@ -27,6 +29,15 @@ api_key_env = "OPENAI_API_KEY"   # имя переменной, а не сам �
 Ключ API читается из переменной окружения, названной в `api_key_env`, поэтому
 файл настроек никогда не содержит секрета. Локальным серверам ключ обычно не
 нужен, оставьте переменную незаданной.
+
+Для облачного OpenAI-совместимого сервера оставьте `provider = "openai"` и
+укажите `base_url` и `api_key_env`, например сам OpenAI
+(`https://api.openai.com/v1`, `OPENAI_API_KEY`) или OpenRouter
+(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). Для подписки Anthropic
+задайте `provider = "anthropic"`, уберите `base_url` (корень API встроен;
+задавайте его только для шлюза) и укажите `api_key_env` с вашим
+`ANTHROPIC_API_KEY`; тогда `reasoning = true` включает расширенное мышление.
+Чип **Model** перечисляет модели каждого сервера.
 
 ## Работа с панелью
 

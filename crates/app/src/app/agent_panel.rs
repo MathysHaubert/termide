@@ -15,7 +15,7 @@ use termide_agent_core::{
 };
 use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
-use termide_agent_providers::{Compat, OpenAiCompatProvider};
+use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool, SubagentRun, TaskTool};
 use termide_config::AgentSettings;
 use termide_panel_agent::{
@@ -404,14 +404,7 @@ fn agent_setup(
     } else {
         std::env::var(&settings.api_key_env).ok()
     };
-    let provider = Arc::new(
-        OpenAiCompatProvider::new("agent", settings.base_url.clone())
-            .with_api_key(api_key)
-            .with_compat(Compat {
-                reasoning_effort: settings.reasoning,
-                ..Compat::default()
-            }),
-    );
+    let provider: Arc<dyn Provider> = build_provider(settings, api_key);
 
     let mut catalog = FsCatalog::new(&cwd, project_root);
     // The subagent runner shares the provider, the rules and the model
@@ -489,6 +482,44 @@ fn agent_setup(
         session_dir,
         session,
     }
+}
+
+/// The provider named by `settings.provider`: the Anthropic Messages API, or
+/// the OpenAI-compatible endpoint for everything else. An unknown name falls
+/// back to OpenAI-compatible with a warning.
+fn build_provider(settings: &AgentSettings, api_key: Option<String>) -> Arc<dyn Provider> {
+    match settings.provider.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => {
+            // The default base URL points at a local OpenAI server, which is
+            // not Anthropic's; use the API root unless the user set another.
+            let mut anthropic = if settings.base_url == default_openai_base_url() {
+                AnthropicProvider::new("agent")
+            } else {
+                AnthropicProvider::with_base_url("agent", settings.base_url.clone())
+            };
+            anthropic = anthropic.with_api_key(api_key);
+            Arc::new(anthropic)
+        }
+        other => {
+            if !other.is_empty() && other != "openai" && other != "openai-compatible" {
+                log::warn!("unknown agent provider {other:?}; using the OpenAI-compatible one");
+            }
+            Arc::new(
+                OpenAiCompatProvider::new("agent", settings.base_url.clone())
+                    .with_api_key(api_key)
+                    .with_compat(Compat {
+                        reasoning_effort: settings.reasoning,
+                        ..Compat::default()
+                    }),
+            )
+        }
+    }
+}
+
+/// The shipped default base URL, used to tell "left at default" from "set on
+/// purpose" when picking a provider.
+fn default_openai_base_url() -> String {
+    AgentSettings::default().base_url
 }
 
 /// Append an "allow always" rule to the project's `.termide/config.toml`.

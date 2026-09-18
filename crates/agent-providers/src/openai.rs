@@ -9,6 +9,7 @@ use termide_agent_core::{
     StopReason, StreamEvent, ThinkingLevel,
 };
 
+use crate::retry::{with_retries, Failure, RetryPolicy};
 use crate::sse::Accumulator;
 
 /// Vendor quirks, expressed as data.
@@ -34,22 +35,6 @@ impl Default for Compat {
             reasoning_effort: false,
             send_reasoning: false,
             extra_body: Map::new(),
-        }
-    }
-}
-
-/// Exponential backoff for transient failures before any content arrived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RetryPolicy {
-    pub max_attempts: u32,
-    pub base_delay: Duration,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            base_delay: Duration::from_secs(1),
         }
     }
 }
@@ -354,53 +339,15 @@ impl Provider for OpenAiCompatProvider {
     ) -> AssistantMessage {
         let body = self.build_body(request).to_string();
         let model = request.model.id.as_str();
-        let max_attempts = self.retry.max_attempts.max(1);
-        let mut attempt = 1;
-        loop {
-            if cancel.is_cancelled() {
-                return AssistantMessage::failed(&self.name, model, StopReason::Aborted, "aborted");
-            }
-            match self.attempt(&body, model, on_event, cancel) {
-                Ok(message) => return message,
-                Err(failure) if failure.retryable && attempt < max_attempts => {
-                    let delay = self.retry.base_delay * 2u32.saturating_pow(attempt - 1);
-                    log::warn!(
-                        "{} request failed (attempt {attempt}/{max_attempts}): {}; retrying in {delay:?}",
-                        self.name,
-                        failure.message
-                    );
-                    on_event(StreamEvent::Retry {
-                        attempt,
-                        max_attempts,
-                        delay_ms: delay.as_millis() as u64,
-                        error: failure.message,
-                    });
-                    if !sleep_unless_cancelled(delay, cancel) {
-                        return AssistantMessage::failed(
-                            &self.name,
-                            model,
-                            StopReason::Aborted,
-                            "aborted",
-                        );
-                    }
-                    attempt += 1;
-                }
-                Err(failure) => {
-                    return AssistantMessage::failed(
-                        &self.name,
-                        model,
-                        StopReason::Error,
-                        failure.message,
-                    );
-                }
-            }
-        }
+        with_retries(
+            &self.name,
+            model,
+            self.retry,
+            cancel,
+            on_event,
+            |on_event| self.attempt(&body, model, on_event, cancel),
+        )
     }
-}
-
-struct Failure {
-    message: String,
-    retryable: bool,
 }
 
 fn failed_after_content(
@@ -481,21 +428,6 @@ fn error_text(body: &str) -> String {
     } else {
         text.chars().take(500).collect()
     }
-}
-
-/// Sleep in slices so an abort is noticed; `false` if cancelled.
-fn sleep_unless_cancelled(total: Duration, cancel: &CancelToken) -> bool {
-    let slice = Duration::from_millis(50);
-    let mut slept = Duration::ZERO;
-    while slept < total {
-        if cancel.is_cancelled() {
-            return false;
-        }
-        let step = slice.min(total - slept);
-        std::thread::sleep(step);
-        slept += step;
-    }
-    !cancel.is_cancelled()
 }
 
 #[cfg(test)]

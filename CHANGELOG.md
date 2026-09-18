@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem root
   down to the working directory.
 
+  Works with any OpenAI-compatible endpoint (local servers, OpenAI,
+  OpenRouter and most gateways) or, with `provider = "anthropic"`, natively
+  with an Anthropic subscription over the Messages API.
+
   Every session is logged as JSON Lines under `ai/sessions/` in the
   configuration directory; the log records the model and the agent, so a
   reopened session continues on both. The panel's `[≡]` menu starts, renames
