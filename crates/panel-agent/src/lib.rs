@@ -19,10 +19,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
-    civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision, Message,
-    Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules,
-    PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, ToolRegistry,
-    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision,
+    LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks,
+    PermissionRules, PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent,
+    Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
@@ -76,6 +76,8 @@ pub struct AgentPanelSetup {
     pub agent: String,
     /// Resolves agent definitions when the user switches agents.
     pub catalog: Arc<dyn AgentCatalog>,
+    /// Tools that arrive after the start (MCP servers connecting).
+    pub late_tools: Option<Receiver<LateTools>>,
     pub provider: Arc<dyn Provider>,
     pub model: ModelSpec,
     pub tools: ToolRegistry,
@@ -110,6 +112,8 @@ pub struct AgentProfile {
     pub tools: ToolRegistry,
     pub model: Option<String>,
     pub mode: Option<Mode>,
+    /// Tools still connecting (MCP servers); they join `tools` as they come.
+    pub late_tools: Option<Receiver<LateTools>>,
 }
 
 /// The app's view of the agent definitions (`agents/<name>/` across the
@@ -138,6 +142,10 @@ pub struct AgentPanel {
     agent_choices: Vec<String>,
     /// Prompt templates offered by the last picker, in the order shown.
     prompt_choices: Vec<PromptTemplate>,
+    /// Tools still connecting, and those that arrived while a run was in
+    /// flight and wait for the worker to be free.
+    late_tools: Option<Receiver<LateTools>>,
+    waiting_tools: Vec<Arc<dyn Tool>>,
     model: ModelSpec,
     /// The model from the configuration: the base every session's model is
     /// built on, since the log records only an id and a context window.
@@ -190,13 +198,20 @@ impl AgentPanel {
             )
         });
         let model = session_model(&setup.model, session.as_ref());
-        let (agent, system_prompt, tools) = session_agent(
-            setup.catalog.as_ref(),
-            &setup.agent,
+        let (mut agent, mut system_prompt, mut tools, mut late_tools) = (
+            setup.agent,
             setup.system_prompt,
             setup.tools,
-            session.as_ref(),
+            setup.late_tools,
         );
+        if let Some((name, profile)) =
+            session_agent(setup.catalog.as_ref(), &agent, session.as_ref())
+        {
+            agent = name;
+            system_prompt = profile.system_prompt;
+            tools = profile.tools;
+            late_tools = profile.late_tools;
+        }
         let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &setup.provider,
             &tools,
@@ -222,6 +237,8 @@ impl AgentPanel {
             catalog: setup.catalog,
             agent_choices: Vec::new(),
             prompt_choices: Vec::new(),
+            late_tools,
+            waiting_tools: Vec::new(),
             mode,
             model_choices: Vec::new(),
             model_fetch: None,
@@ -264,13 +281,20 @@ impl AgentPanel {
             )
         });
         let model = session_model(&self.configured_model, session.as_ref());
-        let (agent, system_prompt, tools) = session_agent(
-            self.catalog.as_ref(),
-            &self.agent,
+        let (mut agent, mut system_prompt, mut tools) = (
+            self.agent.clone(),
             self.system_prompt.clone(),
             self.tools.clone(),
-            session.as_ref(),
         );
+        if let Some((name, profile)) =
+            session_agent(self.catalog.as_ref(), &agent, session.as_ref())
+        {
+            agent = name;
+            system_prompt = profile.system_prompt;
+            tools = profile.tools;
+            self.late_tools = profile.late_tools;
+            self.waiting_tools.clear();
+        }
         let (runtime, permission_rx, transcript, mode) = spawn_runtime(
             &self.provider,
             &tools,
@@ -517,8 +541,14 @@ impl AgentPanel {
             // line already shows the call as pending, so a notice would only
             // linger misleadingly once the prompt is answered.
             let request = &envelope.request;
+            // MCP tools and others without a path or command have no subject.
+            let title = if request.subject.is_empty() {
+                format!("Agent wants to run {}", request.tool)
+            } else {
+                format!("Agent wants to run {}: {}", request.tool, request.subject)
+            };
             events.push(PanelEvent::ShowSelect {
-                title: format!("Agent wants to run {}: {}", request.tool, request.subject),
+                title,
                 options: PERMISSION_OPTIONS
                     .iter()
                     .enumerate()
@@ -713,6 +743,60 @@ impl AgentPanel {
         }
     }
 
+    /// Take in tools that finished connecting and hand them to the worker as
+    /// soon as it is between runs. `true` when something was shown.
+    fn poll_late_tools(&mut self) -> bool {
+        let mut arrivals = Vec::new();
+        let mut disconnected = false;
+        if let Some(rx) = &self.late_tools {
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => arrivals.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if disconnected {
+            self.late_tools = None;
+        }
+        let changed = !arrivals.is_empty();
+        for event in arrivals {
+            match event {
+                LateTools::Ready { source, tools } => {
+                    self.notice(
+                        format!("mcp {source}: {} tools connected", tools.len()),
+                        NoticeKind::Info,
+                    );
+                    self.waiting_tools.extend(tools);
+                }
+                LateTools::Failed { source, error } => {
+                    self.notice(format!("mcp {source}: {error}"), NoticeKind::Warn);
+                }
+            }
+        }
+        if !self.waiting_tools.is_empty() && !self.is_busy() {
+            let batch = std::mem::take(&mut self.waiting_tools);
+            let for_worker = batch.clone();
+            match self.runtime.update(move |agent| {
+                for tool in for_worker {
+                    agent.tools_mut().insert(tool);
+                }
+            }) {
+                Ok(()) => {
+                    for tool in batch {
+                        self.tools.insert(tool);
+                    }
+                }
+                Err(_) => self.waiting_tools = batch,
+            }
+        }
+        changed
+    }
+
     /// Offer the prompt templates; choosing one puts `/<name> ` into the
     /// input so arguments can follow.
     fn prompt_picker(&mut self) -> Vec<PanelEvent> {
@@ -815,6 +899,8 @@ impl AgentPanel {
         self.model = model;
         self.system_prompt = profile.system_prompt;
         self.tools = profile.tools;
+        self.late_tools = profile.late_tools;
+        self.waiting_tools.clear();
         if let Some(session) = &mut self.session {
             if let Err(error) = session.append_agent_change(name) {
                 log::warn!("agent session write failed: {error}");
@@ -1038,26 +1124,24 @@ fn start_session(
     Some(session)
 }
 
-/// The agent `session` last ran as, with its prompt and tools resolved
-/// through `catalog`, when that is not `current`; otherwise the current
-/// agent with the prompt and tools given. An agent the log names but no
-/// root defines any more is reported and the current one kept.
+/// The agent `session` last ran as, resolved through `catalog`, when that
+/// is not `current`. An agent the log names but no root defines any more is
+/// reported and `None` returned, keeping the current one.
 fn session_agent(
     catalog: &dyn AgentCatalog,
     current: &str,
-    system_prompt: String,
-    tools: ToolRegistry,
     session: Option<&Session>,
-) -> (String, String, ToolRegistry) {
-    match session.and_then(Session::current_agent) {
-        Some(name) if name != current => match catalog.resolve(&name) {
-            Some(profile) => (name, profile.system_prompt, profile.tools),
-            None => {
-                log::warn!("session ran as agent {name}, which no longer exists; using {current}");
-                (current.to_string(), system_prompt, tools)
-            }
-        },
-        _ => (current.to_string(), system_prompt, tools),
+) -> Option<(String, AgentProfile)> {
+    let name = session.and_then(Session::current_agent)?;
+    if name == current {
+        return None;
+    }
+    match catalog.resolve(&name) {
+        Some(profile) => Some((name, profile)),
+        None => {
+            log::warn!("session ran as agent {name}, which no longer exists; using {current}");
+            None
+        }
     }
 }
 
@@ -1452,6 +1536,7 @@ impl Panel for AgentPanel {
         }
         let mut events = self.poll_permissions();
         events.append(&mut self.pending_events);
+        changed |= self.poll_late_tools();
         let fetched = self.model_fetch.as_ref().map(Receiver::try_recv);
         match fetched {
             Some(Ok(result)) => {
@@ -1729,12 +1814,14 @@ mod tests {
                     tools: ToolRegistry::new(),
                     model: None,
                     mode: None,
+                    late_tools: None,
                 }),
                 "review" => Some(AgentProfile {
                     system_prompt: "You review diffs.".into(),
                     tools: ToolRegistry::new(),
                     model: Some("big".into()),
                     mode: Some(Mode::AcceptEdits),
+                    late_tools: None,
                 }),
                 _ => None,
             }
@@ -1746,6 +1833,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             agent: "default".into(),
             catalog: Arc::new(Agents),
+            late_tools: None,
             provider,
             model: ModelSpec {
                 provider: "scripted".into(),
@@ -2486,5 +2574,69 @@ mod tests {
         assert_eq!(options, &["/review <path> · Review a file"]);
         select(&mut panel, picker, 0);
         assert_eq!(panel.input_text(), "/review ");
+    }
+    /// A tool with nothing behind it, standing in for one an MCP server sent.
+    struct Late(&'static str);
+
+    impl termide_agent_core::Tool for Late {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn description(&self) -> &str {
+            "late"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object" })
+        }
+        fn execute(
+            &self,
+            call: &termide_agent_core::ToolCall,
+            _ctx: &termide_agent_core::ToolContext,
+            _on_update: &mut dyn FnMut(ToolUpdate),
+            _cancel: &CancelToken,
+        ) -> ToolResultMessage {
+            ToolResultMessage::text(call, "late")
+        }
+    }
+
+    #[test]
+    fn late_tools_join_the_registry_and_failures_are_reported() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            late_tools: Some(rx),
+            ..setup(vec![])
+        });
+        tx.send(LateTools::Ready {
+            source: "github".into(),
+            tools: vec![Arc::new(Late("github__search"))],
+        })
+        .unwrap();
+        tx.send(LateTools::Failed {
+            source: "ghost".into(),
+            error: "cannot start ghost-server".into(),
+        })
+        .unwrap();
+        let events = panel.tick();
+        assert!(!events.is_empty());
+        assert!(panel.tools.get("github__search").is_some());
+        let notices: Vec<String> = panel
+            .transcript()
+            .items()
+            .iter()
+            .filter_map(|item| match item {
+                Item::Notice { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            [
+                "mcp github: 1 tools connected",
+                "mcp ghost: cannot start ghost-server"
+            ]
+        );
+        // The worker got them too: the next run sees the tool in its registry.
+        let agent = panel.runtime.shutdown().expect("agent");
+        assert!(agent.tools().get("github__search").is_some());
     }
 }

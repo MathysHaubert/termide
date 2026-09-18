@@ -295,6 +295,17 @@ mod tests {
     struct GatedProvider {
         gate: Mutex<Option<mpsc::Receiver<()>>>,
         cancelled: Arc<AtomicBool>,
+        /// Set once `stream` is entered, so a test can steer only after the
+        /// loop has passed its pre-call queue check.
+        entered: Arc<AtomicBool>,
+    }
+
+    fn wait_until(flag: &AtomicBool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !flag.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "provider was never called");
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     impl Provider for GatedProvider {
@@ -307,6 +318,7 @@ mod tests {
             _on_event: &mut dyn FnMut(StreamEvent),
             cancel: &CancelToken,
         ) -> AssistantMessage {
+            self.entered.store(true, Ordering::Release);
             if let Some(gate) = self.gate.lock().unwrap().take() {
                 let _ = gate.recv();
             }
@@ -327,9 +339,11 @@ mod tests {
     fn second_prompt_while_busy_is_rejected_and_abort_reaches_the_provider() {
         let (release, gate) = mpsc::channel::<()>();
         let cancelled = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(AtomicBool::new(false));
         let provider = Arc::new(GatedProvider {
             gate: Mutex::new(Some(gate)),
             cancelled: cancelled.clone(),
+            entered: entered.clone(),
         });
         let agent = Agent::new(
             provider,
@@ -346,6 +360,9 @@ mod tests {
             Err(PromptError::Busy)
         );
 
+        // Steering before the model call would be delivered at once; the
+        // queue is only observable once the provider blocks.
+        wait_until(&entered);
         runtime.steer(UserMessage::text("queued"));
         assert_eq!(runtime.queues().lens(), (1, 0));
         let (steering, _) = runtime.clear_queue();
@@ -391,6 +408,7 @@ mod tests {
         let provider = Arc::new(GatedProvider {
             gate: Mutex::new(Some(gate)),
             cancelled: Arc::new(AtomicBool::new(false)),
+            entered: Arc::new(AtomicBool::new(false)),
         });
         let agent = Agent::new(
             provider,

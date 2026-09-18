@@ -23,6 +23,7 @@ pub mod cancel;
 pub mod compaction;
 pub mod context;
 pub mod layers;
+pub mod mcp;
 pub mod message;
 pub mod permissions;
 pub mod provider;
@@ -44,6 +45,7 @@ pub use layers::{
     PromptTemplate, SkillInfo, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR, PROMPTS_DIR,
     ROOT_SOUL_FILE, SESSIONS_DIR, SHARED_SKILLS_DIR, SKILLS_DIR, SKILL_FILE, SOUL_FILE, SPEC_FILE,
 };
+pub use mcp::{expand_env, McpServerConfig, MCP_FILE};
 pub use message::{
     now_millis, AssistantContent, AssistantMessage, Message, StopReason, ToolCall,
     ToolResultContent, ToolResultMessage, Usage, UserContent, UserMessage,
@@ -55,4 +57,4 @@ pub use permissions::{
 pub use provider::{ModelInfo, ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
 pub use runtime::{AgentRuntime, PromptError};
 pub use session::{Entry, EntryKind, Session, SessionHeader, SessionModel, SessionSummary};
-pub use tool::{Tool, ToolContext, ToolRegistry, ToolUpdate};
+pub use tool::{LateTools, Tool, ToolContext, ToolRegistry, ToolUpdate};

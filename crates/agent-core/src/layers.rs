@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::context::SEED_TEMPLATE;
+use crate::mcp::{McpServerConfig, MCP_FILE};
 use crate::permissions::Mode;
 
 /// The `ai` directory inside the configuration directory.
@@ -210,6 +211,32 @@ impl AgentDirs {
             skill_roots.push(global.join(SKILLS_DIR));
         }
         Self { roots, skill_roots }
+    }
+
+    /// MCP servers from every root's `mcp.toml`, by name; a higher root's
+    /// table for a name wins, and `enabled = false` there drops the server.
+    /// A file that does not parse is reported and skipped.
+    #[must_use]
+    pub fn mcp_servers(&self) -> BTreeMap<String, McpServerConfig> {
+        let mut servers: BTreeMap<String, McpServerConfig> = BTreeMap::new();
+        for root in &self.roots {
+            let path = root.join(MCP_FILE);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let parsed: BTreeMap<String, McpServerConfig> = match toml::from_str(&text) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    log::warn!("ignoring {}: {error}", path.display());
+                    continue;
+                }
+            };
+            for (name, config) in parsed {
+                servers.entry(name).or_insert(config);
+            }
+        }
+        servers.retain(|_, config| config.enabled);
+        servers
     }
 
     /// Every prompt template the roots define (`prompts/<name>.md`), by
@@ -576,5 +603,37 @@ mod tests {
             body: "Cost $5, $HOME, $0, $2 end".into(),
         };
         assert_eq!(odd.expand("one"), "Cost , $HOME, $0,  end");
+    }
+    #[test]
+    fn mcp_servers_merge_by_name_and_can_be_switched_off_above() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("ai");
+        std::fs::create_dir_all(project.join(".termide/ai")).unwrap();
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join(MCP_FILE),
+            "[github]\ncommand = \"npx\"\n\n[fs]\ncommand = \"fs-server\"\ntools = [\"read_file\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.join(".termide/ai").join(MCP_FILE),
+            "[github]\ncommand = \"npx\"\nenabled = false\n\n[db]\ncommand = \"db-server\"\n",
+        )
+        .unwrap();
+        let servers = AgentDirs::new(&project, None, Some(&global)).mcp_servers();
+        assert_eq!(servers.keys().collect::<Vec<_>>(), ["db", "fs"]);
+        assert_eq!(
+            servers["fs"].tools.as_deref(),
+            Some(&["read_file".to_string()][..])
+        );
+        std::fs::write(global.join(MCP_FILE), "not = toml = at all").unwrap();
+        assert_eq!(
+            AgentDirs::new(&project, None, Some(&global))
+                .mcp_servers()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["db"]
+        );
     }
 }

@@ -1,0 +1,14 @@
+[package]
+name = "termide-agent-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP client for the termide coding agent: tools from servers over stdio"
+
+[dependencies]
+log.workspace = true
+serde_json.workspace = true
+
+termide-agent-core = { path = "../agent-core" }

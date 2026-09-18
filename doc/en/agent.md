@@ -82,7 +82,8 @@ configuration file; the panel starts from `[agent]` again the next time.
 
 ## Tools
 
-The agent has four tools.
+The agent has four built-in tools, plus those its MCP servers provide (see
+[MCP servers](#mcp-servers)).
 
 - **read** returns a file with line numbers, paged with an offset when a file
   is long.
@@ -176,6 +177,7 @@ ai/
   agents/<name>/agent.toml what else sets the agent apart (optional)
   skills/<name>/SKILL.md   skills, see below
   prompts/<name>.md        prompt templates, typed as /name
+  mcp.toml                 MCP servers, see below
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -293,6 +295,39 @@ session as what the model actually received. **Insert prompt…** in the `[≡]`
 menu lists the templates and puts the chosen `/name ` into the input. A
 message starting with `/` that names no template is not sent; a path such as
 `/usr/bin/ls` is plain text.
+
+### MCP servers
+
+Tools from [MCP](https://modelcontextprotocol.io) servers join the built-in
+ones. A server is a table in `mcp.toml`, at any of the three levels; the same
+name higher up replaces the table below, and `enabled = false` there switches
+a server off for a project or a directory.
+
+```toml
+[github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }   # $NAME comes from your environment
+tools = ["search_issues", "get_issue", "create_issue"]      # optional: a subset
+timeout_secs = 60                                            # startup and one call
+```
+
+Servers speak over stdio: TermIDE starts the process when the panel opens,
+in the background, and reports in the session when it is connected or why it
+is not. Its tools appear as `<server>__<tool>` (for example
+`github__search_issues`), the shape OpenAI-compatible endpoints accept; they
+are not listed in the system prompt, the model sees their schemas directly.
+Every schema travels with every request, so a server with dozens of tools is
+worth narrowing with `tools`; the log says so when a server has more than
+twenty and no such list.
+
+An MCP tool asks for permission like any other tool that no rule covers,
+except in `auto` mode. "Allow always" writes a rule for the tool name:
+
+```toml
+[agent.permissions.github__search_issues]
+"*" = "allow"
+```
 
 ### Project instructions
 

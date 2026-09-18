@@ -68,6 +68,20 @@ pub trait Tool: Send + Sync {
     }
 }
 
+/// Tools that arrive after the agent started — an MCP server that finished
+/// connecting — or word that they will not.
+#[derive(Clone)]
+pub enum LateTools {
+    Ready {
+        source: String,
+        tools: Vec<Arc<dyn Tool>>,
+    },
+    Failed {
+        source: String,
+        error: String,
+    },
+}
+
 /// Ordered set of tools; insertion order is the order the model sees.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {

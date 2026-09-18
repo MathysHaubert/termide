@@ -211,6 +211,31 @@ model received. A leading `/` is a command only when the first word is a
 plain name; an unknown name is refused rather than sent, so a typo does not
 reach the model.
 
+MCP:
+
+| | Claude Code | Codex | OpenCode | termide |
+|---|---|---|---|---|
+| Transport | stdio, SSE, HTTP | stdio, HTTP | stdio, HTTP | stdio |
+| Taken from a server | tools, prompts, resources | tools | tools | tools |
+| Configuration | `.mcp.json`, `~/.claude.json` | `[mcp_servers.<name>]` in `config.toml` | `opencode.json` | `ai/mcp.toml` at the three levels |
+| Tool names | `mcp__server__tool` | `server/tool` | `server_tool` | `server__tool` |
+| Permissions | allow-list of `mcp__*` | per-server approval | per-tool | the per-tool rules, `ask` by default |
+
+Decisions (`crates/agent-mcp`): stdio only, because the servers that matter
+for a local coding agent run locally and it spares the crate OAuth and HTTP
+plumbing; tools only, since prompts are ours and resources are files the
+model reads anyway. Names use `__` because OpenAI-compatible endpoints accept
+only `[A-Za-z0-9_-]` in a function name, which rules out `/` and `.`.
+Connecting happens on a thread per server and the tools arrive as
+`LateTools` through a subscription: an `npx` server takes seconds to come
+up and the panel must not wait for it; the panel hands them to the worker
+between runs with `AgentRuntime::update`. MCP tools carry no prompt snippet,
+their schemas already reach the model, and a `tools` filter plus a warning
+past twenty tools keep the per-request cost visible — the same reasoning as
+for skills. The client is blocking JSON-RPC over pipes with a reader thread,
+no tokio, like the rest of the agent; a server's own requests (roots,
+sampling) are declined with -32601.
+
 The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 `{{environment}}` and `{{project_instructions}}` placeholders: the `ai`
 directory's root `AGENTS.md` for the default agent (the user's decision — the

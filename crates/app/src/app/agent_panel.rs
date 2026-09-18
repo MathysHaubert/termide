@@ -10,6 +10,7 @@ use termide_agent_core::{
     build_system_prompt, discover_context_files, ensure_global_layout, AgentDirs, Decision,
     ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
+use termide_agent_mcp::Connections;
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool};
 use termide_config::AgentSettings;
@@ -95,6 +96,8 @@ struct FsCatalog {
     cwd: PathBuf,
     project_root: PathBuf,
     dirs: AgentDirs,
+    /// The panel's MCP servers; connected once, shared by every agent.
+    mcp: Arc<Connections>,
 }
 
 impl FsCatalog {
@@ -111,10 +114,12 @@ impl FsCatalog {
     }
 
     fn with_global(cwd: &Path, project_root: &Path, global_agent_dir: Option<PathBuf>) -> Self {
+        let dirs = AgentDirs::new(cwd, Some(project_root), global_agent_dir.as_deref());
         Self {
             cwd: cwd.to_path_buf(),
             project_root: project_root.to_path_buf(),
-            dirs: AgentDirs::new(cwd, Some(project_root), global_agent_dir.as_deref()),
+            mcp: Connections::new(dirs.mcp_servers()),
+            dirs,
         }
     }
 }
@@ -175,6 +180,7 @@ impl AgentCatalog for FsCatalog {
             tools,
             model: definition.spec.model,
             mode: definition.spec.mode,
+            late_tools: (!self.mcp.is_empty()).then(|| self.mcp.subscribe()),
         })
     }
 }
@@ -239,6 +245,7 @@ fn agent_setup(
         cwd,
         agent,
         catalog: Arc::new(catalog),
+        late_tools: profile.late_tools,
         provider,
         model,
         tools: profile.tools,

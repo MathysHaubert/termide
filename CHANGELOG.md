@@ -75,7 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agentskills.io shape (`skills/<name>/SKILL.md`, also `.agents/skills/`)
   are listed in the prompt by name and description and loaded on demand
   with a `skill` tool. Prompt templates `prompts/<name>.md` are sent as
-  `/name args`, with `$ARGUMENTS` and `$1`…`$9` filled in.
+  `/name args`, with `$ARGUMENTS` and `$1`…`$9` filled in. MCP servers
+  declared in `mcp.toml` are started over stdio when the panel opens and
+  their tools join the agent's as `server__tool`, under the same permission
+  rules.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and

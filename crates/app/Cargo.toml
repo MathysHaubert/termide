@@ -62,6 +62,7 @@ termide-panel-misc = { path = "../panel-misc" }
 termide-agent-core = { path = "../agent-core" }
 termide-agent-providers = { path = "../agent-providers" }
 termide-agent-tools = { path = "../agent-tools" }
+termide-agent-mcp = { path = "../agent-mcp" }
 termide-panel-agent = { path = "../panel-agent" }
 termide-panel-operations = { path = "../panel-operations" }
 termide-panel-outline = { path = "../panel-outline" }
