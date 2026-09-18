@@ -491,14 +491,25 @@ fn agent_setup(
 /// prompt, so it runs under the configured rules and mode with everything
 /// else refused (as a subagent does); set `mode = "auto"` or add allow rules
 /// for unattended use. Returns the process exit code.
+/// How a headless run reports its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadlessOutput {
+    /// The answer streamed to stdout, tool activity to stderr.
+    Text,
+    /// One JSON object printed at the end: answer, usage, tool calls, status.
+    Json,
+}
+
 pub fn run_agent_headless(
     settings: &AgentSettings,
     cwd: &Path,
     project_root: &Path,
     agent_name: Option<&str>,
     prompt: &str,
+    output: HeadlessOutput,
 ) -> i32 {
     use std::io::Write;
+    let json = output == HeadlessOutput::Json;
 
     if settings.model.trim().is_empty() {
         eprintln!("termide: no agent model configured (set [agent].model)");
@@ -575,13 +586,18 @@ pub fn run_agent_headless(
     let cancel = CancelToken::new();
     let stdout = std::io::stdout();
     let mut wrote_text = false;
+    // Tool calls in call order: (id, name, subject, is_error), for the JSON
+    // report and, in text mode, the stderr activity lines.
+    let mut tools: Vec<(String, String, String, bool)> = Vec::new();
     {
         let mut emit = |event: AgentEvent| match event {
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(text)) => {
-                let mut out = stdout.lock();
-                let _ = out.write_all(text.as_bytes());
-                let _ = out.flush();
-                wrote_text = true;
+                if !json {
+                    let mut out = stdout.lock();
+                    let _ = out.write_all(text.as_bytes());
+                    let _ = out.flush();
+                    wrote_text = true;
+                }
             }
             AgentEvent::ToolExecutionStart { call } => {
                 let subject = subject_of(
@@ -590,14 +606,20 @@ pub fn run_agent_headless(
                         cwd: cwd.to_path_buf(),
                     },
                 );
-                if subject.is_empty() {
-                    eprintln!("· {}", call.name);
-                } else {
-                    eprintln!("· {} {subject}", call.name);
+                if !json {
+                    if subject.is_empty() {
+                        eprintln!("· {}", call.name);
+                    } else {
+                        eprintln!("· {} {subject}", call.name);
+                    }
                 }
+                tools.push((call.id.clone(), call.name.clone(), subject, false));
             }
             AgentEvent::ToolExecutionEnd { result } => {
-                if result.is_error {
+                if let Some(entry) = tools.iter_mut().find(|t| t.0 == result.tool_call_id) {
+                    entry.3 = result.is_error;
+                }
+                if !json && result.is_error {
                     eprintln!("  ! {}", result.plain_text());
                 }
             }
@@ -609,27 +631,63 @@ pub fn run_agent_headless(
         println!();
     }
 
-    match agent
+    let last = agent
         .messages()
         .iter()
         .rev()
         .find_map(|message| match message {
             Message::Assistant(assistant) => Some(assistant),
             _ => None,
-        }) {
-        Some(last) if last.error_message.is_some() => {
-            eprintln!(
-                "termide: {}",
-                last.error_message.as_deref().unwrap_or("the run failed")
-            );
-            1
-        }
+        });
+    let code = match last {
+        Some(last) if last.error_message.is_some() => 1,
         Some(last) if last.stop_reason == StopReason::Aborted => 130,
         Some(_) => 0,
-        None => {
-            eprintln!("termide: the agent produced no answer");
-            1
+        None => 1,
+    };
+    if json {
+        let report = serde_json::json!({
+            "ok": code == 0,
+            "answer": last.map(termide_agent_core::AssistantMessage::plain_text).unwrap_or_default(),
+            "stop_reason": last.map(|m| stop_label(m.stop_reason)),
+            "model": last.map(|m| m.model.clone()),
+            "provider": last.map(|m| m.provider.clone()),
+            "usage": last.map(|m| serde_json::json!({
+                "input": m.usage.input,
+                "output": m.usage.output,
+                "cache_read": m.usage.cache_read,
+                "cache_write": m.usage.cache_write,
+            })),
+            "tools": tools.iter().map(|(_, name, subject, is_error)| serde_json::json!({
+                "name": name,
+                "subject": subject,
+                "error": is_error,
+            })).collect::<Vec<_>>(),
+            "error": last.and_then(|m| m.error_message.clone())
+                .or_else(|| (last.is_none()).then(|| "the agent produced no answer".to_string())),
+        });
+        println!("{report}");
+    } else {
+        match last {
+            Some(last) if last.error_message.is_some() => eprintln!(
+                "termide: {}",
+                last.error_message.as_deref().unwrap_or("the run failed")
+            ),
+            None => eprintln!("termide: the agent produced no answer"),
+            _ => {}
         }
+    }
+    code
+}
+
+/// The wire label for a stop reason, for the JSON report.
+fn stop_label(reason: StopReason) -> &'static str {
+    match reason {
+        StopReason::Stop => "stop",
+        StopReason::Length => "length",
+        StopReason::ToolUse => "tool_use",
+        StopReason::Error => "error",
+        StopReason::Aborted => "aborted",
     }
 }
 

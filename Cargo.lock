@@ -4922,6 +4922,7 @@ dependencies = [
  "lsp-types",
  "open",
  "ratatui",
+ "serde_json",
  "tempfile",
  "termide-agent-acp",
  "termide-agent-core",

@@ -596,6 +596,8 @@ a subagent — the run does only what the rules and mode already allow, and
 `mode = "auto"` or `allow` rules opt into more; plan mode collapses to ask,
 and an ACP agent is refused (no headless permission surface, as for
 subagents). `-` reads the prompt from stdin. Exit code: 0, 1 on a failed
-message, 130 on abort. Not done yet: a JSON output format, and `--agent`
-delegation to the `task` tool (headless carries the built-in tools and skills
-only).
+message, 130 on abort. `--output json` prints one object instead of streaming
+— answer, stop reason, model, provider, usage and the tool calls — for a
+consumer that parses rather than reads. Not done yet: a streaming JSON form
+(one object per event), and `--agent` delegation to the `task` tool (headless
+carries the built-in tools and skills only).

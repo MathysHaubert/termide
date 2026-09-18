@@ -35,6 +35,7 @@ _arguments \
   '--install-completions[Install the completion script for a shell, $SHELL by default]::shell:(bash zsh fish)' \
   '--prompt[Run one agent task without the UI and print the answer]:prompt:' \
   '--agent[Agent definition the --prompt run uses]:name:' \
+  '--output[Headless output format]:format:(text json)' \
   '(- *)'{-h,--help}'[Print help]' \
   '(- *)'{-V,--version}'[Print version]' \
   '*:file:_files'

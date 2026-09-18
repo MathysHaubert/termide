@@ -581,6 +581,17 @@ and errors go to stderr. `--agent` picks one of the defined agents, the
 default agent otherwise. The exit code is `0` on success, `1` on failure and
 `130` when interrupted.
 
+For a machine-readable result, add `--output json`: instead of streaming, it
+prints one JSON object at the end with the answer, the token usage, the tool
+calls the run made and its status.
+
+```
+termide --prompt "count the TODOs in src" --output json
+# {"ok":true,"answer":"7","stop_reason":"stop","model":"…","provider":"…",
+#  "usage":{"input":…,"output":…,"cache_read":…,"cache_write":…},
+#  "tools":[{"name":"bash","subject":"rg -c TODO src","error":false}],"error":null}
+```
+
 No one is watching to answer a permission card, so a headless run does only
 what the rules and the mode already allow: anything that would ask is refused
 with a reason the model reads. For unattended work set `mode = "auto"` in the

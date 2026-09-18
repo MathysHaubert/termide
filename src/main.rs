@@ -82,6 +82,12 @@ struct Cli {
     #[arg(long, value_name = "NAME", requires = "prompt")]
     agent: Option<String>,
 
+    /// How a `--prompt` run reports: `text` (the answer on stdout, the
+    /// default) or `json` (one object with the answer, token usage, the tool
+    /// calls and the status).
+    #[arg(long, value_name = "FORMAT", requires = "prompt", value_parser = ["text", "json"], default_value = "text")]
+    output: String,
+
     /// File(s) to open. Given a path, termide starts in a clean editor view
     /// (no session is restored or saved), so it works as $EDITOR for tools
     /// like git, crontab and visudo: `EDITOR=termide git commit`.
@@ -374,12 +380,18 @@ fn main() -> Result<()> {
             prompt
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| project_root.clone());
+        let output = if cli.output == "json" {
+            termide_app::HeadlessOutput::Json
+        } else {
+            termide_app::HeadlessOutput::Text
+        };
         let code = termide_app::run_agent_headless(
             &config.agent,
             &cwd,
             &project_root,
             cli.agent.as_deref(),
             prompt.trim(),
+            output,
         );
         std::process::exit(code);
     }
@@ -542,6 +554,22 @@ mod cli_tests {
         assert_eq!(named.agent.as_deref(), Some("reviewer"));
         // --agent without --prompt is rejected.
         assert!(Cli::try_parse_from(["termide", "--agent", "reviewer"]).is_err());
+        // --output defaults to text, accepts json, rejects other values and
+        // requires --prompt.
+        assert_eq!(
+            Cli::try_parse_from(["termide", "--prompt", "x"])
+                .unwrap()
+                .output,
+            "text"
+        );
+        assert_eq!(
+            Cli::try_parse_from(["termide", "--prompt", "x", "--output", "json"])
+                .unwrap()
+                .output,
+            "json"
+        );
+        assert!(Cli::try_parse_from(["termide", "--prompt", "x", "--output", "yaml"]).is_err());
+        assert!(Cli::try_parse_from(["termide", "--output", "json"]).is_err());
     }
 
     #[test]
