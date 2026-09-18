@@ -74,7 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape (`skills/<name>/SKILL.md`, also `.agents/skills/`) are listed in the
   prompt and loaded on demand with a `skill` tool; prompt templates
   `prompts/<name>.md` are sent as `/name args` and completed from a list as
-  you type; MCP servers in `mcp.toml` start over stdio and their tools join as
+  you type, and command scripts `commands/<name>` run with the arguments and
+  send their output as the request, asking first when they came with the
+  project; MCP servers in `mcp.toml` start over stdio and their tools join as
   `server__tool`; command hooks in `hooks.toml` run before and after tool
   calls and may block, rewrite or approve a call or rewrite its result. The
   agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem root

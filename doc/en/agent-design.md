@@ -250,6 +250,20 @@ for skills. The client is blocking JSON-RPC over pipes with a reader thread,
 no tokio, like the rest of the agent; a server's own requests (roots,
 sampling) are declined with -32601.
 
+Command scripts (`ai/commands/<name>`, executables): the user's answer to
+Claude Code's and OpenCode's `!`cmd`` splicing and Gemini CLI's `!{cmd}`,
+which we had declined because a template that runs commands runs them
+outside the permission model. A whole executable instead of inline shell
+keeps `prompts/` static text, makes the command a file one can run by hand,
+and lets the panel gate it: a script from the configuration level is the
+user's own and runs unasked, one from the project or the directory asks in
+the same card as a permission, with "run always" written as a rule under the
+tool name `command`. The script's stdout is sent as the user's request, so
+the transcript shows what the model got; a non-zero exit, silence or a
+timeout sends nothing. `# description:`, `# argument-hint:` and `# timeout:`
+in the header feed the picker, and the built-in `/compact`, the templates
+and the scripts share one `/` namespace with the template winning a tie.
+
 The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 `{{environment}}` and `{{project_instructions}}` placeholders: the `ai`
 directory's root `AGENTS.md` for the default agent (the user's decision — the

@@ -134,6 +134,10 @@ impl AgentCatalog for FsCatalog {
         self.dirs.prompts()
     }
 
+    fn commands(&self) -> Vec<termide_agent_core::CommandScript> {
+        self.dirs.commands()
+    }
+
     fn list(&self) -> Vec<AgentEntry> {
         self.dirs
             .agents()

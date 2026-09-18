@@ -9,6 +9,7 @@
 mod transcript;
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
@@ -19,10 +20,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
-    ChainedHooks, CompactionPolicy, CompactionPrompts, Decision, Hooks, LateTools, Message, Mode,
-    ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks,
-    PermissionRules, PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent,
-    Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    ChainedHooks, CommandScript, CompactionPolicy, CompactionPrompts, Decision, Hooks, LateTools,
+    Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope,
+    PermissionHooks, PermissionRules, PersistRule, PromptTemplate, Provider, Session,
+    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
+    DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -67,6 +69,34 @@ const AGENT_ACTION: &str = "agent_agent";
 const PROMPTS_ACTION: &str = "agent_prompts";
 /// The built-in `/compact [focus]` command.
 const COMPACT_COMMAND: &str = "compact";
+
+/// What a card in the panel is asking: the agent's permission request, or
+/// whether a command script that came with the project may run.
+enum Pending {
+    Permission {
+        envelope: PermissionEnvelope,
+        form: ChoiceForm,
+    },
+    Command {
+        script: CommandScript,
+        args: String,
+        form: ChoiceForm,
+    },
+}
+
+impl Pending {
+    fn form(&self) -> &ChoiceForm {
+        match self {
+            Pending::Permission { form, .. } | Pending::Command { form, .. } => form,
+        }
+    }
+
+    fn form_mut(&mut self) -> &mut ChoiceForm {
+        match self {
+            Pending::Permission { form, .. } | Pending::Command { form, .. } => form,
+        }
+    }
+}
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -143,6 +173,10 @@ pub trait AgentCatalog: Send + Sync {
     fn prompts(&self) -> Vec<PromptTemplate> {
         Vec::new()
     }
+    /// Command scripts (`commands/<name>`), for `/<name>` in the input.
+    fn commands(&self) -> Vec<CommandScript> {
+        Vec::new()
+    }
 }
 
 pub struct AgentPanel {
@@ -150,8 +184,12 @@ pub struct AgentPanel {
     /// The runtime is an external agent: model and mode are not ours to set.
     external: bool,
     permission_rx: Receiver<PermissionEnvelope>,
-    /// The agent's question waiting for an answer, and the form asking it.
-    pending_permission: Option<(PermissionEnvelope, ChoiceForm)>,
+    /// The question a card in the panel is asking, if any.
+    pending: Option<Pending>,
+    /// Command scripts the user let run for this session, by name.
+    allowed_commands: HashSet<String>,
+    /// A command script running on a thread; its output becomes a request.
+    command_run: Option<Receiver<(String, Result<String, String>)>>,
     session: Option<Session>,
     session_dir: Option<PathBuf>,
     /// Sessions offered by the last picker, in the order they were shown.
@@ -269,7 +307,9 @@ impl AgentPanel {
             runtime,
             external,
             permission_rx,
-            pending_permission: None,
+            pending: None,
+            allowed_commands: HashSet::new(),
+            command_run: None,
             session,
             session_dir: setup.session_dir,
             session_choices: Vec::new(),
@@ -369,7 +409,7 @@ impl AgentPanel {
         self.runtime = runtime;
         self.external = external;
         self.permission_rx = permission_rx;
-        self.pending_permission = None;
+        self.pending = None;
         self.transcript = transcript;
         self.session = session;
         self.model = model;
@@ -444,23 +484,36 @@ impl AgentPanel {
             }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
-                let Some(template) = prompts.iter().find(|p| p.name == name) else {
-                    let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
+                if let Some(template) = prompts.iter().find(|p| p.name == name) {
+                    template.expand(args)
+                } else if let Some(script) =
+                    self.catalog.commands().into_iter().find(|c| c.name == name)
+                {
+                    // A command script: its output becomes the request, once
+                    // it has run (and, for a project's script, been allowed).
+                    self.input = TextArea::new();
+                    self.run_command(script, args.to_string());
+                    return vec![PanelEvent::NeedsRedraw];
+                } else {
+                    let mut names: Vec<String> = prompts.iter().map(|p| p.name.clone()).collect();
+                    names.extend(self.catalog.commands().into_iter().map(|c| c.name));
+                    names.push(COMPACT_COMMAND.to_string());
                     self.notice(
-                        if names.is_empty() {
-                            format!("no prompt named {name}; there are no prompt templates")
-                        } else {
-                            format!("no prompt named {name}; available: {}", names.join(", "))
-                        },
+                        format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
                     );
                     return vec![PanelEvent::NeedsRedraw];
-                };
-                template.expand(args)
+                }
             }
             None => text,
         };
         self.input = TextArea::new();
+        self.send(text)
+    }
+
+    /// Send `text` as the next request: a new run when idle, a steering
+    /// message while the agent works.
+    fn send(&mut self, text: String) -> Vec<PanelEvent> {
         self.follow = true;
         let message = UserMessage::text(text);
         if self.is_busy() {
@@ -609,7 +662,7 @@ impl AgentPanel {
     fn poll_permissions(&mut self) -> Vec<PanelEvent> {
         let mut events = Vec::new();
         while let Ok(envelope) = self.permission_rx.try_recv() {
-            if self.pending_permission.is_some() {
+            if self.pending.is_some() {
                 // Prompts are sequential on the agent thread; a second one
                 // cannot arrive before the first is answered. Deny defensively.
                 let _ = envelope.reply.send(PermissionAnswer::Deny);
@@ -643,7 +696,7 @@ impl AgentPanel {
             let form = ChoiceForm::new(title, options)
                 .with_custom("Deny and tell the agent why")
                 .with_cancel("Stop the run");
-            self.pending_permission = Some((envelope, form));
+            self.pending = Some(Pending::Permission { envelope, form });
         }
         events
     }
@@ -689,7 +742,7 @@ impl AgentPanel {
 
     /// Answer the outstanding question; `false` when there is none.
     pub fn answer_permission(&mut self, answer: PermissionAnswer) -> bool {
-        let Some((envelope, _)) = self.pending_permission.take() else {
+        let Some(Pending::Permission { envelope, .. }) = self.pending.take() else {
             return false;
         };
         let _ = envelope.reply.send(answer);
@@ -1116,6 +1169,28 @@ impl AgentPanel {
                     .with_description(template.description)
             })
             .collect();
+        let taken: Vec<String> = items.iter().map(|i| i.value.clone()).collect();
+        let scripts: Vec<CommandScript> = self
+            .catalog
+            .commands()
+            .into_iter()
+            .filter(|c| c.name.starts_with(prefix) && !taken.contains(&c.name))
+            .collect();
+        for script in scripts {
+            let description = if script.trusted {
+                script.description
+            } else if script.description.is_empty() {
+                "project command".to_string()
+            } else {
+                format!("{} (project)", script.description)
+            };
+            items.push(
+                CompletionItem::new(script.name.clone())
+                    .with_label(format!("/{}", script.name))
+                    .with_hint(script.argument_hint)
+                    .with_description(description),
+            );
+        }
         if COMPACT_COMMAND.starts_with(prefix) && !self.external {
             items.push(
                 CompletionItem::new(COMPACT_COMMAND)
@@ -1147,25 +1222,133 @@ impl AgentPanel {
         true
     }
 
-    /// Turn what the permission form reported into an answer. `Cancelled`
-    /// denies and stops the run: the user wants out, not just a "no" to this
-    /// one call. `false` for `NotHandled`.
-    fn apply_permission_action(&mut self, action: ChoiceAction) -> bool {
-        match action {
-            ChoiceAction::Chosen(index) => {
+    /// Turn what the card reported into an answer. For a permission,
+    /// `Cancelled` denies and stops the run: the user wants out, not just a
+    /// "no" to this one call. For a command script, the rows are run once,
+    /// run for the session, run always (a rule is written) and don't run.
+    /// `false` for `NotHandled`.
+    fn apply_form_action(&mut self, action: ChoiceAction) -> bool {
+        match (&self.pending, action) {
+            (_, ChoiceAction::Handled) => {}
+            (_, ChoiceAction::NotHandled) => return false,
+            (Some(Pending::Permission { .. }), ChoiceAction::Chosen(index)) => {
                 self.answer_permission(Self::permission_answer(index));
             }
-            ChoiceAction::Custom(reason) => {
+            (Some(Pending::Permission { .. }), ChoiceAction::Custom(reason)) => {
                 self.answer_permission(PermissionAnswer::DenyWithReason(reason));
             }
-            ChoiceAction::Cancelled => {
+            (Some(Pending::Permission { .. }), ChoiceAction::Cancelled) => {
                 self.answer_permission(PermissionAnswer::Deny);
                 self.abort();
             }
-            ChoiceAction::Handled => {}
-            ChoiceAction::NotHandled => return false,
+            (Some(Pending::Command { .. }), ChoiceAction::Chosen(index)) => {
+                let Some(Pending::Command { script, args, .. }) = self.pending.take() else {
+                    return true;
+                };
+                match index {
+                    1 => {
+                        self.allowed_commands.insert(script.name.clone());
+                    }
+                    2 => {
+                        self.rules.add("command", &script.name, Decision::Allow);
+                        if let Some(persist) = self.persist_rule {
+                            persist("command", &script.name, Decision::Allow);
+                        }
+                    }
+                    3 => return true,
+                    _ => {}
+                }
+                self.start_command(script, args);
+            }
+            (Some(Pending::Command { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (None, _) => {}
         }
         true
+    }
+
+    /// `/name args` names a command script: run it, or ask first when it
+    /// came with the project and no rule or session grant covers it.
+    fn run_command(&mut self, script: CommandScript, args: String) {
+        let verdict = self.rules.evaluate("command", &script.name);
+        if verdict == Some(Decision::Deny) {
+            self.notice(
+                format!("/{} is denied by the permission rules", script.name),
+                NoticeKind::Warn,
+            );
+            return;
+        }
+        let allowed = script.trusted
+            || verdict == Some(Decision::Allow)
+            || self.allowed_commands.contains(&script.name);
+        if allowed {
+            self.start_command(script, args);
+            return;
+        }
+        let title = format!(
+            "Run the project command /{} ({})?",
+            script.name,
+            script.path.display()
+        );
+        let form = ChoiceForm::new(
+            title.clone(),
+            vec![
+                "Run once".into(),
+                "Run for this session".into(),
+                "Run always".into(),
+                "Don't run".into(),
+            ],
+        );
+        self.pending_events.push(PanelEvent::SetStatusMessage {
+            message: title,
+            is_error: false,
+        });
+        self.pending = Some(Pending::Command { script, args, form });
+    }
+
+    /// Run the script on a thread; `tick` sends its output as the request.
+    fn start_command(&mut self, script: CommandScript, args: String) {
+        if self.command_run.is_some() {
+            self.notice("a command is still running", NoticeKind::Warn);
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let cwd = self.cwd.clone();
+        let name = script.name.clone();
+        let reported = name.clone();
+        std::thread::spawn(move || {
+            let outcome = script.run(&args, &cwd);
+            let _ = tx.send((reported, outcome));
+        });
+        self.command_run = Some(rx);
+        self.pending_events.push(PanelEvent::SetStatusMessage {
+            message: format!("running /{}…", name),
+            is_error: false,
+        });
+    }
+
+    /// Take in a finished command script: its output goes out as a request.
+    fn poll_command(&mut self) -> bool {
+        let outcome = self.command_run.as_ref().map(Receiver::try_recv);
+        match outcome {
+            Some(Ok((_, Ok(text)))) => {
+                self.command_run = None;
+                self.send(text);
+                true
+            }
+            Some(Ok((_, Err(error)))) => {
+                self.command_run = None;
+                self.notice(error, NoticeKind::Error);
+                true
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.command_run = None;
+                self.notice("the command was dropped", NoticeKind::Error);
+                true
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => false,
+        }
     }
 
     /// The question a permission form's option `index` answers with.
@@ -1678,9 +1861,9 @@ impl Panel for AgentPanel {
         // The agent's question sits between the separator and the input;
         // when the panel is too short for the card, the keys still answer.
         let form_rows = self
-            .pending_permission
+            .pending
             .as_ref()
-            .map_or(0, |(_, form)| form.height())
+            .map_or(0, |pending| pending.form().height())
             .min(area.height.saturating_sub(input_rows + 2));
         let has_separator = area.height > input_rows + form_rows + 1;
         let transcript_height = area
@@ -1751,8 +1934,10 @@ impl Panel for AgentPanel {
         let input_area = self.input_area;
         self.render_input(input_area, buf, ctx.is_focused);
         if form_rows >= 3 {
-            if let Some((_, form)) = &mut self.pending_permission {
-                form.render(form_area, buf, &colors, ctx.is_focused);
+            if let Some(pending) = &mut self.pending {
+                pending
+                    .form_mut()
+                    .render(form_area, buf, &colors, ctx.is_focused);
             }
         }
         if ctx.is_focused && has_separator {
@@ -1779,11 +1964,11 @@ impl Panel for AgentPanel {
 
         // A pending question takes the keys first: the arrows, Enter, a
         // digit or Esc answer it; only scrolling passes by.
-        if let Some((_, form)) = &mut self.pending_permission {
+        if let Some(pending) = &mut self.pending {
             let action = if ctrl || alt {
                 ChoiceAction::NotHandled
             } else {
-                form.handle_key(key)
+                pending.form_mut().handle_key(key)
             };
             let scroll_key = matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
                 || (ctrl
@@ -1795,7 +1980,7 @@ impl Panel for AgentPanel {
                             | KeyCode::End
                             | KeyCode::Char('o')
                     ));
-            if self.apply_permission_action(action.clone()) {
+            if self.apply_form_action(action.clone()) {
                 return vec![PanelEvent::NeedsRedraw];
             }
             if action == ChoiceAction::NotHandled && !scroll_key {
@@ -1908,7 +2093,7 @@ impl Panel for AgentPanel {
     }
 
     fn captures_escape(&self) -> bool {
-        self.pending_permission.is_some()
+        self.pending.is_some()
             || self.completion.is_some()
             || self.is_busy()
             || !self.input.is_empty()
@@ -1924,9 +2109,9 @@ impl Panel for AgentPanel {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some((_, form)) = &mut self.pending_permission {
-                    let action = form.click(event.column, event.row);
-                    if self.apply_permission_action(action) {
+                if let Some(pending) = &mut self.pending {
+                    let action = pending.form_mut().click(event.column, event.row);
+                    if self.apply_form_action(action) {
                         return vec![PanelEvent::NeedsRedraw];
                     }
                 }
@@ -1965,6 +2150,7 @@ impl Panel for AgentPanel {
         let mut events = self.poll_permissions();
         events.append(&mut self.pending_events);
         changed |= self.poll_late_tools();
+        changed |= self.poll_command();
         let fetched = self.model_fetch.as_ref().map(Receiver::try_recv);
         match fetched {
             Some(Ok(result)) => {
@@ -2228,6 +2414,9 @@ mod tests {
         setup_with(Arc::new(Scripted::new(replies)))
     }
 
+    /// Command scripts the test catalog offers; tests fill it.
+    static COMMANDS: Mutex<Vec<CommandScript>> = Mutex::new(Vec::new());
+
     /// Two agents: the default one and a terse reviewer on another model.
     struct Agents;
 
@@ -2255,6 +2444,9 @@ mod tests {
                 argument_hint: "<path>".into(),
                 body: "Review $1 carefully.".into(),
             }]
+        }
+        fn commands(&self) -> Vec<CommandScript> {
+            COMMANDS.lock().unwrap().clone()
         }
         fn resolve(&self, name: &str) -> Option<AgentProfile> {
             match name {
@@ -2640,7 +2832,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let events = panel.tick();
-            if panel.pending_permission.is_some() {
+            if panel.pending.is_some() {
                 assert!(events.iter().any(|e| matches!(
                     e,
                     PanelEvent::SetStatusMessage { message, .. } if message.contains("git push")
@@ -2651,7 +2843,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         {
-            let (_, form) = panel.pending_permission.as_ref().unwrap();
+            let form = panel.pending.as_ref().unwrap().form();
             assert_eq!(form.title(), "Agent wants to run bash: git push");
             assert_eq!(form.options()[2], "Allow always (git push *)");
         }
@@ -2666,7 +2858,7 @@ mod tests {
         assert_eq!(panel.input_text(), "");
         panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
         panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(panel.pending_permission.is_none());
+        assert!(panel.pending.is_none());
         assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
 
         // A digit answers at once; Esc declines.
@@ -2690,7 +2882,7 @@ mod tests {
         });
         let wait = |panel: &mut AgentPanel| {
             let deadline = Instant::now() + Duration::from_secs(5);
-            while panel.pending_permission.is_none() {
+            while panel.pending.is_none() {
                 panel.tick();
                 assert!(Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(5));
@@ -2701,7 +2893,7 @@ mod tests {
         // The fifth row takes a reason the model gets to read.
         wait(&mut panel);
         {
-            let (_, form) = panel.pending_permission.as_ref().unwrap();
+            let form = panel.pending.as_ref().unwrap().form();
             assert_eq!(
                 form.height(),
                 8,
@@ -3414,5 +3606,87 @@ mod tests {
             .items()
             .iter()
             .all(|i| !matches!(i, Item::User { .. })));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn command_scripts_run_and_a_project_one_asks_first() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = |name: &str, body: &str, trusted: bool| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            CommandScript::from_file(&path, trusted).unwrap()
+        };
+        let gather = script(
+            "gather",
+            "#!/bin/sh\n# description: Gather context\n# argument-hint: <topic>\necho \"Context about $1\"\n",
+            true,
+        );
+        let project = script(
+            "scan",
+            "#!/bin/sh\n# description: Scan\necho scanned\n",
+            false,
+        );
+        *COMMANDS.lock().unwrap() = vec![gather, project];
+        let mut panel = panel(vec![reply("a"), reply("b")]);
+        let wait_user = |panel: &mut AgentPanel, text: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                panel.tick();
+                if panel
+                    .transcript()
+                    .items()
+                    .iter()
+                    .any(|i| matches!(i, Item::User { text: t } if t == text))
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{:?}",
+                    panel.transcript().items()
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        // The trusted script runs unasked and its output is the request.
+        type_text(&mut panel, "/ga");
+        assert!(panel
+            .completion
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .any(|i| i.value == "gather"));
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        type_text(&mut panel, "parsers");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "");
+        wait_user(&mut panel, "Context about parsers");
+        settle(&mut panel);
+
+        // The project's script asks; "run for this session" runs it now and
+        // next time without asking.
+        type_text(&mut panel, "/scan");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        let form = panel.pending.as_ref().expect("a card asks").form();
+        assert!(form.title().starts_with("Run the project command /scan"));
+        assert_eq!(form.options().len(), 4);
+        panel.handle_key(chord(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        wait_user(&mut panel, "scanned");
+        settle(&mut panel);
+        assert!(panel.allowed_commands.contains("scan"));
+
+        // "Don't run" leaves nothing behind.
+        *COMMANDS.lock().unwrap() = vec![script("other", "#!/bin/sh\necho x\n", false)];
+        type_text(&mut panel, "/other");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(panel.pending.is_some());
+        panel.handle_key(chord(KeyCode::Char('4'), KeyModifiers::NONE));
+        assert!(panel.pending.is_none() && panel.command_run.is_none());
+        *COMMANDS.lock().unwrap() = Vec::new();
     }
 }

@@ -51,7 +51,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in; `/compact [focus]` summarises the session |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -190,6 +190,7 @@ ai/
   agents/<name>/agent.toml what else sets the agent apart (optional)
   skills/<name>/SKILL.md   skills, see below
   prompts/<name>.md        prompt templates, typed as /name
+  commands/<name>          command scripts, typed as /name, see below
   mcp.toml                 MCP servers, see below
   hooks.toml               command hooks, see below
   system/compact.md        how the agent summarises a long session
@@ -198,7 +199,7 @@ ai/
 
 The first time the panel opens, the configuration level is laid out:
 `AGENTS.md` and the two `system/` files receive the shipped texts, `agents/`,
-`skills/` and `prompts/` are created empty. Nothing there is ever overwritten; delete
+`skills/`, `prompts/` and `commands/` are created empty. Nothing there is ever overwritten; delete
 `AGENTS.md` to get the shipped template back.
 
 ### Agents
@@ -363,6 +364,33 @@ session as what the model actually received. **Insert prompt…** in the `[≡]`
 menu lists the templates and puts the chosen `/name ` into the input. A
 message starting with `/` that names no template is not sent; a path such as
 `/usr/bin/ls` is plain text.
+
+### Command scripts
+
+Where a template is fixed text, a command script builds the request: an
+executable in `commands/<name>`, run as `/name args` with the arguments as
+its argv and the panel's directory as its working directory, whose standard
+output is sent to the model. A `/review` that gathers `git diff --staged`, a
+`/failing` that runs the tests and pastes what broke, an `/issue 123` that
+fetches the ticket. Any language will do; the header comments describe it:
+
+```sh
+#!/bin/sh
+# description: Review the staged changes
+# argument-hint: [focus]
+# timeout: 30
+printf 'Review this diff%s:\n\n' "${1:+ with attention to $1}"
+git diff --staged
+```
+
+The output appears in the session as your request, so what the model got is
+visible. A script that exits with an error, prints nothing or exceeds its
+timeout (60 s by default) sends nothing and reports why. Scripts from the
+configuration level are your own and run at once; one that came with the
+project or the directory asks first, in a card like a permission: run once,
+for this session, always (a rule `[agent.permissions.command]` is written)
+or not at all. Templates and scripts share the `/` names; when both exist
+at the same level, the template wins.
 
 ### MCP servers
 

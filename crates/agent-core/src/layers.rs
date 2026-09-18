@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::acp::AcpConfig;
+use crate::commands::{CommandScript, COMMANDS_DIR};
 use crate::compaction::{CompactionPrompts, SEED_COMPACT, SEED_COMPACTED};
 use crate::context::SEED_TEMPLATE;
 use crate::hooks::{HookConfig, HOOKS_FILE};
@@ -147,7 +148,7 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
 /// no such file exists yet, plus empty `agents/`, `skills/` and `prompts/`.
 /// Files already there are left alone, so the call is safe on every start.
 pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
-    for dir in ["agents", "skills", "prompts", SYSTEM_DIR] {
+    for dir in ["agents", "skills", "prompts", COMMANDS_DIR, SYSTEM_DIR] {
         std::fs::create_dir_all(global.join(dir))?;
     }
     for (relative, seed) in [
@@ -200,6 +201,8 @@ pub struct AgentDirs {
     /// Skill directories in priority order: each level's `ai/skills`
     /// followed by its `.agents/skills`.
     skill_roots: Vec<PathBuf>,
+    /// The configuration level, the user's own files, when there is one.
+    global: Option<PathBuf>,
 }
 
 impl AgentDirs {
@@ -226,7 +229,27 @@ impl AgentDirs {
             roots.push(global.to_path_buf());
             skill_roots.push(global.join(SKILLS_DIR));
         }
-        Self { roots, skill_roots }
+        Self {
+            roots,
+            skill_roots,
+            global: global.map(Path::to_path_buf),
+        }
+    }
+
+    /// Command scripts (`commands/<name>`, executables) across the roots by
+    /// name, sorted; the ones from the configuration level are trusted.
+    #[must_use]
+    pub fn commands(&self) -> Vec<CommandScript> {
+        self.merged_entries(COMMANDS_DIR)
+            .into_values()
+            .filter_map(|path| {
+                let trusted = self
+                    .global
+                    .as_ref()
+                    .is_some_and(|global| path.starts_with(global));
+                CommandScript::from_file(&path, trusted)
+            })
+            .collect()
     }
 
     /// The compaction prompts: `system/compact.md` and `system/compacted.md`
@@ -559,7 +582,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let global = tmp.path().join("ai");
         ensure_global_layout(&global).unwrap();
-        for dir in ["agents", "skills", "prompts", "system"] {
+        for dir in ["agents", "skills", "prompts", "commands", "system"] {
             assert!(global.join(dir).is_dir(), "{dir}");
         }
         let soul = global.join(ROOT_SOUL_FILE);
@@ -734,5 +757,45 @@ mod tests {
         .unwrap();
         let hooks = AgentDirs::new(&project, None, Some(&global)).hooks();
         assert_eq!(hooks.keys().collect::<Vec<_>>(), ["guard"]);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn command_scripts_merge_by_name_and_only_the_configuration_level_is_trusted() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("ai");
+        let write = |dir: &Path, name: &str, body: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write(
+            &global.join("commands"),
+            "review",
+            "#!/bin/sh\n# description: global review\necho g\n",
+        );
+        write(
+            &project.join(".termide/ai/commands"),
+            "review",
+            "#!/bin/sh\n# description: project review\necho p\n",
+        );
+        write(
+            &project.join(".termide/ai/commands"),
+            "issue",
+            "#!/bin/sh\necho i\n",
+        );
+        let commands = AgentDirs::new(&project, None, Some(&global)).commands();
+        let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["issue", "review"]);
+        assert!(!commands[0].trusted);
+        assert_eq!(commands[1].description, "project review");
+        assert!(
+            !commands[1].trusted,
+            "the project level hides the trusted global one"
+        );
+        let global_only = AgentDirs::new(tmp.path(), None, Some(&global)).commands();
+        assert!(global_only[0].trusted);
     }
 }

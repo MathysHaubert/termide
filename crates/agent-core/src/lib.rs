@@ -21,6 +21,7 @@
 pub mod acp;
 pub mod agent;
 pub mod cancel;
+pub mod commands;
 pub mod compaction;
 pub mod context;
 pub mod hooks;
@@ -39,6 +40,7 @@ pub use agent::{
     ToolDecision,
 };
 pub use cancel::CancelToken;
+pub use commands::{CommandScript, COMMANDS_DIR};
 pub use compaction::{CompactionPolicy, CompactionPrompts, CompactionReason};
 pub use context::{
     build_system_prompt, civil_date, discover_context_files, ContextFile, PromptOptions,
