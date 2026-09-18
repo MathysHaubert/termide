@@ -13,7 +13,7 @@ use termide_agent_core::{
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
 use termide_agent_tools::builtin_tools;
 use termide_config::AgentSettings;
-use termide_panel_agent::{AgentPanel, AgentPanelSetup};
+use termide_panel_agent::{AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile};
 
 use super::App;
 
@@ -42,7 +42,13 @@ impl App {
             .active_panel_mut()
             .and_then(|p| p.get_working_directory())
             .unwrap_or_else(|| project_root.clone());
-        let panel = AgentPanel::new(agent_setup(&settings, cwd, &project_root, None));
+        let panel = AgentPanel::new(agent_setup(
+            &settings,
+            cwd,
+            &project_root,
+            DEFAULT_AGENT,
+            None,
+        ));
         self.add_panel(Box::new(panel));
         self.auto_save_session();
         Ok(())
@@ -51,11 +57,13 @@ impl App {
 
 /// Rebuild an agent panel saved in a project layout. `None` when no model
 /// is configured any more; a session log that has gone missing starts a
-/// fresh session in the same project.
+/// fresh session in the same project, an agent definition that has gone
+/// missing falls back to the default one.
 pub(crate) fn restore_agent_panel(
     settings: &AgentSettings,
     cwd: PathBuf,
     session: Option<PathBuf>,
+    agent: Option<String>,
 ) -> Option<AgentPanel> {
     if settings.model.trim().is_empty() {
         log::warn!("agent panel not restored: no agent.model configured");
@@ -75,17 +83,100 @@ pub(crate) fn restore_agent_panel(
         settings,
         cwd,
         &project_root,
+        agent.as_deref().unwrap_or(DEFAULT_AGENT),
         session,
     )))
 }
 
+/// The agent definitions of one panel: `agents/<name>/` across the agent
+/// directories of the panel's working directory, the project and the
+/// configuration, turned into prompts and tool sets.
+struct FsCatalog {
+    cwd: PathBuf,
+    project_root: PathBuf,
+    dirs: AgentDirs,
+}
+
+impl FsCatalog {
+    fn new(cwd: &Path, project_root: &Path) -> Self {
+        let global_agent_dir = termide_config::get_config_dir()
+            .ok()
+            .map(|dir| dir.join(GLOBAL_AGENT_DIR));
+        if let Some(global) = &global_agent_dir {
+            if let Err(error) = ensure_global_layout(global) {
+                log::warn!("cannot lay out {}: {error}", global.display());
+            }
+        }
+        Self::with_global(cwd, project_root, global_agent_dir)
+    }
+
+    fn with_global(cwd: &Path, project_root: &Path, global_agent_dir: Option<PathBuf>) -> Self {
+        Self {
+            cwd: cwd.to_path_buf(),
+            project_root: project_root.to_path_buf(),
+            dirs: AgentDirs::new(cwd, Some(project_root), global_agent_dir.as_deref()),
+        }
+    }
+}
+
+impl AgentCatalog for FsCatalog {
+    fn list(&self) -> Vec<AgentEntry> {
+        self.dirs
+            .agents()
+            .into_iter()
+            .map(|name| AgentEntry {
+                description: self.dirs.spec(&name).description,
+                name,
+            })
+            .collect()
+    }
+
+    /// The default agent always resolves; another name only when a root
+    /// defines it.
+    fn resolve(&self, name: &str) -> Option<AgentProfile> {
+        if name != DEFAULT_AGENT && !self.dirs.agents().iter().any(|n| n == name) {
+            return None;
+        }
+        let definition = self.dirs.agent(name);
+        let mut tools = builtin_tools();
+        if let Some(allowed) = &definition.spec.tools {
+            for unknown in allowed.iter().filter(|name| tools.get(name).is_none()) {
+                log::warn!("agent {name}: no tool named {unknown}");
+            }
+            for tool in tools
+                .names()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+            {
+                if !allowed.contains(&tool) {
+                    tools.remove(&tool);
+                }
+            }
+        }
+        // The configuration's `ai/AGENTS.md` is the prompt template itself,
+        // not an instruction file, so no global file joins the chain.
+        let context_files = discover_context_files(&self.cwd, Some(&self.project_root), None);
+        let mut options = PromptOptions::new(&self.cwd, &tools, &context_files);
+        options.soul = definition.soul.as_deref();
+        Some(AgentProfile {
+            system_prompt: build_system_prompt(&options),
+            tools,
+            model: definition.spec.model,
+            mode: definition.spec.mode,
+        })
+    }
+}
+
 /// Everything the panel needs, resolved from `settings` for a panel working
-/// in `cwd` inside the termide project at `project_root`: the provider, the
-/// model, the tools, the system prompt and where the session logs live.
+/// in `cwd` inside the termide project at `project_root` as the agent named
+/// `agent`: the provider, the model, the tools, the system prompt and where
+/// the session logs live.
 fn agent_setup(
     settings: &AgentSettings,
     cwd: PathBuf,
     project_root: &Path,
+    agent: &str,
     session: Option<Session>,
 ) -> AgentPanelSetup {
     let api_key = if settings.api_key_env.is_empty() {
@@ -101,31 +192,29 @@ fn agent_setup(
                 ..Compat::default()
             }),
     );
+
+    let catalog = FsCatalog::new(&cwd, project_root);
+    let (agent, profile) = match catalog.resolve(agent) {
+        Some(profile) => (agent.to_string(), profile),
+        None => {
+            log::warn!("no agent named {agent}; using {DEFAULT_AGENT}");
+            let profile = catalog
+                .resolve(DEFAULT_AGENT)
+                .expect("the default agent always resolves");
+            (DEFAULT_AGENT.to_string(), profile)
+        }
+    };
     let model = ModelSpec {
         provider: "agent".to_string(),
-        id: settings.model.clone(),
+        id: profile.model.unwrap_or_else(|| settings.model.clone()),
         context_window: settings.context_window,
         max_tokens: settings.max_tokens,
         reasoning: settings.reasoning,
     };
-
-    let tools = builtin_tools();
-    let global_agent_dir = termide_config::get_config_dir()
-        .ok()
-        .map(|dir| dir.join(GLOBAL_AGENT_DIR));
-    if let Some(global) = &global_agent_dir {
-        if let Err(error) = ensure_global_layout(global) {
-            log::warn!("cannot lay out {}: {error}", global.display());
-        }
+    let mut rules = settings.permissions.clone();
+    if let Some(mode) = profile.mode {
+        rules.mode = mode;
     }
-    let dirs = AgentDirs::new(&cwd, Some(project_root), global_agent_dir.as_deref());
-    let soul = dirs.soul(DEFAULT_AGENT);
-    // The configuration's `ai/AGENTS.md` is the prompt template itself,
-    // not an instruction file, so no global file joins the chain.
-    let context_files = discover_context_files(&cwd, Some(project_root), None);
-    let mut options = PromptOptions::new(&cwd, &tools, &context_files);
-    options.soul = soul.as_deref();
-    let system_prompt = build_system_prompt(&options);
 
     // Session logs are filed by the directory the panel works in, under the
     // same `ai/` directory as the agents: `<config>/ai/sessions/<path>/`.
@@ -137,11 +226,13 @@ fn agent_setup(
 
     AgentPanelSetup {
         cwd,
+        agent,
+        catalog: Arc::new(catalog),
         provider,
         model,
-        tools,
-        rules: settings.permissions.clone(),
-        system_prompt,
+        tools: profile.tools,
+        rules,
+        system_prompt: profile.system_prompt,
         compaction: settings.compaction,
         persist_rule: Some(persist_rule),
         session_dir,
@@ -207,6 +298,40 @@ mod tests {
     fn restore_is_skipped_without_a_configured_model() {
         let settings = AgentSettings::default();
         assert!(settings.model.is_empty());
-        assert!(restore_agent_panel(&settings, PathBuf::from("/tmp"), None).is_none());
+        assert!(restore_agent_panel(&settings, PathBuf::from("/tmp"), None, None).is_none());
+    }
+
+    /// `agent.toml` narrows the tools and names a model and a mode; a name no
+    /// root defines does not resolve, the default always does.
+    #[test]
+    fn the_catalog_turns_definitions_into_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        let review = global.join("agents/review");
+        std::fs::create_dir_all(&review).unwrap();
+        std::fs::write(review.join("SOUL.md"), "You review.\n\n{{tools}}\n").unwrap();
+        std::fs::write(global.join("AGENTS.md"), "Root template.\n\n{{tools}}\n").unwrap();
+        std::fs::write(
+            review.join("agent.toml"),
+            "description = \"Reviews diffs\"\nmodel = \"big\"\nmode = \"auto\"\ntools = [\"read\", \"bash\", \"nope\"]\n",
+        )
+        .unwrap();
+        let catalog = FsCatalog::with_global(tmp.path(), tmp.path(), Some(global));
+
+        let names: Vec<String> = catalog.list().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["default", "review"]);
+        let review = catalog.resolve("review").unwrap();
+        assert!(review.system_prompt.starts_with("You review.\n\n- read:"));
+        assert_eq!(review.tools.names(), ["read", "bash"]);
+        assert_eq!(review.model.as_deref(), Some("big"));
+        assert_eq!(review.mode, Some(termide_agent_core::Mode::Auto));
+
+        let default = catalog.resolve(DEFAULT_AGENT).unwrap();
+        assert_eq!(default.tools.len(), 4);
+        assert!(default
+            .system_prompt
+            .starts_with("Root template.\n\n- read:"));
+        assert!(default.model.is_none());
+        assert!(catalog.resolve("missing").is_none());
     }
 }

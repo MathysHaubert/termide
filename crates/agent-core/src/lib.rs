@@ -40,8 +40,8 @@ pub use context::{
     SEED_TEMPLATE,
 };
 pub use layers::{
-    ensure_global_layout, AgentDirs, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR,
-    ROOT_SOUL_FILE, SESSIONS_DIR, SOUL_FILE,
+    ensure_global_layout, AgentDefinition, AgentDirs, AgentSpec, DEFAULT_AGENT, GLOBAL_AGENT_DIR,
+    PROJECT_AGENT_DIR, ROOT_SOUL_FILE, SESSIONS_DIR, SOUL_FILE, SPEC_FILE,
 };
 pub use message::{
     now_millis, AssistantContent, AssistantMessage, Message, StopReason, ToolCall,

@@ -68,7 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panel's directory, the project root and the configuration directory — and
   the system prompt is a template, that directory's `AGENTS.md`, written out
   on first use so it can be read and edited; **Show system prompt** in the
-  `[≡]` menu opens the assembled text.
+  `[≡]` menu opens the assembled text. Further agents are directories under
+  `agents/`, each with an optional `SOUL.md` of its own and an `agent.toml`
+  naming a description, a model, a permission mode and a subset of the
+  tools; the **Agent** chip switches between them.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and

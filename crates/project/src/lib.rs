@@ -159,6 +159,9 @@ pub enum PanelState {
         /// Session log to continue; absent when the panel ran without one
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<PathBuf>,
+        /// Agent definition in use; the default one when absent
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
     },
     // Note: Welcome panels are NOT saved (they auto-close)
 }
@@ -336,10 +339,12 @@ mod tests {
                 PanelState::Agent {
                     cwd: PathBuf::from("/work"),
                     session: Some(PathBuf::from("/data/agent/s.jsonl")),
+                    agent: Some("review".into()),
                 },
                 PanelState::Agent {
                     cwd: PathBuf::from("/work"),
                     session: None,
+                    agent: None,
                 },
             ],
         };

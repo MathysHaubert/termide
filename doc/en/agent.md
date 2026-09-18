@@ -168,6 +168,8 @@ name defined higher hides the same name below.
 ```
 ai/
   AGENTS.md                the system prompt template of the default agent
+  agents/<name>/SOUL.md    the template of a custom agent (optional)
+  agents/<name>/agent.toml what else sets the agent apart (optional)
   skills/                  skills, see below
   prompts/                 prompt templates, see below
 ```
@@ -176,6 +178,27 @@ The first time the panel opens, the configuration level is laid out:
 `AGENTS.md` receives the shipped template, `agents/`, `skills/` and
 `prompts/` are created empty. Nothing there is ever overwritten; delete
 `AGENTS.md` to get the shipped template back.
+
+### Agents
+
+An agent is a directory under `agents/`. `default` is the one the panel
+starts as; it has no directory and speaks with `ai/AGENTS.md`. Any directory
+defines an agent you can switch to from the **Agent** status chip or **Change
+agent…** in the `[≡]` menu; the picker shows each agent's description. Its
+`SOUL.md` is the agent's own template; without one it uses `ai/AGENTS.md`
+too. Beside it an `agent.toml` may set, every field optional:
+
+```toml
+description = "Reviews diffs and points at risks"
+model = "Qwen3.8-27B-MTPLX-Optimized-Quality"   # at the configured endpoint
+mode = "accept-edits"                            # ask | accept-edits | auto
+tools = ["read", "bash"]                         # a subset of the built-in tools
+```
+
+Switching agents mid-session swaps the prompt and the tools for the next
+request; the model and the mode change only when the definition names them,
+and the session log records a model change as it does for the **Model** chip.
+A saved layout remembers the agent, so the panel comes back as it.
 
 ### The system prompt
 

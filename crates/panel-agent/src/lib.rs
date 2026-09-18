@@ -22,7 +22,7 @@ use termide_agent_core::{
     civil_date, Agent, AgentEvent, AgentRuntime, CancelToken, CompactionPolicy, Decision, Message,
     Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionHooks, PermissionRules,
     PersistRule, Provider, Session, SessionSummary, StreamEvent, ToolRegistry, ToolResultMessage,
-    ToolUpdate, UserMessage,
+    ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
@@ -61,6 +61,8 @@ const MODEL_INPUT_ACTION: &str = "agent_model_input";
 const MODE_ACTION: &str = "agent_mode";
 /// Context-menu action that opens the assembled system prompt in a viewer.
 const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
+/// Status chip and context-menu action that opens the agent picker.
+const AGENT_ACTION: &str = "agent_agent";
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -68,6 +70,10 @@ const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
 /// to another session.
 pub struct AgentPanelSetup {
     pub cwd: PathBuf,
+    /// Name of the agent definition in use.
+    pub agent: String,
+    /// Resolves agent definitions when the user switches agents.
+    pub catalog: Arc<dyn AgentCatalog>,
     pub provider: Arc<dyn Provider>,
     pub model: ModelSpec,
     pub tools: ToolRegistry,
@@ -87,6 +93,30 @@ pub struct AgentPanelSetup {
 /// Records an "allow always" rule outside the panel (in the project config).
 pub type PersistFn = fn(&str, &str, Decision);
 
+/// One agent the picker offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentEntry {
+    pub name: String,
+    pub description: String,
+}
+
+/// What an agent definition changes about the panel's agent. `None` keeps
+/// the current model or mode; the prompt and the tools always come from the
+/// definition.
+pub struct AgentProfile {
+    pub system_prompt: String,
+    pub tools: ToolRegistry,
+    pub model: Option<String>,
+    pub mode: Option<Mode>,
+}
+
+/// The app's view of the agent definitions (`agents/<name>/` across the
+/// agent directories); the panel only chooses among them.
+pub trait AgentCatalog: Send + Sync {
+    fn list(&self) -> Vec<AgentEntry>;
+    fn resolve(&self, name: &str) -> Option<AgentProfile>;
+}
+
 pub struct AgentPanel {
     runtime: AgentRuntime,
     permission_rx: Receiver<PermissionEnvelope>,
@@ -96,6 +126,10 @@ pub struct AgentPanel {
     /// Sessions offered by the last picker, in the order they were shown.
     session_choices: Vec<SessionSummary>,
     cwd: PathBuf,
+    agent: String,
+    catalog: Arc<dyn AgentCatalog>,
+    /// Agents offered by the last picker, in the order they were shown.
+    agent_choices: Vec<String>,
     model: ModelSpec,
     /// The model from the configuration: the base every session's model is
     /// built on, since the log records only an id and a context window.
@@ -168,6 +202,9 @@ impl AgentPanel {
             cwd: setup.cwd,
             model,
             configured_model: setup.model,
+            agent: setup.agent,
+            catalog: setup.catalog,
+            agent_choices: Vec::new(),
             mode,
             model_choices: Vec::new(),
             model_fetch: None,
@@ -629,6 +666,83 @@ impl AgentPanel {
         }
     }
 
+    fn agent_picker(&mut self) -> PanelEvent {
+        let t = termide_i18n::t();
+        let entries = self.catalog.list();
+        let options = entries
+            .iter()
+            .map(|entry| {
+                let mark = current_mark(entry.name == self.agent);
+                if entry.description.is_empty() {
+                    format!("{mark}{}", entry.name)
+                } else {
+                    format!("{mark}{} · {}", entry.name, entry.description)
+                }
+            })
+            .collect();
+        self.agent_choices = entries.into_iter().map(|entry| entry.name).collect();
+        PanelEvent::ShowSelect {
+            title: t.agent_change_agent().to_string(),
+            options,
+            on_select: SelectAction::Custom(AGENT_ACTION.to_string()),
+        }
+    }
+
+    /// Continue the session as another agent: its prompt and tools, and its
+    /// model and mode when the definition names them. Refused while a run
+    /// is in flight.
+    fn switch_agent(&mut self, name: &str) -> bool {
+        if name == self.agent {
+            return true;
+        }
+        let Some(profile) = self.catalog.resolve(name) else {
+            self.notice(format!("no agent named {name}"), NoticeKind::Warn);
+            return false;
+        };
+        let model = match profile.model {
+            Some(id) if id != self.model.id => ModelSpec {
+                id,
+                ..self.model.clone()
+            },
+            _ => self.model.clone(),
+        };
+        let prompt = profile.system_prompt.clone();
+        let tools = profile.tools.clone();
+        let worker_model = model.clone();
+        if let Err(error) = self.runtime.update(move |agent| {
+            agent.set_system_prompt(prompt);
+            *agent.tools_mut() = tools;
+            agent.set_model(worker_model);
+        }) {
+            self.notice(
+                format!("cannot switch the agent: {error}"),
+                NoticeKind::Warn,
+            );
+            return false;
+        }
+        if model.id != self.model.id {
+            if let Some(session) = &mut self.session {
+                if let Err(error) = session.append_model_change(
+                    self.provider.name(),
+                    &model.id,
+                    Some(model.context_window),
+                ) {
+                    log::warn!("agent session write failed: {error}");
+                }
+            }
+        }
+        self.model = model;
+        self.system_prompt = profile.system_prompt;
+        self.tools = profile.tools;
+        if let Some(mode) = profile.mode {
+            self.mode.set(mode);
+            self.rules.mode = mode;
+        }
+        self.agent = name.to_string();
+        self.notice(format!("agent: {name}"), NoticeKind::Info);
+        true
+    }
+
     /// Continue the session on another model of the same endpoint. The
     /// context window follows the endpoint's figure when it gave one and
     /// stays as configured otherwise; the token limit is always the
@@ -948,6 +1062,7 @@ impl Panel for AgentPanel {
             items.push((t.agent_new_session().to_string(), NEW_SESSION_ACTION));
             items.push((t.agent_resume().to_string(), RESUME_ACTION));
         }
+        items.push((t.agent_change_agent().to_string(), AGENT_ACTION));
         items.push((t.agent_change_model().to_string(), MODEL_ACTION));
         items.push((t.agent_change_mode().to_string(), MODE_ACTION));
         items.push((t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION));
@@ -1002,6 +1117,7 @@ impl Panel for AgentPanel {
                     on_select: SelectAction::Custom(RESUME_ACTION.to_string()),
                 }]
             }
+            AGENT_ACTION => vec![self.agent_picker()],
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
             SHOW_PROMPT_ACTION => match self.write_system_prompt() {
@@ -1233,6 +1349,11 @@ impl Panel for AgentPanel {
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
             }
+            PanelCommand::SelectionMade { action, index } if action == AGENT_ACTION => {
+                let choice = self.agent_choices.get(index).cloned();
+                self.agent_choices.clear();
+                CommandResult::Handled(choice.is_some_and(|name| self.switch_agent(&name)))
+            }
             PanelCommand::SelectionMade { action, index } if action == MODE_ACTION => {
                 if let Some(mode) = Mode::ALL.get(index).copied() {
                     let event = self.set_mode(mode);
@@ -1287,6 +1408,9 @@ impl Panel for AgentPanel {
             sep(),
             StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
             StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
+            sep(),
+            StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
+            StatusSegment::clickable(self.agent.clone(), SegmentKind::Active, AGENT_ACTION),
         ];
         if self.model.context_window > 0 && self.context_tokens > 0 {
             let percent = self.context_tokens * 100 / self.model.context_window;
@@ -1324,6 +1448,7 @@ impl Panel for AgentPanel {
         Some(termide_core::PanelState::Agent {
             cwd: self.cwd.clone(),
             session: self.session_path().map(std::path::Path::to_path_buf),
+            agent: (self.agent != DEFAULT_AGENT).then(|| self.agent.clone()),
         })
     }
 
@@ -1434,9 +1559,46 @@ mod tests {
         setup_with(Arc::new(Scripted::new(replies)))
     }
 
+    /// Two agents: the default one and a terse reviewer on another model.
+    struct Agents;
+
+    impl AgentCatalog for Agents {
+        fn list(&self) -> Vec<AgentEntry> {
+            vec![
+                AgentEntry {
+                    name: "default".into(),
+                    description: String::new(),
+                },
+                AgentEntry {
+                    name: "review".into(),
+                    description: "Reviews diffs".into(),
+                },
+            ]
+        }
+        fn resolve(&self, name: &str) -> Option<AgentProfile> {
+            match name {
+                "default" => Some(AgentProfile {
+                    system_prompt: "default prompt".into(),
+                    tools: ToolRegistry::new(),
+                    model: None,
+                    mode: None,
+                }),
+                "review" => Some(AgentProfile {
+                    system_prompt: "You review diffs.".into(),
+                    tools: ToolRegistry::new(),
+                    model: Some("big".into()),
+                    mode: Some(Mode::AcceptEdits),
+                }),
+                _ => None,
+            }
+        }
+    }
+
     fn setup_with(provider: Arc<Scripted>) -> AgentPanelSetup {
         AgentPanelSetup {
             cwd: PathBuf::from("/tmp"),
+            agent: "default".into(),
+            catalog: Arc::new(Agents),
             provider,
             model: ModelSpec {
                 provider: "scripted".into(),
@@ -1584,7 +1746,10 @@ mod tests {
             .iter()
             .map(|s| s.text.as_str())
             .collect();
-        assert_eq!(chips, " Mode: ask │ Model: m │ Context: 12%");
+        assert_eq!(
+            chips,
+            " Mode: ask │ Model: m │ Agent: default │ Context: 12%"
+        );
     }
 
     #[test]
@@ -1672,6 +1837,7 @@ mod tests {
                 "Rename session",
                 "New session",
                 "Open session",
+                "Change agent…",
                 "Change model…",
                 "Permission mode",
                 "Show system prompt"
@@ -1956,6 +2122,7 @@ mod tests {
             Some(termide_core::PanelState::Agent {
                 cwd: PathBuf::from("/tmp"),
                 session: None,
+                agent: None,
             })
         );
 
@@ -2055,5 +2222,67 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "You are terse.\n");
         // The prompt file is not mistaken for a session.
         assert!(panel.session_list().iter().all(|s| s.path != *path));
+    }
+    #[test]
+    fn switching_agents_changes_prompt_model_and_mode_and_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(Scripted::new(vec![reply("ok")]));
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup_with(Arc::clone(&provider))
+        });
+        assert_eq!(chip(&panel, AGENT_ACTION), "default");
+
+        let events = panel.handle_status_action(AGENT_ACTION);
+        let picker = events.first().expect("picker");
+        let PanelEvent::ShowSelect { options, .. } = picker else {
+            panic!("expected a picker, got {picker:?}");
+        };
+        assert_eq!(options, &["● default", "  review · Reviews diffs"]);
+        assert!(matches!(
+            select(&mut panel, picker, 1),
+            CommandResult::Handled(true)
+        ));
+
+        assert_eq!(chip(&panel, AGENT_ACTION), "review");
+        assert_eq!(chip(&panel, MODEL_ACTION), "big");
+        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
+        assert_eq!(panel.system_prompt, "You review diffs.");
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice { text, .. } if text == "agent: review")));
+
+        // The next run goes to the reviewer's model, and the layout state
+        // names the agent so a restore comes back as it.
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(
+            *provider.seen_models.lock().unwrap(),
+            vec!["big".to_string()]
+        );
+        let Some(termide_core::PanelState::Agent { agent, .. }) =
+            panel.to_state(Path::new("/unused"))
+        else {
+            panic!("agent state expected");
+        };
+        assert_eq!(agent.as_deref(), Some("review"));
+        assert_eq!(
+            Session::open(panel.session_path().unwrap())
+                .unwrap()
+                .current_model()
+                .unwrap()
+                .id,
+            "big"
+        );
+
+        // Back to the default: prompt and tools change, model and mode stay.
+        panel.switch_agent("default");
+        assert_eq!(panel.system_prompt, "default prompt");
+        assert_eq!(chip(&panel, MODEL_ACTION), "big");
+        assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
+        assert!(!panel.switch_agent("missing"));
     }
 }

@@ -10,7 +10,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::context::SEED_TEMPLATE;
+use crate::permissions::Mode;
 
 /// The `ai` directory inside the configuration directory.
 pub const GLOBAL_AGENT_DIR: &str = "ai";
@@ -21,6 +24,8 @@ pub const PROJECT_AGENT_DIR: &str = ".termide/ai";
 pub const ROOT_SOUL_FILE: &str = "AGENTS.md";
 /// The system prompt template of a custom agent: `agents/<name>/SOUL.md`.
 pub const SOUL_FILE: &str = "SOUL.md";
+/// The settings of an agent: `agents/<name>/agent.toml`.
+pub const SPEC_FILE: &str = "agent.toml";
 /// The agent used when none is chosen.
 pub const DEFAULT_AGENT: &str = "default";
 /// Session logs under the `ai` directory: `sessions/<working directory>/`.
@@ -39,6 +44,33 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
         std::fs::write(&soul, SEED_TEMPLATE)?;
     }
     Ok(())
+}
+
+/// `agents/<name>/agent.toml`: what sets an agent apart from the configured
+/// defaults. Every field is optional; an absent one keeps the default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSpec {
+    /// One line for the agent picker.
+    #[serde(default)]
+    pub description: String,
+    /// Model id at the configured endpoint.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Permission mode the agent starts in.
+    #[serde(default)]
+    pub mode: Option<Mode>,
+    /// Tools the agent may use, by name; all built-in tools when absent.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
+}
+
+/// An agent as the roots define it: its prompt template and its settings,
+/// each from the highest root that has the file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentDefinition {
+    pub name: String,
+    pub soul: Option<String>,
+    pub spec: AgentSpec,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +130,55 @@ impl AgentDirs {
             }
         }
         entries
+    }
+
+    /// The settings of `agent`; defaults when no root has an `agent.toml`
+    /// or the file does not parse (which is logged).
+    #[must_use]
+    pub fn spec(&self, agent: &str) -> AgentSpec {
+        let Some(path) = self.find_file(Path::new("agents").join(agent).join(SPEC_FILE)) else {
+            return AgentSpec::default();
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                log::warn!("cannot read {}: {error}", path.display());
+                return AgentSpec::default();
+            }
+        };
+        match toml::from_str(&text) {
+            Ok(spec) => spec,
+            Err(error) => {
+                log::warn!("ignoring {}: {error}", path.display());
+                AgentSpec::default()
+            }
+        }
+    }
+
+    /// Prompt template and settings of `agent` together.
+    #[must_use]
+    pub fn agent(&self, agent: &str) -> AgentDefinition {
+        AgentDefinition {
+            name: agent.to_string(),
+            soul: self.soul(agent),
+            spec: self.spec(agent),
+        }
+    }
+
+    /// Names of the agents any root defines, plus the default one, which
+    /// exists even without files.
+    #[must_use]
+    pub fn agents(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .merged_entries("agents")
+            .into_iter()
+            .filter(|(_, path)| path.is_dir())
+            .map(|(name, _)| name)
+            .collect();
+        if !names.iter().any(|n| n == DEFAULT_AGENT) {
+            names.insert(0, DEFAULT_AGENT.to_string());
+        }
+        names
     }
 
     /// The system prompt template of `agent`: its own `agents/<name>/SOUL.md`
@@ -179,6 +260,37 @@ mod tests {
         );
         let agents = dirs.merged_entries("agents");
         assert_eq!(agents.keys().collect::<Vec<_>>(), ["bare", "review"]);
+    }
+    #[test]
+    fn agent_settings_come_from_agent_toml_and_default_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        let review = global.join("agents/review");
+        std::fs::create_dir_all(&review).unwrap();
+        std::fs::write(
+            review.join(SPEC_FILE),
+            "description = \"Reviews diffs\"\nmodel = \"big\"\nmode = \"accept-edits\"\ntools = [\"read\", \"bash\"]\n",
+        )
+        .unwrap();
+        let broken = global.join("agents/broken");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join(SPEC_FILE), "mode = 42\n").unwrap();
+
+        let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
+        let spec = dirs.spec("review");
+        assert_eq!(spec.description, "Reviews diffs");
+        assert_eq!(spec.model.as_deref(), Some("big"));
+        assert_eq!(spec.mode, Some(Mode::AcceptEdits));
+        assert_eq!(
+            spec.tools,
+            Some(vec!["read".to_string(), "bash".to_string()])
+        );
+        assert_eq!(dirs.spec("broken"), AgentSpec::default());
+        assert_eq!(dirs.spec(DEFAULT_AGENT), AgentSpec::default());
+        assert_eq!(dirs.agents(), ["default", "broken", "review"]);
+        let definition = dirs.agent("review");
+        assert_eq!(definition.name, "review");
+        assert!(definition.soul.is_none());
     }
     #[test]
     fn the_global_layout_is_created_once_and_never_overwritten() {

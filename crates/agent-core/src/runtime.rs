@@ -37,7 +37,8 @@ impl std::error::Error for PromptError {}
 
 enum WorkerCommand {
     Prompt(UserMessage),
-    SetModel(ModelSpec),
+    /// Applied to the agent between runs.
+    Update(Box<dyn FnOnce(&mut Agent) + Send>),
     Shutdown,
 }
 
@@ -86,7 +87,7 @@ impl AgentRuntime {
                             });
                             worker_busy.store(false, Ordering::Release);
                         }
-                        WorkerCommand::SetModel(model) => agent.set_model(model),
+                        WorkerCommand::Update(update) => update(&mut agent),
                         WorkerCommand::Shutdown => break,
                     }
                 }
@@ -126,10 +127,14 @@ impl AgentRuntime {
             })
     }
 
-    /// Switch the model for the runs that follow. Refused while a run is
-    /// active: the worker reads commands only between runs, so the change
-    /// would otherwise land silently after the current one.
-    pub fn set_model(&self, model: ModelSpec) -> Result<(), PromptError> {
+    /// Change the agent for the runs that follow (model, system prompt,
+    /// tools). Refused while a run is active: the worker reads commands only
+    /// between runs, so the change would otherwise land silently after the
+    /// current one.
+    pub fn update(
+        &self,
+        update: impl FnOnce(&mut Agent) + Send + 'static,
+    ) -> Result<(), PromptError> {
         if self.worker.is_none() {
             return Err(PromptError::Stopped);
         }
@@ -137,8 +142,13 @@ impl AgentRuntime {
             return Err(PromptError::Busy);
         }
         self.commands
-            .send(WorkerCommand::SetModel(model))
+            .send(WorkerCommand::Update(Box::new(update)))
             .map_err(|_| PromptError::Stopped)
+    }
+
+    /// Switch the model for the runs that follow; see [`AgentRuntime::update`].
+    pub fn set_model(&self, model: ModelSpec) -> Result<(), PromptError> {
+        self.update(move |agent| agent.set_model(model))
     }
 
     /// Queue a message for the next turn boundary of the active run.
@@ -401,7 +411,11 @@ mod tests {
         wait_until_idle(&runtime);
 
         runtime.set_model(other.clone()).unwrap();
+        runtime
+            .update(|agent| agent.set_system_prompt("terse"))
+            .unwrap();
         let agent = runtime.shutdown().expect("worker returns the agent");
         assert_eq!(agent.model(), &other);
+        assert_eq!(agent.system_prompt(), "terse");
     }
 }

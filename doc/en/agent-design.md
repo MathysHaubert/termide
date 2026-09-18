@@ -157,6 +157,20 @@ XDG data/config split. The configuration level is laid out on first use —
 `AGENTS.md` seeded from the shipped data file, empty `agents/`, `skills/` and
 `prompts/` — and files present are never touched again.
 
+Agent definitions: Claude Code's `agents/*.md` and OpenCode's `agent/*.md`
+carry the settings (`description`, `model`, `tools`, `permissionMode` /
+`permission`) as YAML front matter above the prompt body. Decision: the
+prompt stays a plain Markdown file (`SOUL.md`) and the settings go beside it
+in `agent.toml` — termide is TOML throughout, and a prompt without front
+matter can be copied from and to any other tool. `default` exists without
+files; switching agents goes through an `AgentCatalog` trait the app
+implements over the directories, so the panel chooses among definitions
+without knowing how they are stored. The switch is one `AgentRuntime::update`
+closure applied between runs (prompt, tools, model); the mode goes through
+the shared `ModeHandle`. Model and mode change only when the definition names
+them, so a user's runtime choice survives switching to an agent that has no
+opinion.
+
 The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 `{{environment}}` and `{{project_instructions}}` placeholders: the `ai`
 directory's root `AGENTS.md` for the default agent (the user's decision — the

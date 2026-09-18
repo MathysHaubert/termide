@@ -428,6 +428,8 @@ pub trait Translation: Send + Sync {
     fn agent_mode_auto(&self) -> &str;
     /// Agent panel context menu: open the assembled system prompt
     fn agent_show_prompt(&self) -> &str;
+    /// Agent panel: open the agent picker
+    fn agent_change_agent(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 

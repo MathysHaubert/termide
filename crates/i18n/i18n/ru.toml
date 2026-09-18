@@ -349,6 +349,7 @@ agent_mode_ask = "ask — спрашивать перед каждым изме�
 agent_mode_accept_edits = "accept-edits — править файлы внутри проекта без вопросов"
 agent_mode_auto = "auto — разрешать всё"
 agent_show_prompt = "Показать системный промпт"
+agent_change_agent = "Сменить агента…"
 tools_open = "Открыть…"
 tools_open_prompt = "Путь или URL для открытия"
 outline_title = "Структура"

@@ -339,10 +339,12 @@ fn construct_panel(
         PanelState::Database { url, label } => {
             Some(Box::new(termide_panel_db::DbPanel::new(url, label)))
         }
-        PanelState::Agent { cwd, session } => {
-            crate::app::agent_panel::restore_agent_panel(agent_settings, cwd, session)
-                .map(|p| Box::new(p) as Box<dyn Panel + Send>)
-        }
+        PanelState::Agent {
+            cwd,
+            session,
+            agent,
+        } => crate::app::agent_panel::restore_agent_panel(agent_settings, cwd, session, agent)
+            .map(|p| Box::new(p) as Box<dyn Panel + Send>),
     }
 }
 
