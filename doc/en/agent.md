@@ -30,9 +30,12 @@ at all; leave the variable unset.
 
 ## Using the panel
 
-The session fills the panel, the input box sits at the bottom. The panel title
-is your first request, so several agent panels stay apart at a glance; before
-you ask anything it shows the working directory instead. Give a session a name
+The session fills the panel, the input box sits at the bottom. Like a new
+terminal, the agent works in the directory of the panel that had focus when
+you opened it (a file manager's directory, an editor's file), or in the project
+root. The panel title is your first request, so several agent panels stay
+apart at a glance; before you ask anything it shows the working directory
+instead. Give a session a name
 of your own through the panel's `[≡]` menu → **Rename session**, and the title
 shows that name from then on.
 
@@ -146,19 +149,85 @@ short list of commands that only look at things (`ls`, `cat`, `rg`,
 `git status`, `find` without `-delete` or `-exec`, and similar). A redirection
 in the command disqualifies it.
 
-## Project instructions
+## The agent directory
+
+The agent's own files live in an `ai` directory that exists at three
+levels, highest priority first:
+
+1. `.termide/ai/` in the directory the panel works in;
+2. `.termide/ai/` in the TermIDE project root, when that is another
+   directory;
+3. `ai/` in the TermIDE configuration directory
+   (`~/.config/termide/ai/` on Linux,
+   `~/Library/Application Support/termide/ai/` on macOS).
+
+A single file is taken from the first level that has it. A directory of named
+entries (agents, later skills and prompts) is the union of all levels, and a
+name defined higher hides the same name below.
+
+```
+ai/
+  AGENTS.md                the system prompt template of the default agent
+  skills/                  skills, see below
+  prompts/                 prompt templates, see below
+```
+
+The first time the panel opens, the configuration level is laid out:
+`AGENTS.md` receives the shipped template, `agents/`, `skills/` and
+`prompts/` are created empty. Nothing there is ever overwritten; delete
+`AGENTS.md` to get the shipped template back.
+
+### The system prompt
+
+The prompt the model receives is assembled from files: the template
+`ai/AGENTS.md` with four placeholders the agent fills in. No prompt text is
+built into TermIDE; the template below ships as a data file
+(`crates/agent-core/assets/AGENTS.md`) and is written to the
+configuration level on first use, and from then on the file is what counts. A
+project or the panel's directory may carry its own `.termide/ai/AGENTS.md`,
+which then replaces it:
+
+```markdown
+You are a coding agent working inside termide, a terminal IDE. You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
+
+# Tools
+{{tools}}
+
+# Guidelines
+- Read a file before you change it, and keep edits small and targeted.
+- Name file paths clearly when you talk about files.
+- Be concise.
+{{guidelines}}
+
+# Environment
+{{environment}}
+
+{{project_instructions}}
+```
+
+`{{tools}}` is the tool list with a line per tool, `{{guidelines}}` the rules
+the tools themselves contribute, `{{environment}}` the working directory,
+platform, date and whether it is a git repository, and
+`{{project_instructions}}` the instruction files described next. Reword the
+file, drop a section or add your own; a placeholder you leave out is simply
+not sent. **Show system prompt** in the
+panel's `[≡]` menu opens the assembled result, so you can see exactly what
+the model gets.
+
+### Project instructions
 
 The agent reads `AGENTS.md` (or `CLAUDE.md` in the same directory) from every
-directory between the filesystem root and your working directory, most
-specific last, plus a global `AGENTS.md` in the TermIDE configuration
-directory. Put your project's conventions there and the agent follows them.
-Files over 32 KiB are skipped.
+directory between the filesystem root and the panel's working directory,
+most specific last, so the panel directory's file outranks the project's. The
+project root's file is included even when the panel works outside it. Put
+your conventions there and the agent follows them; global rules go into the
+template `ai/AGENTS.md` itself. Files over 32 KiB are skipped.
 
 ## Session history
 
-Every session is written to a log in JSON Lines, one file per session, in an
-`agent` folder beside the project's saved layout under the TermIDE data
-directory. The log records the model the session started on and every switch,
+Every session is written to a log in JSON Lines, one file per session, under
+`ai/sessions/<path of the panel's directory>/` in the TermIDE configuration
+directory, beside the agents. The log records the model the session started on and every switch,
 so a reopened session continues on the model it last used. When a session
 approaches the model's context window, the agent replaces the older part with
 a summary it writes itself and keeps the recent messages verbatim; the panel

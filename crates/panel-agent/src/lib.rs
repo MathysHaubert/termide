@@ -59,6 +59,8 @@ const MODEL_ACTION: &str = "agent_model";
 const MODEL_INPUT_ACTION: &str = "agent_model_input";
 /// Status chip and context-menu action that opens the permission-mode picker.
 const MODE_ACTION: &str = "agent_mode";
+/// Context-menu action that opens the assembled system prompt in a viewer.
+const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -515,6 +517,17 @@ impl AgentPanel {
         true
     }
 
+    /// The system prompt as the agent receives it, written next to the
+    /// session logs (or to the temp directory without them) so it can be
+    /// opened in a viewer.
+    fn write_system_prompt(&self) -> std::io::Result<PathBuf> {
+        let dir = self.session_dir.clone().unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("system-prompt.md");
+        std::fs::write(&path, &self.system_prompt)?;
+        Ok(path)
+    }
+
     /// Offer the endpoint's models. The list is fetched off the UI thread
     /// and the picker opens from `tick()` when it arrives; an endpoint that
     /// cannot list models falls back to a typed id.
@@ -937,6 +950,7 @@ impl Panel for AgentPanel {
         }
         items.push((t.agent_change_model().to_string(), MODEL_ACTION));
         items.push((t.agent_change_mode().to_string(), MODE_ACTION));
+        items.push((t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION));
         items
     }
 
@@ -990,6 +1004,16 @@ impl Panel for AgentPanel {
             }
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
+            SHOW_PROMPT_ACTION => match self.write_system_prompt() {
+                Ok(path) => vec![PanelEvent::ViewFile(path)],
+                Err(error) => {
+                    self.notice(
+                        format!("cannot write the system prompt: {error}"),
+                        NoticeKind::Error,
+                    );
+                    vec![PanelEvent::NeedsRedraw]
+                }
+            },
             _ => vec![],
         }
     }
@@ -1649,7 +1673,8 @@ mod tests {
                 "New session",
                 "Open session",
                 "Change model…",
-                "Permission mode"
+                "Permission mode",
+                "Show system prompt"
             ]
         );
         panel.handle_status_action(NEW_SESSION_ACTION);
@@ -1942,7 +1967,7 @@ mod tests {
         type_text(&mut panel, "task");
         panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
         settle(&mut panel);
-        let Some(termide_core::PanelState::Agent { cwd, session }) =
+        let Some(termide_core::PanelState::Agent { cwd, session, .. }) =
             panel.to_state(Path::new("/unused"))
         else {
             panic!("agent state expected");
@@ -2003,5 +2028,32 @@ mod tests {
             result: ToolResultMessage::text(&bash, "ok"),
         });
         assert!(changed(&panel.tick()).is_empty());
+    }
+    #[test]
+    fn the_system_prompt_can_be_opened_as_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            system_prompt: "You are terse.\n".into(),
+            ..setup(vec![])
+        });
+        let labels: Vec<String> = panel
+            .context_menu_items()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
+        assert_eq!(
+            labels.last().map(String::as_str),
+            Some("Show system prompt")
+        );
+
+        let events = panel.handle_status_action(SHOW_PROMPT_ACTION);
+        let Some(PanelEvent::ViewFile(path)) = events.first() else {
+            panic!("expected a viewer, got {events:?}");
+        };
+        assert_eq!(path, &dir.path().join("system-prompt.md"));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "You are terse.\n");
+        // The prompt file is not mistaken for a session.
+        assert!(panel.session_list().iter().all(|s| s.path != *path));
     }
 }

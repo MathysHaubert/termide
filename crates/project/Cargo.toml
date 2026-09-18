@@ -15,3 +15,6 @@ chrono.workspace = true
 dirs.workspace = true
 log.workspace = true
 termide-i18n = { path = "../i18n" }
+
+[dev-dependencies]
+tempfile.workspace = true

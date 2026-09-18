@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Saved layouts are now **projects**: the menu is `Projects`, and their
   storage moves from `<data>/termide/sessions/` to `<data>/termide/projects/`.
-  Existing layouts are moved across automatically on first launch.
+  Existing layouts are moved across automatically on first launch, and
+  whatever an older termide writes to `sessions/` after that is folded into
+  `projects/` on the next launch.
 
   A detached run is now an **instance**: `--list-sessions` becomes
   `--list-instances` (the old spelling is gone, not hidden), and
@@ -57,9 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem
   root down to the working directory, and summarises the older part of a long
   session by itself when it approaches the model's context window. Every
-  session is logged as JSON Lines beside the project's saved layout, and the
+  session is logged as JSON Lines under `ai/sessions/` in the configuration directory, and the
   panel's `[≡]` menu starts a new one, renames the current one or reopens an
   earlier one. The panel is titled by that name, or by your first request.
+
+  The agent works in the directory of the panel that had focus, like a new
+  terminal. Its own files live in an `ai` directory at three levels — the
+  panel's directory, the project root and the configuration directory — and
+  the system prompt is a template, that directory's `AGENTS.md`, written out
+  on first use so it can be read and edited; **Show system prompt** in the
+  `[≡]` menu opens the assembled text.
 
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and

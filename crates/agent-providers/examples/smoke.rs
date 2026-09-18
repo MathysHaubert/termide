@@ -61,7 +61,7 @@ fn main() {
         OpenAiCompatProvider::new("local", url).with_api_key(std::env::var("OPENAI_API_KEY").ok()),
     );
     let tools = builtin_tools();
-    let context_files = discover_context_files(&cwd, None);
+    let context_files = discover_context_files(&cwd, None, None);
     let system_prompt = build_system_prompt(&PromptOptions::new(&cwd, &tools, &context_files));
     let session_dir = std::env::temp_dir().join("termide-agent-smoke");
     let mut session = Session::create(&session_dir, &cwd).expect("create session");

@@ -127,15 +127,52 @@ ancestor of the working directory from the root down, Codex starts at the
 repository root; Codex caps a file at 32 KiB, Claude Code at 4 MiB. Claude
 Code and Gemini support `@file` imports, the others do not.
 
-Decision (`crates/agent-core/src/context.rs`): a global file from the termide
-config dir first, then per ancestor from the root down to the working
-directory `AGENTS.md`, falling back to `CLAUDE.md` in the same directory;
-32 KiB cap; no imports. Files are appended under a `# Project instructions`
-heading with their path as a sub-heading (Markdown, not pi's XML wrapper,
-because small local models follow Markdown more reliably). The prompt itself
-is identity, tool snippets, merged guidelines and an environment block (cwd,
-platform, date, git repository), with `identity` and `append` overrides like
-pi's `SYSTEM.md` / `APPEND_SYSTEM.md`.
+Decision (`crates/agent-core/src/context.rs`): the project root's file when
+the panel works outside the project, then per ancestor from the root down to
+the working directory
+`AGENTS.md`, falling back to `CLAUDE.md` in the same directory; 32 KiB cap; no
+imports. Files are appended under a `# Project instructions` heading with
+their path as a sub-heading (Markdown, not pi's XML wrapper, because small
+local models follow Markdown more reliably).
+
+Where the agent's own files live:
+
+| Agent | Directory | Contents |
+|---|---|---|
+| Claude Code | `~/.claude/`, `.claude/` | `CLAUDE.md`, `agents/*.md` (body = system prompt), `skills/*/SKILL.md`, `commands/*.md` |
+| Codex CLI | `~/.codex/` | `config.toml`, `AGENTS.md`, `prompts/*.md`, `skills/` |
+| pi | `~/.pi/agent/`, `.pi/` | `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`, `skills/`, `prompts/`, `extensions/` |
+| OpenCode | `~/.config/opencode/`, `.opencode/` | `AGENTS.md`, `agent/*.md`, `command/*.md` |
+| cross-agent | `.agents/` | `skills/*/SKILL.md` (agentskills.io) |
+
+Decision (`crates/agent-core/src/layers.rs`): three roots — `.termide/ai/`
+in the panel's working directory, the same in the termide project root, and
+`ai/` in the configuration directory — highest first. A single file comes
+from the first root that has it; a directory of named entries is the union
+with higher names hiding lower ones, which is how agents, skills and prompts
+will merge. Session logs go to `<config>/ai/sessions/<panel directory>/`,
+keyed by the directory the panel works in: the user's decision, the shape pi
+and Claude Code use (sessions under the tool's own directory), taken over the
+XDG data/config split. The configuration level is laid out on first use —
+`AGENTS.md` seeded from the shipped data file, empty `agents/`, `skills/` and
+`prompts/` — and files present are never touched again.
+
+The prompt is a template with `{{tools}}`, `{{guidelines}}`,
+`{{environment}}` and `{{project_instructions}}` placeholders: the `ai`
+directory's root `AGENTS.md` for the default agent (the user's decision — the
+root file of the directory is the default prompt, and a global instruction
+file would only duplicate what one can write into it), `agents/<name>/SOUL.md`
+for a custom agent, which falls back to the root file when it has none. No
+prompt text is code: the seed is the data file
+`crates/agent-core/assets/AGENTS.md` (the former fixed prompt, base
+guidelines included), copied to the configuration on first use; code only
+fills the placeholders from tool metadata, the environment and the instruction
+files. A file replaces the template whole rather than layering
+`identity`/`append` overrides, so what the user reads is what the model gets;
+the panel's **Show system prompt** writes the assembled text next to the
+session logs and opens it. The name is termide's own: only pi calls the file
+`SYSTEM.md`, Claude Code and OpenCode keep the prompt in the agent's Markdown
+body, and Codex has no such file, so there is no convention to follow.
 
 ## 6. Sessions
 
@@ -211,8 +248,8 @@ the current one marked), mirroring pi's `/resume` and Claude Code's
 `--resume`. A switch is refused while a run is in flight: simpler than
 draining the old worker, and it never leaves a half-finished turn in a log.
 
-Session logs live in `<data>/sessions/<project>/agent/`, beside the
-project's saved layout, rather than in a directory of their own.
+Session logs live in `<config>/ai/sessions/<panel directory>/`; the
+picker lists the sessions of the directory the panel works in.
 
 Switching model and mode at runtime:
 

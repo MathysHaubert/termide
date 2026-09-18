@@ -22,6 +22,7 @@ pub mod agent;
 pub mod cancel;
 pub mod compaction;
 pub mod context;
+pub mod layers;
 pub mod message;
 pub mod permissions;
 pub mod provider;
@@ -36,6 +37,11 @@ pub use cancel::CancelToken;
 pub use compaction::{CompactionPolicy, CompactionReason};
 pub use context::{
     build_system_prompt, civil_date, discover_context_files, ContextFile, PromptOptions,
+    SEED_TEMPLATE,
+};
+pub use layers::{
+    ensure_global_layout, AgentDirs, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR,
+    ROOT_SOUL_FILE, SESSIONS_DIR, SOUL_FILE,
 };
 pub use message::{
     now_millis, AssistantContent, AssistantMessage, Message, StopReason, ToolCall,

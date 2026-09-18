@@ -163,6 +163,27 @@ pub enum PanelState {
     // Note: Welcome panels are NOT saved (they auto-close)
 }
 
+/// The relative path a project's data is filed under: its canonical path
+/// with the root components stripped (leading `/` on Unix; drive prefix and
+/// `\` on Windows), so joining it onto a base directory nests rather than
+/// replaces. `Component::Prefix` covers `C:` and `\\server\share`,
+/// `Component::RootDir` covers `/` and `\`.
+#[must_use]
+pub fn project_key(project_root: &Path) -> PathBuf {
+    let canonical = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    canonical
+        .components()
+        .filter(|c| {
+            !matches!(
+                c,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .collect()
+}
+
 /// Get the data directory for termide.
 pub(crate) fn get_data_dir() -> Result<PathBuf> {
     dirs::data_dir()
@@ -183,21 +204,59 @@ const LEGACY_PROJECTS_DIR: &str = "sessions";
 fn migrate_legacy_dir(data_dir: &Path) {
     let legacy = data_dir.join(LEGACY_PROJECTS_DIR);
     let current = data_dir.join(PROJECTS_DIR);
-    if !legacy.is_dir() || current.exists() {
+    if !legacy.is_dir() {
         return;
     }
-    match std::fs::rename(&legacy, &current) {
-        Ok(()) => log::info!(
-            "moved saved layouts from {} to {}",
-            legacy.display(),
-            current.display()
-        ),
-        Err(e) => log::warn!(
-            "could not move {} to {}: {e}",
-            legacy.display(),
-            current.display()
-        ),
+    if !current.exists() {
+        match std::fs::rename(&legacy, &current) {
+            Ok(()) => log::info!(
+                "moved saved layouts from {} to {}",
+                legacy.display(),
+                current.display()
+            ),
+            Err(e) => log::warn!(
+                "could not move {} to {}: {e}",
+                legacy.display(),
+                current.display()
+            ),
+        }
+        return;
     }
+    // Both exist: an older termide kept writing to the legacy directory after
+    // the move. Fold what it left into the current one and drop the shell.
+    if let Err(e) = merge_move(&legacy, &current) {
+        log::warn!(
+            "could not fold {} into {}: {e}",
+            legacy.display(),
+            current.display()
+        );
+    }
+}
+
+/// Move everything under `src` into `dst`, recursing into directories that
+/// exist on both sides and keeping the newer of two files with the same
+/// name. Directories emptied on the way are removed, `src` included.
+fn merge_move(src: &Path, dst: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if !to.exists() {
+            std::fs::rename(&from, &to)?;
+        } else if from.is_dir() && to.is_dir() {
+            merge_move(&from, &to)?;
+        } else if from.is_file() && to.is_file() {
+            let newer = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            if newer(&from) > newer(&to) {
+                std::fs::rename(&from, &to)?;
+            } else {
+                std::fs::remove_file(&from)?;
+            }
+        }
+    }
+    // Only an empty directory goes; anything unexpected stays for the user.
+    let _ = std::fs::remove_dir(src);
+    Ok(())
 }
 
 impl Session {
@@ -209,26 +268,7 @@ impl Session {
     pub fn get_project_dir(project_root: &Path) -> Result<PathBuf> {
         let data_dir = get_data_dir()?;
         migrate_legacy_dir(&data_dir);
-
-        // Canonicalize the project path to handle symlinks and relative paths
-        let canonical_project = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_path_buf());
-
-        // Strip root components (leading "/" on Unix; drive prefix + "\" on Windows)
-        // so that PathBuf::join does not treat the result as absolute and replace the base.
-        // Component::Prefix covers "C:" / "\\server\share"; Component::RootDir covers "/" or "\".
-        let relative_path: PathBuf = canonical_project
-            .components()
-            .filter(|c| {
-                !matches!(
-                    c,
-                    std::path::Component::Prefix(_) | std::path::Component::RootDir
-                )
-            })
-            .collect();
-
-        Ok(data_dir.join(PROJECTS_DIR).join(relative_path))
+        Ok(data_dir.join(PROJECTS_DIR).join(project_key(project_root)))
     }
 
     /// Get the path to the session.toml file for a specific project
@@ -308,5 +348,47 @@ mod tests {
         assert_eq!(text.matches("session").count(), 1, "{text}");
         let back: Panels = toml::from_str(&text).unwrap();
         assert_eq!(back.panels, panels.panels);
+    }
+    /// A termide older than the rename keeps writing `sessions/` after the
+    /// first move; what it leaves there is folded into `projects/`, newer
+    /// files winning, and the empty shell disappears.
+    #[test]
+    fn leftover_legacy_layouts_are_folded_into_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = tmp.path().join(LEGACY_PROJECTS_DIR);
+        let current = tmp.path().join(PROJECTS_DIR);
+        let write = |base: &Path, rel: &str, body: &str| {
+            let path = base.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        };
+        write(&legacy, "home/u/only-legacy/session.toml", "legacy only");
+        write(&legacy, "home/u/both/session.toml", "legacy newer");
+        write(&current, "home/u/both/session.toml", "current older");
+        write(&current, "home/u/only-current/session.toml", "current only");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        std::fs::File::open(current.join("home/u/both/session.toml"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        migrate_legacy_dir(tmp.path());
+
+        assert!(!legacy.exists());
+        let read = |rel: &str| std::fs::read_to_string(current.join(rel)).unwrap();
+        assert_eq!(read("home/u/only-legacy/session.toml"), "legacy only");
+        assert_eq!(read("home/u/both/session.toml"), "legacy newer");
+        assert_eq!(read("home/u/only-current/session.toml"), "current only");
+
+        // Idempotent: nothing left to do.
+        migrate_legacy_dir(tmp.path());
+        assert!(current.join("home/u/both/session.toml").is_file());
+    }
+    #[test]
+    fn project_key_mirrors_the_path_without_its_root() {
+        assert_eq!(
+            project_key(Path::new("/nonexistent/home/u/proj")),
+            PathBuf::from("nonexistent/home/u/proj")
+        );
     }
 }

@@ -1,11 +1,15 @@
 //! System prompt composition and project instruction discovery.
 //!
-//! The prompt is short on purpose: identity, the tool list with one-line
-//! snippets, merged guidelines, an environment block and the project's
-//! instruction files. Instruction files follow the cross-agent `AGENTS.md`
-//! convention with `CLAUDE.md` as a fallback in the same directory, walked
-//! from the filesystem root down to the working directory so the most
-//! specific file comes last.
+//! The prompt is a template — the agent's `SOUL.md` — with four placeholders
+//! the builder fills: `{{tools}}` (the tool list with one-line snippets),
+//! `{{guidelines}}` (the rules the tools contribute), `{{environment}}` and
+//! `{{project_instructions}}`. No prompt text lives in code: the seed
+//! template is the data file `assets/AGENTS.md`, written to the
+//! configuration directory as `ai/AGENTS.md` on first use and read from
+//! there; only the order of assembly is code. Instruction files follow the cross-agent
+//! `AGENTS.md` convention with `CLAUDE.md` as a fallback in the same
+//! directory, walked from the filesystem root down to the working directory
+//! so the most specific file comes last.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,15 +22,9 @@ pub const MAX_CONTEXT_FILE_BYTES: u64 = 32 * 1024;
 /// Names tried in each directory, in order; the first that exists wins.
 const CONTEXT_FILE_NAMES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 
-const DEFAULT_IDENTITY: &str = "You are a coding agent working inside termide, a terminal IDE. \
-You help with software tasks in the current project: you read code, make targeted edits, run \
-commands and report what you did and what you found.";
-
-const BASE_GUIDELINES: [&str; 3] = [
-    "Read a file before you change it, and keep edits small and targeted.",
-    "Name file paths clearly when you talk about files.",
-    "Be concise.",
-];
+/// The seed of the configuration's `ai/AGENTS.md`: the data file shipped
+/// with the crate, used only to create that file and when it cannot be read.
+pub const SEED_TEMPLATE: &str = include_str!("../assets/AGENTS.md");
 
 /// One project instruction file, in prompt order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,34 +33,48 @@ pub struct ContextFile {
     pub content: String,
 }
 
-/// Find instruction files: the optional global file first, then one per
-/// ancestor of `cwd` from the root down to `cwd` itself.
+/// Find instruction files, least specific first: the optional global file,
+/// the project's when `project_root` is not on the way to `cwd`, then one
+/// per ancestor of `cwd` from the root down to `cwd` itself.
 #[must_use]
-pub fn discover_context_files(cwd: &Path, global: Option<&Path>) -> Vec<ContextFile> {
-    let mut files = Vec::new();
-    if let Some(global) = global {
-        if let Some(file) = load_context_file(global) {
+pub fn discover_context_files(
+    cwd: &Path,
+    project_root: Option<&Path>,
+    global: Option<&Path>,
+) -> Vec<ContextFile> {
+    let mut files: Vec<ContextFile> = Vec::new();
+    let push = |path: &Path, files: &mut Vec<ContextFile>| {
+        if files.iter().any(|f| same_file(&f.path, path)) {
+            return;
+        }
+        if let Some(file) = load_context_file(path) {
             files.push(file);
         }
+    };
+    if let Some(global) = global {
+        push(global, &mut files);
+    }
+    let mut dirs: Vec<&Path> = Vec::new();
+    if let Some(root) = project_root.filter(|root| !cwd.starts_with(root)) {
+        dirs.push(root);
     }
     let mut ancestors: Vec<&Path> = cwd.ancestors().collect();
     ancestors.reverse();
-    for dir in ancestors {
-        let Some(path) = CONTEXT_FILE_NAMES
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|candidate| candidate.is_file())
-        else {
-            continue;
-        };
-        if global.is_some_and(|g| same_file(g, &path)) {
-            continue;
-        }
-        if let Some(file) = load_context_file(&path) {
-            files.push(file);
+    dirs.extend(ancestors);
+    for dir in dirs {
+        if let Some(path) = context_file_in(dir) {
+            push(&path, &mut files);
         }
     }
     files
+}
+
+/// The instruction file of one directory, by the name order.
+fn context_file_in(dir: &Path) -> Option<PathBuf> {
+    CONTEXT_FILE_NAMES
+        .iter()
+        .map(|name| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -102,8 +114,10 @@ pub struct PromptOptions<'a> {
     pub cwd: &'a Path,
     pub tools: &'a ToolRegistry,
     pub context_files: &'a [ContextFile],
-    /// Replaces the default identity paragraph.
-    pub identity: Option<&'a str>,
+    /// Prompt template with `{{tools}}`, `{{guidelines}}`, `{{environment}}`
+    /// and `{{project_instructions}}` placeholders; the shipped seed
+    /// [`SEED_TEMPLATE`] when `None`.
+    pub soul: Option<&'a str>,
     /// Appended verbatim at the end.
     pub append: Option<&'a str>,
     /// Unix time in milliseconds for the date line; `None` uses the clock.
@@ -117,7 +131,7 @@ impl<'a> PromptOptions<'a> {
             cwd,
             tools,
             context_files,
-            identity: None,
+            soul: None,
             append: None,
             now_millis: None,
         }
@@ -126,9 +140,6 @@ impl<'a> PromptOptions<'a> {
 
 #[must_use]
 pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
-    let mut out = String::new();
-    out.push_str(options.identity.unwrap_or(DEFAULT_IDENTITY));
-    out.push_str("\n\n# Tools\n");
     let snippets: Vec<String> = options
         .tools
         .iter()
@@ -137,14 +148,12 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
                 .map(|snippet| format!("- {}: {snippet}", tool.name()))
         })
         .collect();
-    if snippets.is_empty() {
-        out.push_str("(none)\n");
+    let tools = if snippets.is_empty() {
+        "(none)".to_string()
     } else {
-        out.push_str(&snippets.join("\n"));
-        out.push('\n');
-    }
+        snippets.join("\n")
+    };
 
-    out.push_str("\n# Guidelines\n");
     let mut guidelines: Vec<&str> = Vec::new();
     for tool in options.tools.iter() {
         for guideline in tool.prompt_guidelines() {
@@ -153,54 +162,58 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
             }
         }
     }
-    for guideline in BASE_GUIDELINES {
-        if !guidelines.contains(&guideline) {
-            guidelines.push(guideline);
-        }
-    }
-    for guideline in guidelines {
-        out.push_str("- ");
-        out.push_str(guideline);
-        out.push('\n');
-    }
+    let guidelines: String = guidelines
+        .iter()
+        .map(|g| format!("- {g}"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    out.push_str("\n# Environment\n");
-    out.push_str(&format!("- Working directory: {}\n", options.cwd.display()));
-    out.push_str(&format!(
-        "- Platform: {} ({})\n",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ));
     let now = options.now_millis.unwrap_or_else(|| {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     });
-    out.push_str(&format!("- Date: {}\n", civil_date(now)));
-    out.push_str(&format!(
-        "- Git repository: {}\n",
+    let environment = format!(
+        "- Working directory: {}\n- Platform: {} ({})\n- Date: {}\n- Git repository: {}",
+        options.cwd.display(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        civil_date(now),
         if in_git_repository(options.cwd) {
             "yes"
         } else {
             "no"
         }
-    ));
+    );
 
+    let mut instructions = String::new();
     if !options.context_files.is_empty() {
-        out.push_str("\n# Project instructions\n");
+        instructions.push_str("# Project instructions\n");
         for file in options.context_files {
-            out.push_str(&format!("\n## {}\n\n", file.path.display()));
-            out.push_str(file.content.trim_end());
-            out.push('\n');
+            instructions.push_str(&format!("\n## {}\n\n", file.path.display()));
+            instructions.push_str(file.content.trim_end());
+            instructions.push('\n');
         }
     }
 
+    let template = options.soul.unwrap_or(SEED_TEMPLATE);
+    let mut out = template
+        .replace("{{tools}}", &tools)
+        .replace("{{guidelines}}", &guidelines)
+        .replace("{{environment}}", &environment)
+        .replace("{{project_instructions}}", instructions.trim_end());
     if let Some(append) = options.append.filter(|a| !a.trim().is_empty()) {
         out.push('\n');
         out.push_str(append.trim_end());
         out.push('\n');
     }
+    // An empty placeholder on a line of its own leaves a double blank line.
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    let mut out = out.trim_end().to_string();
+    out.push('\n');
     out
 }
 
@@ -274,13 +287,22 @@ mod tests {
         let global = root.path().join("global.md");
         std::fs::write(&global, "global rules").unwrap();
 
-        let files = discover_context_files(&nested, Some(&global));
+        let files = discover_context_files(&nested, Some(&project), Some(&global));
         let contents: Vec<&str> = files.iter().map(|f| f.content.as_str()).collect();
         assert_eq!(
             contents,
             vec!["global rules", "project rules", "nested rules"]
         );
         assert!(files[1].path.ends_with("AGENTS.md"));
+
+        // A panel working outside the project still gets the project's
+        // rules, below its own directory's.
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("AGENTS.md"), "elsewhere rules").unwrap();
+        let files = discover_context_files(&elsewhere, Some(&project), None);
+        let contents: Vec<&str> = files.iter().map(|f| f.content.as_str()).collect();
+        assert_eq!(contents, vec!["project rules", "elsewhere rules"]);
     }
 
     #[test]
@@ -288,10 +310,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let big = dir.path().join("AGENTS.md");
         std::fs::write(&big, "x".repeat(MAX_CONTEXT_FILE_BYTES as usize + 1)).unwrap();
-        assert!(discover_context_files(dir.path(), None).is_empty());
+        assert!(discover_context_files(dir.path(), None, None).is_empty());
 
         std::fs::write(&big, "shared").unwrap();
-        let files = discover_context_files(dir.path(), Some(&big));
+        let files = discover_context_files(dir.path(), Some(dir.path()), Some(&big));
         assert_eq!(files.len(), 1);
     }
 
@@ -309,7 +331,7 @@ mod tests {
         options.now_millis = Some(1_789_670_496_000);
         let prompt = build_system_prompt(&options);
 
-        assert!(prompt.starts_with(DEFAULT_IDENTITY));
+        assert!(prompt.starts_with("You are a coding agent working inside termide"));
         assert!(prompt.contains("# Tools\n(none)"), "echo has no snippet");
         assert!(prompt.contains("- Be concise."));
         assert!(prompt.contains(&format!("- Working directory: {}", dir.path().display())));
@@ -319,8 +341,22 @@ mod tests {
         assert!(prompt.contains("Use conventional commits."));
         assert!(prompt.ends_with("Answer in Russian.\n"));
 
-        options.identity = Some("You are terse.");
+        // A soul replaces the template whole; unknown placeholders stay.
+        options.soul =
+            Some("You are terse.\n\n{{environment}}\n{{unknown}}\n{{project_instructions}}\n");
         let custom = build_system_prompt(&options);
-        assert!(custom.starts_with("You are terse.\n\n# Tools"));
+        assert!(custom.starts_with("You are terse.\n\n- Working directory:"));
+        assert!(custom.contains("{{unknown}}"));
+        assert!(!custom.contains("# Tools"));
+        assert!(custom.contains("Use conventional commits."));
+        assert!(custom.ends_with("Answer in Russian.\n"));
+
+        // Without instructions the section is gone and nothing trails.
+        let none: Vec<ContextFile> = Vec::new();
+        let mut bare = PromptOptions::new(dir.path(), &tools, &none);
+        bare.now_millis = options.now_millis;
+        let prompt = build_system_prompt(&bare);
+        assert!(!prompt.contains("# Project instructions"));
+        assert!(prompt.ends_with("- Git repository: yes\n"));
     }
 }

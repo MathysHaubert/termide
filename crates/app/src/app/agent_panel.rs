@@ -2,12 +2,13 @@
 //! from configuration here, so the panel crate stays free of config and
 //! filesystem policy.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 use termide_agent_core::{
-    build_system_prompt, discover_context_files, Decision, ModelSpec, PromptOptions, Session,
+    build_system_prompt, discover_context_files, ensure_global_layout, AgentDirs, Decision,
+    ModelSpec, PromptOptions, Session, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
 use termide_agent_providers::{Compat, OpenAiCompatProvider};
 use termide_agent_tools::builtin_tools;
@@ -32,8 +33,16 @@ impl App {
             return Ok(());
         }
 
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let panel = AgentPanel::new(agent_setup(&settings, cwd, None));
+        // Like a new terminal, the agent works where the focused panel is
+        // (a file manager's directory, an editor's file); the project root
+        // when the panel has no directory of its own.
+        let project_root = self.state.project_root.clone();
+        let cwd = self
+            .layout_manager
+            .active_panel_mut()
+            .and_then(|p| p.get_working_directory())
+            .unwrap_or_else(|| project_root.clone());
+        let panel = AgentPanel::new(agent_setup(&settings, cwd, &project_root, None));
         self.add_panel(Box::new(panel));
         self.auto_save_session();
         Ok(())
@@ -59,15 +68,24 @@ pub(crate) fn restore_agent_panel(
             None
         }
     });
-    Some(AgentPanel::new(agent_setup(settings, cwd, session)))
+    // termide's project root is the directory it was started in; the layout
+    // restore runs off the App, so read it from the same source.
+    let project_root = std::env::current_dir().unwrap_or_else(|_| cwd.clone());
+    Some(AgentPanel::new(agent_setup(
+        settings,
+        cwd,
+        &project_root,
+        session,
+    )))
 }
 
-/// Everything the panel needs, resolved from `settings` for a project at
-/// `cwd`: the provider, the model, the tools, the system prompt and where the
-/// session logs live.
+/// Everything the panel needs, resolved from `settings` for a panel working
+/// in `cwd` inside the termide project at `project_root`: the provider, the
+/// model, the tools, the system prompt and where the session logs live.
 fn agent_setup(
     settings: &AgentSettings,
     cwd: PathBuf,
+    project_root: &Path,
     session: Option<Session>,
 ) -> AgentPanelSetup {
     let api_key = if settings.api_key_env.is_empty() {
@@ -92,17 +110,30 @@ fn agent_setup(
     };
 
     let tools = builtin_tools();
-    let global_context = termide_config::get_config_dir()
+    let global_agent_dir = termide_config::get_config_dir()
         .ok()
-        .map(|dir| dir.join("AGENTS.md"));
-    let context_files = discover_context_files(&cwd, global_context.as_deref());
-    let system_prompt = build_system_prompt(&PromptOptions::new(&cwd, &tools, &context_files));
+        .map(|dir| dir.join(GLOBAL_AGENT_DIR));
+    if let Some(global) = &global_agent_dir {
+        if let Err(error) = ensure_global_layout(global) {
+            log::warn!("cannot lay out {}: {error}", global.display());
+        }
+    }
+    let dirs = AgentDirs::new(&cwd, Some(project_root), global_agent_dir.as_deref());
+    let soul = dirs.soul(DEFAULT_AGENT);
+    // The configuration's `ai/AGENTS.md` is the prompt template itself,
+    // not an instruction file, so no global file joins the chain.
+    let context_files = discover_context_files(&cwd, Some(project_root), None);
+    let mut options = PromptOptions::new(&cwd, &tools, &context_files);
+    options.soul = soul.as_deref();
+    let system_prompt = build_system_prompt(&options);
 
-    // Agent sessions live beside the layout of the same project, under
-    // `<data>/projects/<project>/agent/`.
-    let session_dir = termide_project::Session::get_project_dir(&cwd)
-        .ok()
-        .map(|dir| dir.join("agent"));
+    // Session logs are filed by the directory the panel works in, under the
+    // same `ai/` directory as the agents: `<config>/ai/sessions/<path>/`.
+    let session_dir = termide_config::get_config_dir().ok().map(|dir| {
+        dir.join(GLOBAL_AGENT_DIR)
+            .join(SESSIONS_DIR)
+            .join(termide_project::project_key(&cwd))
+    });
 
     AgentPanelSetup {
         cwd,
