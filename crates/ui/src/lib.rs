@@ -2,8 +2,10 @@
 //!
 //! Provides reusable UI widgets and layout utilities.
 
+pub mod choice_form;
 pub mod click_tracker;
 pub mod color_popup;
+pub mod completion_list;
 pub mod config;
 pub mod grapheme_utils;
 pub mod path_utils;
@@ -15,8 +17,10 @@ pub mod text_utils;
 pub mod textarea;
 pub mod viewport;
 
+pub use choice_form::{ChoiceAction, ChoiceForm};
 pub use click_tracker::{ClickTracker, IndexClickTracker, PositionClickTracker};
 pub use color_popup::{extract_hex_color_at_col, ColorPreview};
+pub use completion_list::{CompletionAction, CompletionItem, CompletionList};
 pub use grapheme_utils::{grapheme_display_width, render_text_cells, str_display_width};
 pub use path_utils::expand_tilde;
 pub use scrollbar::ScrollBar;

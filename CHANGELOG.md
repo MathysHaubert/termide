@@ -43,61 +43,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you
   describe a task and a language model carries it out in your project: it
   reads files, edits them and runs shell commands, one collapsed line per tool
-  call that expands to the full output. Works with any OpenAI-compatible
-  endpoint, so a local server (llama.cpp, Ollama, vLLM, omlx) needs no account
-  and no key; the API key for hosted models is read from an environment
-  variable named in the config, never stored in it.
+  call that expands to the full output, and an open editor reloads a file the
+  agent changed. Works with any OpenAI-compatible endpoint, so a local server
+  (llama.cpp, Ollama, vLLM, omlx) needs no account and no key; the API key for
+  hosted models is read from an environment variable named in the config,
+  never stored in it. The panel works in the directory of the panel that had
+  focus, like a new terminal; its status line shows the permission mode, the
+  model with its endpoint, the agent and the context window with its usage.
 
-  Nothing that changes the project runs unasked: a prompt offers allow once,
-  allow for the session, allow always or deny, and "allow always" writes a
-  rule into the project's `.termide/config.toml`. Rules are per tool with
-  `deny` beating `ask` beating `allow`; shell commands are judged per part, so
-  `cargo build && rm -rf target` needs both halves allowed. Reading inside the
-  project and a list of look-only commands (`ls`, `rg`, `git status`, …) never
-  ask.
+  Nothing that changes the project runs unasked: a card in the panel offers
+  allow once, allow for this session, allow always, deny, deny with a reason
+  the model gets to read, or stop the run; "allow always" writes a rule into
+  the project's `.termide/config.toml`. Rules are per tool with `deny` beating
+  `ask` beating `allow`; shell commands are judged per part, so `cargo build
+  && rm -rf target` needs both halves allowed. Reading inside the project and
+  a list of look-only commands (`ls`, `rg`, `git status`, …) never ask. The
+  **Mode** chip and `Shift+Tab` switch between ask, accept-edits and auto, and
+  the change reaches a running task at its next tool call.
 
-  The agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem
-  root down to the working directory, and summarises the older part of a long
-  session by itself when it approaches the model's context window. Every
-  session is logged as JSON Lines under `ai/sessions/` in the configuration directory, and the
-  panel's `[≡]` menu starts a new one, renames the current one or reopens an
-  earlier one. The panel is titled by that name, or by your first request.
+  The agent's own files live in an `ai` directory at three levels — the
+  panel's directory, the project root and the configuration directory. The
+  system prompt is a template, that directory's `AGENTS.md`, written out on
+  first use and assembled from files alone; **Show system prompt** opens the
+  result. The compaction prompts are files there too (`system/compact.md`,
+  `system/compacted.md`), and `/compact [focus]` summarises on request. Further agents are directories under `agents/` with an optional
+  `SOUL.md` and an `agent.toml` naming a description, a model, a mode and a
+  subset of the tools, or an `[acp]` table that makes the agent an external
+  program driven over the Agent Client Protocol — Claude Code, Codex or Gemini
+  CLI through their adapters — in the same panel. Skills in the agentskills.io
+  shape (`skills/<name>/SKILL.md`, also `.agents/skills/`) are listed in the
+  prompt and loaded on demand with a `skill` tool; prompt templates
+  `prompts/<name>.md` are sent as `/name args` and completed from a list as
+  you type; MCP servers in `mcp.toml` start over stdio and their tools join as
+  `server__tool`; command hooks in `hooks.toml` run before and after tool
+  calls and may block, rewrite or approve a call or rewrite its result. The
+  agent follows `AGENTS.md` (or `CLAUDE.md`) files from the filesystem root
+  down to the working directory.
 
-  The agent works in the directory of the panel that had focus, like a new
-  terminal. Its own files live in an `ai` directory at three levels — the
-  panel's directory, the project root and the configuration directory — and
-  the system prompt is a template, that directory's `AGENTS.md`, written out
-  on first use so it can be read and edited; **Show system prompt** in the
-  `[≡]` menu opens the assembled text. Further agents are directories under
-  `agents/`, each with an optional `SOUL.md` of its own and an `agent.toml`
-  naming a description, a model, a permission mode and a subset of the
-  tools; the **Agent** chip switches between them. Skills in the
-  agentskills.io shape (`skills/<name>/SKILL.md`, also `.agents/skills/`)
-  are listed in the prompt by name and description and loaded on demand
-  with a `skill` tool. Prompt templates `prompts/<name>.md` are sent as
-  `/name args`, with `$ARGUMENTS` and `$1`…`$9` filled in. MCP servers
-  declared in `mcp.toml` are started over stdio when the panel opens and
-  their tools join the agent's as `server__tool`, under the same permission
-  rules. Command hooks in `hooks.toml` run before and after tool calls with
-  the JSON-in, JSON-out protocol other agents use, and may block a call,
-  rewrite its arguments, approve it in place of the prompt or rewrite its
-  result. An agent with an `[acp]` table in its `agent.toml` is an external
-  program driven over the Agent Client Protocol — Claude Code, Codex or
-  Gemini CLI through their adapters — in the same panel, with the same
-  permission dialog and editor reloads.
-
-  The input recalls earlier requests with `↑`/`↓` and completes `/commands`
-  from a list that opens as you type; the status line names the endpoint
-  beside the model and the size of the context window beside its usage.
-
-  The **Mode** and **Model** status chips are buttons: the first switches the
-  permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
-  the change reaches a task already running at its next tool call; the second
-  lists the models the endpoint serves, or takes an id typed by hand when it
-  cannot, and the session remembers the model and the agent it was on when
-  reopened. The
-  panel is part of the project's saved layout: reopening the project brings
-  it back in the session it was in. See [`doc/en/agent.md`](doc/en/agent.md).
+  Every session is logged as JSON Lines under `ai/sessions/` in the
+  configuration directory; the log records the model and the agent, so a
+  reopened session continues on both. The panel's `[≡]` menu starts, renames
+  and reopens sessions, the **Model** chip lists the endpoint's models,
+  `↑`/`↓` recall earlier requests, and the agent summarises the older part of
+  a long session by itself when it approaches the context window. The panel
+  is part of the project's saved layout. See
+  [`doc/en/agent.md`](doc/en/agent.md).
 
 ## [0.35.0] - 2026-09-13
 

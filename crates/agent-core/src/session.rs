@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::compaction::summary_message;
+use crate::compaction::CompactionPrompts;
 use crate::context::file_timestamp;
 use crate::message::{now_millis, Message};
 
@@ -283,9 +283,17 @@ impl Session {
         path
     }
 
-    /// The transcript the model should see for the current branch.
+    /// The transcript the model should see for the current branch, with
+    /// summaries worded by the default compaction prompts.
     #[must_use]
     pub fn context_messages(&self) -> Vec<Message> {
+        self.context_messages_with(&CompactionPrompts::default())
+    }
+
+    /// [`Session::context_messages`] with the compaction prompts in use, so
+    /// a summary reads the way `ai/system/compacted.md` words it.
+    #[must_use]
+    pub fn context_messages_with(&self, prompts: &CompactionPrompts) -> Vec<Message> {
         let mut messages: Vec<Message> = Vec::new();
         for entry in self.branch() {
             match &entry.kind {
@@ -298,7 +306,7 @@ impl Session {
                 } => {
                     let start = messages.len().saturating_sub(*keep_last);
                     let tail = messages.split_off(start);
-                    messages = vec![summary_message(summary)];
+                    messages = vec![prompts.summary_message(summary)];
                     messages.extend(tail);
                 }
             }

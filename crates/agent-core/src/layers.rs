@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::acp::AcpConfig;
+use crate::compaction::{CompactionPrompts, SEED_COMPACT, SEED_COMPACTED};
 use crate::context::SEED_TEMPLATE;
 use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
@@ -43,6 +44,9 @@ pub const SKILL_FILE: &str = "SKILL.md";
 /// Prompt templates under an `ai` directory: `prompts/<name>.md`, typed as
 /// `/<name>` in the panel.
 pub const PROMPTS_DIR: &str = "prompts";
+/// termide's own prompts under an `ai` directory: `system/compact.md` and
+/// `system/compacted.md` so far.
+pub const SYSTEM_DIR: &str = "system";
 
 /// One prompt template: `/<name> args` in the input expands to `body` with
 /// `$ARGUMENTS` and `$1`…`$9` filled in.
@@ -143,12 +147,18 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
 /// no such file exists yet, plus empty `agents/`, `skills/` and `prompts/`.
 /// Files already there are left alone, so the call is safe on every start.
 pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
-    for dir in ["agents", "skills", "prompts"] {
+    for dir in ["agents", "skills", "prompts", SYSTEM_DIR] {
         std::fs::create_dir_all(global.join(dir))?;
     }
-    let soul = global.join(ROOT_SOUL_FILE);
-    if !soul.exists() {
-        std::fs::write(&soul, SEED_TEMPLATE)?;
+    for (relative, seed) in [
+        (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
+        (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
+        (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
+    ] {
+        let path = global.join(relative);
+        if !path.exists() {
+            std::fs::write(&path, seed)?;
+        }
     }
     Ok(())
 }
@@ -217,6 +227,28 @@ impl AgentDirs {
             skill_roots.push(global.join(SKILLS_DIR));
         }
         Self { roots, skill_roots }
+    }
+
+    /// The compaction prompts: `system/compact.md` and `system/compacted.md`
+    /// from the highest root that has each, the shipped seeds otherwise.
+    #[must_use]
+    pub fn compaction_prompts(&self) -> CompactionPrompts {
+        let read = |name: &str, seed: &str| -> String {
+            self.find_file(Path::new(SYSTEM_DIR).join(name))
+                .and_then(|path| match std::fs::read_to_string(&path) {
+                    Ok(text) if !text.trim().is_empty() => Some(text),
+                    Ok(_) => None,
+                    Err(error) => {
+                        log::warn!("cannot read {}: {error}", path.display());
+                        None
+                    }
+                })
+                .unwrap_or_else(|| seed.to_string())
+        };
+        CompactionPrompts::from_files(
+            &read("compact.md", SEED_COMPACT),
+            &read("compacted.md", SEED_COMPACTED),
+        )
     }
 
     /// Command hooks from every root's `hooks.toml`, by name; a higher root's
@@ -527,11 +559,26 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let global = tmp.path().join("ai");
         ensure_global_layout(&global).unwrap();
-        for dir in ["agents", "skills", "prompts"] {
+        for dir in ["agents", "skills", "prompts", "system"] {
             assert!(global.join(dir).is_dir(), "{dir}");
         }
         let soul = global.join(ROOT_SOUL_FILE);
         assert_eq!(std::fs::read_to_string(&soul).unwrap(), SEED_TEMPLATE);
+        assert_eq!(
+            std::fs::read_to_string(global.join("system/compact.md")).unwrap(),
+            SEED_COMPACT
+        );
+        // The compaction prompts follow the files, a project level first.
+        let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
+        assert_eq!(dirs.compaction_prompts(), CompactionPrompts::default());
+        let project = tmp.path().join(".termide/ai/system");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("compacted.md"), "Recap: {{summary}}").unwrap();
+        assert_eq!(dirs.compaction_prompts().wrapper, "Recap: {{summary}}");
+        assert_eq!(
+            dirs.compaction_prompts().request,
+            CompactionPrompts::default().request
+        );
 
         std::fs::write(&soul, "mine").unwrap();
         ensure_global_layout(&global).unwrap();

@@ -196,6 +196,10 @@ impl Backend for AcpRuntime {
         Err(PromptError::Unsupported)
     }
 
+    fn compact(&self, _focus: Option<String>) -> Result<(), PromptError> {
+        Err(PromptError::Unsupported)
+    }
+
     fn into_agent(self: Box<Self>) -> Option<Agent> {
         None
     }
@@ -517,7 +521,9 @@ impl Shared {
             PermissionAnswer::AllowSession | PermissionAnswer::AllowAlways => {
                 pick(&["allow_always", "allow_once"])
             }
-            PermissionAnswer::Deny => pick(&["reject_once", "reject_always"]),
+            PermissionAnswer::Deny | PermissionAnswer::DenyWithReason(_) => {
+                pick(&["reject_once", "reject_always"])
+            }
         };
         match chosen {
             Some(option_id) => {
@@ -877,7 +883,7 @@ mod tests {
             if let Ok(envelope) = permissions.try_recv() {
                 assert_eq!(envelope.request.tool, "edit");
                 assert_eq!(envelope.request.subject, "Write notes.md");
-                envelope.reply.send(answer).unwrap();
+                envelope.reply.send(answer.clone()).unwrap();
             }
             if events.iter().any(|e| matches!(e, AgentEvent::AgentEnd)) {
                 return events;

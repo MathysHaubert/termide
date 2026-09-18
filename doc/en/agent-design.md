@@ -302,6 +302,21 @@ tail`; the session log records a `compaction` entry with `keep_last`, so
 reopening rebuilds the same context. Re-reading touched files is left to the
 model.
 
+Compaction prompts as files: no other agent lets the user edit the summary
+prompt — Claude Code and Codex build it in and take a focus from `/compact`,
+OpenCode compiles a `summarize.txt` in, pi lets an extension replace the whole
+step. Decision: the same rule as for the system prompt — `ai/system/compact.md`
+(instructions plus the closing `request:` in front matter, `{{focus}}` for
+`/compact`'s words) and `ai/system/compacted.md` (the wrapper with
+`{{summary}}`), seeded from `assets/system/` on first use and read through the
+three levels; `CompactionPrompts` carries them, and a reopened session words
+its old summaries with the current file. `system/` rather than `prompts/`
+because a slash template is something the user sends and a service prompt is
+not, and rather than `tools/` because compaction is the panel's operation, not
+a tool the model calls; `tools/` stays free for overriding built-in tool
+descriptions if that is ever wanted. `/compact` is a built-in slash command
+next to the templates, a `Compact` worker command between runs.
+
 ## 6b. The panel
 
 Layout follows pi, Claude Code and Codex: transcript above, multi-line input
@@ -315,15 +330,21 @@ Tool calls collapse to one line (`▸ bash ls -la ✓`) and expand on click or
 Lines are cached per item, so a streaming token re-renders one message rather
 than the whole history.
 
-Permission prompts use termide's own selection modal instead of an in-transcript
-card (Zed's ACP style): the modal is app-global and cannot be missed in an
-unfocused panel. Crossing the thread boundary needs care — the agent thread
-blocks inside `before_tool_call` while the UI thread owns the modal — so the
-prompter sends the request over a channel and waits with a timeout, checking
-the shared `CancelToken` so an aborted run never hangs on an unanswered
-prompt. The answer travels back through a new `PanelCommand::SelectionMade`,
-which also makes `SelectAction::Custom` work for any panel (it was a no-op
-before).
+Permission prompts are a card inside the panel (`ChoiceForm` in
+`crates/ui`), between the separator and the input, answered with the arrows,
+a digit, a click or `Esc`. They started as termide's selection modal, on the
+argument that a modal cannot be missed; the user's counter-argument won: with
+several panels open a modal does not say who is asking, so a question a panel
+raises on its own belongs in that panel, and modals stay for choices the user
+starts (the model, agent and session pickers). The status line announces the
+question for a panel out of focus. Crossing the thread boundary needs care —
+the agent thread blocks inside `before_tool_call` while the UI thread owns
+the form — so the prompter sends the request over a channel and waits with a
+timeout, checking the shared `CancelToken` so an aborted run never hangs on
+an unanswered prompt. The `/command` completion is the sibling widget,
+`CompletionList`: a list owning its selection and keys, anchored above any
+input, so the editor or the terminal can complete paths or symbols with the
+same piece later.
 
 The title is the session's name when it has one, else the first prompt,
 else the working directory, so stacked agent panels stay apart; renaming goes

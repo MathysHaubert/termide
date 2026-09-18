@@ -19,10 +19,10 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
     civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
-    ChainedHooks, CompactionPolicy, Decision, Hooks, LateTools, Message, Mode, ModeHandle,
-    ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules,
-    PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool,
-    ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    ChainedHooks, CompactionPolicy, CompactionPrompts, Decision, Hooks, LateTools, Message, Mode,
+    ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks,
+    PermissionRules, PersistRule, PromptTemplate, Provider, Session, SessionSummary, StreamEvent,
+    Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -32,13 +32,13 @@ use termide_core::{
 };
 use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
-use termide_ui::ScrollBar;
+use termide_ui::{
+    ChoiceAction, ChoiceForm, CompletionAction, CompletionItem, CompletionList, ScrollBar,
+};
 
 pub use transcript::{Item, NoticeKind, Transcript};
 
-/// Prefix of the `SelectAction::Custom` payload for permission prompts.
-const PERMISSION_ACTION_PREFIX: &str = "agent-permission:";
-/// Labels of the four permission answers, in the order the modal shows them.
+/// Labels of the four permission answers, in the order the form shows them.
 const PERMISSION_OPTIONS: [&str; 4] = [
     "Allow once",
     "Allow for this session",
@@ -47,14 +47,6 @@ const PERMISSION_OPTIONS: [&str; 4] = [
 ];
 /// Longest input the panel grows to before it scrolls.
 const MAX_INPUT_ROWS: u16 = 5;
-/// Rows the `/command` completion popup takes at most.
-const MAX_COMPLETION_ROWS: usize = 6;
-
-/// Prompt templates matching the `/word` being typed.
-struct Completion {
-    matches: Vec<PromptTemplate>,
-    selected: usize,
-}
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that starts a fresh session.
@@ -73,6 +65,8 @@ const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
 const AGENT_ACTION: &str = "agent_agent";
 /// Context-menu action that opens the prompt-template picker.
 const PROMPTS_ACTION: &str = "agent_prompts";
+/// The built-in `/compact [focus]` command.
+const COMPACT_COMMAND: &str = "compact";
 
 /// Everything the app resolves from configuration before opening the panel.
 ///
@@ -97,6 +91,8 @@ pub struct AgentPanelSetup {
     pub rules: PermissionRules,
     pub system_prompt: String,
     pub compaction: CompactionPolicy,
+    /// The texts of a compaction, from the agent directory's `system/` files.
+    pub compaction_prompts: CompactionPrompts,
     /// Where "allow always" rules go; a plain function so it survives a
     /// session switch. `None` keeps such rules in memory only.
     pub persist_rule: Option<PersistFn>,
@@ -154,7 +150,8 @@ pub struct AgentPanel {
     /// The runtime is an external agent: model and mode are not ours to set.
     external: bool,
     permission_rx: Receiver<PermissionEnvelope>,
-    pending_permission: Option<PermissionEnvelope>,
+    /// The agent's question waiting for an answer, and the form asking it.
+    pending_permission: Option<(PermissionEnvelope, ChoiceForm)>,
     session: Option<Session>,
     session_dir: Option<PathBuf>,
     /// Sessions offered by the last picker, in the order they were shown.
@@ -191,6 +188,7 @@ pub struct AgentPanel {
     rules: PermissionRules,
     system_prompt: String,
     compaction: CompactionPolicy,
+    compaction_prompts: CompactionPrompts,
     persist_rule: Option<PersistFn>,
 
     transcript: Transcript,
@@ -200,8 +198,8 @@ pub struct AgentPanel {
     history_pos: Option<usize>,
     /// What was being typed when browsing started, restored on the way back.
     draft: String,
-    /// The `/command` completion popup, while the input is a lone `/word`.
-    completion: Option<Completion>,
+    /// The `/command` completion list, while the input is a lone `/word`.
+    completion: Option<CompletionList>,
     /// First visible transcript line.
     top: usize,
     /// Keep the view pinned to the newest line while true.
@@ -261,6 +259,7 @@ impl AgentPanel {
             &system_prompt,
             setup.rules.clone(),
             setup.compaction,
+            &setup.compaction_prompts,
             setup.persist_rule,
             setup.hooks.as_ref(),
             backend.as_ref(),
@@ -294,6 +293,7 @@ impl AgentPanel {
             rules: setup.rules,
             system_prompt,
             compaction: setup.compaction,
+            compaction_prompts: setup.compaction_prompts,
             persist_rule: setup.persist_rule,
             transcript,
             input: TextArea::new(),
@@ -359,6 +359,7 @@ impl AgentPanel {
             &system_prompt,
             self.rules.clone(),
             self.compaction,
+            &self.compaction_prompts,
             self.persist_rule,
             self.hooks.as_ref(),
             self.backend.as_ref(),
@@ -429,6 +430,18 @@ impl AgentPanel {
         self.history_pos = None;
         self.draft.clear();
         let text = match slash_command(&text) {
+            Some((COMPACT_COMMAND, focus)) => {
+                // Built in: summarise the older part of the session now.
+                let focus = (!focus.is_empty()).then(|| focus.to_string());
+                match self.runtime.compact(focus) {
+                    Ok(()) => self.input = TextArea::new(),
+                    Err(PromptError::Busy) => {
+                        self.notice("finish or stop the current task first", NoticeKind::Warn)
+                    }
+                    Err(error) => self.notice(error.to_string(), NoticeKind::Warn),
+                }
+                return vec![PanelEvent::NeedsRedraw];
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 let Some(template) = prompts.iter().find(|p| p.name == name) else {
@@ -602,9 +615,9 @@ impl AgentPanel {
                 let _ = envelope.reply.send(PermissionAnswer::Deny);
                 continue;
             }
-            // No transcript notice: the modal is app-global and the tool
-            // line already shows the call as pending, so a notice would only
-            // linger misleadingly once the prompt is answered.
+            // The question is asked in the panel, not in an app-wide modal:
+            // with several panels open a modal does not say who is asking.
+            // The status line still announces it for an unfocused panel.
             let request = &envelope.request;
             // MCP tools and others without a path or command have no subject.
             let title = if request.subject.is_empty() {
@@ -612,25 +625,25 @@ impl AgentPanel {
             } else {
                 format!("Agent wants to run {}: {}", request.tool, request.subject)
             };
-            events.push(PanelEvent::ShowSelect {
-                title,
-                options: PERMISSION_OPTIONS
-                    .iter()
-                    .enumerate()
-                    .map(|(index, label)| {
-                        if index == 2 {
-                            format!("{label} ({})", request.suggested_pattern)
-                        } else {
-                            label.to_string()
-                        }
-                    })
-                    .collect(),
-                on_select: SelectAction::Custom(format!(
-                    "{PERMISSION_ACTION_PREFIX}{}",
-                    envelope.id
-                )),
+            let options = PERMISSION_OPTIONS
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    if index == 2 {
+                        format!("{label} ({})", request.suggested_pattern)
+                    } else {
+                        label.to_string()
+                    }
+                })
+                .collect();
+            events.push(PanelEvent::SetStatusMessage {
+                message: title.clone(),
+                is_error: false,
             });
-            self.pending_permission = Some(envelope);
+            let form = ChoiceForm::new(title, options)
+                .with_custom("Deny and tell the agent why")
+                .with_cancel("Stop the run");
+            self.pending_permission = Some((envelope, form));
         }
         events
     }
@@ -674,25 +687,12 @@ impl AgentPanel {
         true
     }
 
-    /// Answer the outstanding prompt; `true` when `action` was ours.
-    pub fn answer_permission(&mut self, action: &str, index: usize) -> bool {
-        let Some(id) = action.strip_prefix(PERMISSION_ACTION_PREFIX) else {
+    /// Answer the outstanding question; `false` when there is none.
+    pub fn answer_permission(&mut self, answer: PermissionAnswer) -> bool {
+        let Some((envelope, _)) = self.pending_permission.take() else {
             return false;
         };
-        let Some(pending) = self.pending_permission.take() else {
-            return false;
-        };
-        if id != pending.id.to_string() {
-            self.pending_permission = Some(pending);
-            return false;
-        }
-        let answer = match index {
-            0 => PermissionAnswer::AllowOnce,
-            1 => PermissionAnswer::AllowSession,
-            2 => PermissionAnswer::AllowAlways,
-            _ => PermissionAnswer::Deny,
-        };
-        let _ = pending.reply.send(answer);
+        let _ = envelope.reply.send(answer);
         true
     }
 
@@ -1104,85 +1104,84 @@ impl AgentPanel {
             self.completion = None;
             return;
         };
-        let matches: Vec<PromptTemplate> = self
+        let mut items: Vec<CompletionItem> = self
             .catalog
             .prompts()
             .into_iter()
             .filter(|template| template.name.starts_with(prefix))
+            .map(|template| {
+                CompletionItem::new(template.name.clone())
+                    .with_label(format!("/{}", template.name))
+                    .with_hint(template.argument_hint)
+                    .with_description(template.description)
+            })
             .collect();
-        if matches.is_empty() {
+        if COMPACT_COMMAND.starts_with(prefix) && !self.external {
+            items.push(
+                CompletionItem::new(COMPACT_COMMAND)
+                    .with_label(format!("/{COMPACT_COMMAND}"))
+                    .with_hint("[focus]")
+                    .with_description("Summarise the older part of the session now"),
+            );
+        }
+        if items.is_empty() {
             self.completion = None;
             return;
         }
-        let selected = self
-            .completion
-            .as_ref()
-            .map_or(0, |c| c.selected.min(matches.len() - 1));
-        self.completion = Some(Completion { matches, selected });
+        match &mut self.completion {
+            Some(list) => list.set_items(items),
+            None => self.completion = Some(CompletionList::new(items)),
+        }
     }
 
     /// Put the highlighted command into the input, ready for arguments.
     fn accept_completion(&mut self) -> bool {
-        let Some(completion) = self.completion.take() else {
+        let Some(list) = self.completion.take() else {
             return false;
         };
-        let Some(template) = completion.matches.get(completion.selected) else {
+        let Some(item) = list.selected_item() else {
             return false;
         };
-        let text = format!("/{} ", template.name);
+        let text = format!("/{} ", item.value);
         self.set_input(&text);
         true
+    }
+
+    /// Turn what the permission form reported into an answer. `Cancelled`
+    /// denies and stops the run: the user wants out, not just a "no" to this
+    /// one call. `false` for `NotHandled`.
+    fn apply_permission_action(&mut self, action: ChoiceAction) -> bool {
+        match action {
+            ChoiceAction::Chosen(index) => {
+                self.answer_permission(Self::permission_answer(index));
+            }
+            ChoiceAction::Custom(reason) => {
+                self.answer_permission(PermissionAnswer::DenyWithReason(reason));
+            }
+            ChoiceAction::Cancelled => {
+                self.answer_permission(PermissionAnswer::Deny);
+                self.abort();
+            }
+            ChoiceAction::Handled => {}
+            ChoiceAction::NotHandled => return false,
+        }
+        true
+    }
+
+    /// The question a permission form's option `index` answers with.
+    fn permission_answer(index: usize) -> PermissionAnswer {
+        match index {
+            0 => PermissionAnswer::AllowOnce,
+            1 => PermissionAnswer::AllowSession,
+            2 => PermissionAnswer::AllowAlways,
+            _ => PermissionAnswer::Deny,
+        }
     }
 
     /// The input changed by typing: history browsing ends, the popup follows.
     fn after_edit(&mut self) {
         self.history_pos = None;
         self.refresh_completion();
-    }
-
-    /// The `/command` popup, drawn over the bottom of the transcript just
-    /// above the input's separator.
-    fn render_completion(&self, area: Rect, buf: &mut Buffer) {
-        let Some(completion) = &self.completion else {
-            return;
-        };
-        let rows = completion
-            .matches
-            .len()
-            .min(MAX_COMPLETION_ROWS)
-            .min(self.transcript_area.height as usize);
-        if rows == 0 {
-            return;
-        }
-        // Keep the highlighted entry in view when there are more than rows.
-        let first = completion
-            .selected
-            .saturating_sub(rows - 1)
-            .min(completion.matches.len() - rows);
-        let width = area.width as usize;
-        let top = self.input_area.y - 1 - rows as u16;
-        for (row, template) in completion.matches.iter().skip(first).take(rows).enumerate() {
-            let selected = first + row == completion.selected;
-            let style = if selected {
-                Style::default()
-                    .fg(self.colors.selection_fg)
-                    .bg(self.colors.selection_bg)
-            } else {
-                Style::default().fg(self.colors.fg).bg(self.colors.bg)
-            };
-            let mut line = format!(" /{}", template.name);
-            if !template.argument_hint.is_empty() {
-                line.push(' ');
-                line.push_str(&template.argument_hint);
-            }
-            if !template.description.is_empty() {
-                line.push_str("  ");
-                line.push_str(&template.description);
-            }
-            let y = top + row as u16;
-            buf.set_string(area.x, y, " ".repeat(width), style);
-            buf.set_stringn(area.x, y, line, width, style);
-        }
     }
 
     fn viewport_height(&self) -> usize {
@@ -1430,6 +1429,7 @@ fn spawn_runtime(
     system_prompt: &str,
     rules: PermissionRules,
     compaction: CompactionPolicy,
+    compaction_prompts: &CompactionPrompts,
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
@@ -1444,7 +1444,9 @@ fn spawn_runtime(
     }
 
     let mut transcript = Transcript::default();
-    let messages = session.map(Session::context_messages).unwrap_or_default();
+    let messages = session
+        .map(|s| s.context_messages_with(compaction_prompts))
+        .unwrap_or_default();
     for message in &messages {
         push_history(&mut transcript, message);
     }
@@ -1489,6 +1491,7 @@ fn spawn_runtime(
     )
     .with_system_prompt(system_prompt)
     .with_compaction(compaction)
+    .with_compaction_prompts(compaction_prompts.clone())
     .with_messages(messages);
     // Command hooks run first: one may block or approve before anyone is
     // asked, and its rewritten arguments are what the rules then judge.
@@ -1672,10 +1675,17 @@ impl Panel for AgentPanel {
         buf.set_style(area, Style::default().fg(self.colors.fg).bg(self.colors.bg));
 
         let input_rows = self.input_rows(area.height);
-        let has_separator = area.height > input_rows + 1;
+        // The agent's question sits between the separator and the input;
+        // when the panel is too short for the card, the keys still answer.
+        let form_rows = self
+            .pending_permission
+            .as_ref()
+            .map_or(0, |(_, form)| form.height())
+            .min(area.height.saturating_sub(input_rows + 2));
+        let has_separator = area.height > input_rows + form_rows + 1;
         let transcript_height = area
             .height
-            .saturating_sub(input_rows)
+            .saturating_sub(input_rows + form_rows)
             .saturating_sub(u16::from(has_separator));
         self.transcript_area = Rect {
             x: area.x,
@@ -1688,6 +1698,12 @@ impl Panel for AgentPanel {
             y: area.y + area.height - input_rows,
             width: area.width,
             height: input_rows,
+        };
+        let form_area = Rect {
+            x: area.x,
+            y: self.input_area.y - form_rows,
+            width: area.width,
+            height: form_rows,
         };
 
         // The rightmost column is the scrollbar gutter, so wrapped text never
@@ -1722,7 +1738,7 @@ impl Panel for AgentPanel {
         );
 
         if has_separator {
-            let y = self.input_area.y - 1;
+            let y = form_area.y - 1;
             let style = Style::default().fg(if ctx.is_focused {
                 self.colors.border_focused
             } else {
@@ -1734,8 +1750,23 @@ impl Panel for AgentPanel {
         }
         let input_area = self.input_area;
         self.render_input(input_area, buf, ctx.is_focused);
+        if form_rows >= 3 {
+            if let Some((_, form)) = &mut self.pending_permission {
+                form.render(form_area, buf, &colors, ctx.is_focused);
+            }
+        }
         if ctx.is_focused && has_separator {
-            self.render_completion(area, buf);
+            // The completion list overlays the bottom of the transcript,
+            // right above the separator.
+            let above = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: transcript_height,
+            };
+            if let Some(list) = &mut self.completion {
+                list.render(above, buf, &colors);
+            }
         }
     }
 
@@ -1746,9 +1777,63 @@ impl Panel for AgentPanel {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let page = (self.viewport_height() as i32 - 1).max(1);
 
-        let completing = self.completion.is_some();
+        // A pending question takes the keys first: the arrows, Enter, a
+        // digit or Esc answer it; only scrolling passes by.
+        if let Some((_, form)) = &mut self.pending_permission {
+            let action = if ctrl || alt {
+                ChoiceAction::NotHandled
+            } else {
+                form.handle_key(key)
+            };
+            let scroll_key = matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+                || (ctrl
+                    && matches!(
+                        key.code,
+                        KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::Home
+                            | KeyCode::End
+                            | KeyCode::Char('o')
+                    ));
+            if self.apply_permission_action(action.clone()) {
+                return vec![PanelEvent::NeedsRedraw];
+            }
+            if action == ChoiceAction::NotHandled && !scroll_key {
+                return vec![];
+            }
+        }
+
+        // The completion list gets the navigation keys while it is open.
+        let completion_action = match &mut self.completion {
+            Some(list) if !ctrl && !alt => list.handle_key(key),
+            _ => CompletionAction::NotHandled,
+        };
+        match completion_action {
+            CompletionAction::Handled => return vec![PanelEvent::NeedsRedraw],
+            CompletionAction::Dismiss => {
+                self.completion = None;
+                return vec![PanelEvent::NeedsRedraw];
+            }
+            CompletionAction::Accept => {
+                // Enter on the command already typed in full sends it; on a
+                // partial one, or on Tab, it completes, like a shell.
+                let typed = self.input.text();
+                let exact = key.code == KeyCode::Enter
+                    && self
+                        .completion
+                        .as_ref()
+                        .and_then(CompletionList::selected_item)
+                        .is_some_and(|item| format!("/{}", item.value) == typed.trim());
+                if exact {
+                    return self.submit();
+                }
+                self.accept_completion();
+                return vec![PanelEvent::NeedsRedraw];
+            }
+            CompletionAction::NotHandled => {}
+        }
+
         match key.code {
-            KeyCode::Esc if completing => self.completion = None,
             KeyCode::Esc => {
                 if self.is_busy() {
                     self.abort();
@@ -1766,23 +1851,6 @@ impl Panel for AgentPanel {
             KeyCode::Char('j') if ctrl => {
                 self.input.insert_newline();
                 self.after_edit();
-            }
-            KeyCode::Tab if completing => {
-                self.accept_completion();
-            }
-            KeyCode::Enter if completing => {
-                // Enter on the command already typed in full sends it; on a
-                // partial one it completes, like a shell.
-                let typed = self.input.text();
-                let exact = self
-                    .completion
-                    .as_ref()
-                    .and_then(|c| c.matches.get(c.selected))
-                    .is_some_and(|t| format!("/{}", t.name) == typed.trim());
-                if exact {
-                    return self.submit();
-                }
-                self.accept_completion();
             }
             KeyCode::Enter => return self.submit(),
             KeyCode::Char('o') if ctrl => {
@@ -1802,16 +1870,6 @@ impl Panel for AgentPanel {
             KeyCode::End if ctrl => self.follow = true,
             KeyCode::Up if ctrl => self.scroll_by(-1),
             KeyCode::Down if ctrl => self.scroll_by(1),
-            KeyCode::Up if completing => {
-                if let Some(c) = &mut self.completion {
-                    c.selected = c.selected.saturating_sub(1);
-                }
-            }
-            KeyCode::Down if completing => {
-                if let Some(c) = &mut self.completion {
-                    c.selected = (c.selected + 1).min(c.matches.len() - 1);
-                }
-            }
             KeyCode::Up => {
                 // Past the first line, the arrow walks back through what was
                 // asked before, as in a shell.
@@ -1850,7 +1908,10 @@ impl Panel for AgentPanel {
     }
 
     fn captures_escape(&self) -> bool {
-        self.is_busy() || !self.input.is_empty()
+        self.pending_permission.is_some()
+            || self.completion.is_some()
+            || self.is_busy()
+            || !self.input.is_empty()
     }
 
     fn handle_scroll(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
@@ -1863,6 +1924,19 @@ impl Panel for AgentPanel {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some((_, form)) = &mut self.pending_permission {
+                    let action = form.click(event.column, event.row);
+                    if self.apply_permission_action(action) {
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
+                }
+                if let Some(list) = &mut self.completion {
+                    if let Some(index) = list.hit(event.column, event.row) {
+                        list.select(index);
+                        self.accept_completion();
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
+                }
                 let area = self.transcript_area;
                 let inside = event.column >= area.x
                     && event.column < area.x + area.width
@@ -1957,9 +2031,6 @@ impl Panel for AgentPanel {
             }
             PanelCommand::InputSubmitted { action, text } if action == MODEL_INPUT_ACTION => {
                 CommandResult::Handled(self.switch_model(&text, None))
-            }
-            PanelCommand::SelectionMade { action, index } => {
-                CommandResult::Handled(self.answer_permission(&action, index))
             }
             PanelCommand::InputSubmitted { action, text } if action == RENAME_ACTION => {
                 CommandResult::Handled(self.rename_session(&text))
@@ -2238,6 +2309,7 @@ mod tests {
             rules: PermissionRules::default(),
             system_prompt: String::new(),
             compaction: CompactionPolicy::default(),
+            compaction_prompts: CompactionPrompts::default(),
             persist_rule: None,
             session_dir: None,
             session: None,
@@ -2547,7 +2619,7 @@ mod tests {
     }
 
     #[test]
-    fn permission_prompt_round_trips_through_the_selection_command() {
+    fn permission_prompt_is_answered_in_the_panel() {
         let mut panel = panel(vec![]);
         let (mut prompter, rx) = permission_channel(CancelToken::new());
         panel.permission_rx = rx;
@@ -2564,35 +2636,89 @@ mod tests {
             })
         });
 
+        // The question arrives as a form in the panel and a status line.
         let deadline = Instant::now() + Duration::from_secs(5);
-        let action = loop {
+        loop {
             let events = panel.tick();
-            if let Some(PanelEvent::ShowSelect {
-                on_select,
-                options,
-                title,
-            }) = events
-                .iter()
-                .find(|e| matches!(e, PanelEvent::ShowSelect { .. }))
-            {
-                assert!(title.contains("git push"));
-                assert_eq!(options[2], "Allow always (git push *)");
-                let SelectAction::Custom(action) = on_select else {
-                    panic!("custom action expected");
-                };
-                break action.clone();
+            if panel.pending_permission.is_some() {
+                assert!(events.iter().any(|e| matches!(
+                    e,
+                    PanelEvent::SetStatusMessage { message, .. } if message.contains("git push")
+                )));
+                break;
             }
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
-        };
-        assert!(action.starts_with(PERMISSION_ACTION_PREFIX));
+        }
+        {
+            let (_, form) = panel.pending_permission.as_ref().unwrap();
+            assert_eq!(form.title(), "Agent wants to run bash: git push");
+            assert_eq!(form.options()[2], "Allow always (git push *)");
+        }
+        assert!(panel.captures_escape());
+        let rows = render_text(&mut panel, 60, 14);
         assert!(
-            !panel.answer_permission("agent-permission:999", 0),
-            "wrong id is ignored"
+            rows.iter().any(|r| r.contains("2. Allow for this session")),
+            "{rows:?}"
         );
-        let result = panel.handle_command(PanelCommand::SelectionMade { action, index: 1 });
-        assert!(matches!(result, CommandResult::Handled(true)));
+        // Typing goes nowhere while the question is open; Down + Enter answer it.
+        type_text(&mut panel, "x");
+        assert_eq!(panel.input_text(), "");
+        panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(panel.pending_permission.is_none());
         assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
+
+        // A digit answers at once; Esc declines.
+        let (mut prompter, rx) = permission_channel(CancelToken::new());
+        panel.permission_rx = rx;
+        let request = termide_agent_core::PermissionRequest {
+            tool: "edit".into(),
+            subject: "src/x.rs".into(),
+            call: termide_agent_core::ToolCall {
+                id: "c".into(),
+                name: "edit".into(),
+                arguments: serde_json::json!({ "path": "src/x.rs" }),
+            },
+            suggested_pattern: "src/x.rs".into(),
+        };
+        let asked = request.clone();
+        let worker = std::thread::spawn(move || {
+            let first = prompter.ask(&asked);
+            let second = prompter.ask(&asked);
+            (first, second)
+        });
+        let wait = |panel: &mut AgentPanel| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while panel.pending_permission.is_none() {
+                panel.tick();
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        wait(&mut panel);
+        panel.handle_key(chord(KeyCode::Char('3'), KeyModifiers::NONE));
+        // The fifth row takes a reason the model gets to read.
+        wait(&mut panel);
+        {
+            let (_, form) = panel.pending_permission.as_ref().unwrap();
+            assert_eq!(
+                form.height(),
+                8,
+                "four answers, a reason row and a stop row"
+            );
+        }
+        panel.handle_key(chord(KeyCode::Char('5'), KeyModifiers::NONE));
+        type_text(&mut panel, "edit the test instead");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            worker.join().unwrap(),
+            (
+                PermissionAnswer::AllowAlways,
+                PermissionAnswer::DenyWithReason("edit the test instead".into())
+            )
+        );
+        let _ = request;
     }
     #[test]
     fn mode_switches_from_the_chip_and_with_shift_tab() {
@@ -3060,6 +3186,9 @@ mod tests {
         fn update(&self, _update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
             Err(PromptError::Unsupported)
         }
+        fn compact(&self, _focus: Option<String>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
         fn into_agent(self: Box<Self>) -> Option<Agent> {
             None
         }
@@ -3112,6 +3241,9 @@ mod tests {
             std::mem::take(&mut *self.events.lock().unwrap())
         }
         fn update(&self, _update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
+        fn compact(&self, _focus: Option<String>) -> Result<(), PromptError> {
             Err(PromptError::Unsupported)
         }
         fn into_agent(self: Box<Self>) -> Option<Agent> {
@@ -3210,7 +3342,7 @@ mod tests {
         let mut panel = panel(vec![reply("ok")]);
         type_text(&mut panel, "/re");
         let popup = panel.completion.as_ref().expect("popup");
-        assert_eq!(popup.matches[0].name, "review");
+        assert_eq!(popup.items()[0].value, "review");
         let rows = render_text(&mut panel, 60, 12);
         assert!(
             rows.iter()
@@ -3253,5 +3385,34 @@ mod tests {
             "/r",
             "Esc closes the popup, not the input"
         );
+    }
+    #[test]
+    fn slash_compact_is_built_in_and_reports_through_the_transcript() {
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "/comp");
+        let popup = panel.completion.as_ref().expect("popup");
+        assert!(popup.items().iter().any(|i| i.value == "compact"));
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "/compact ");
+        type_text(&mut panel, "the tests");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "", "the command is consumed, not sent");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            panel.tick();
+            let failed = panel.transcript().items().iter().any(|item| {
+                matches!(item, Item::Notice { text, .. } if text.contains("too few messages"))
+            });
+            if failed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no compaction notice");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .all(|i| !matches!(i, Item::User { .. })));
     }
 }

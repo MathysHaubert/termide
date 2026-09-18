@@ -181,13 +181,16 @@ pub struct PermissionRequest {
     pub suggested_pattern: String,
 }
 
-/// The four answers of a permission prompt, as in ACP.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The answers of a permission prompt: ACP's four, plus a denial that tells
+/// the model what to do instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionAnswer {
     AllowOnce,
     AllowSession,
     AllowAlways,
     Deny,
+    /// Denied, with the user's words returned to the model as the reason.
+    DenyWithReason(String),
 }
 
 /// Blocks on the agent thread until the user answers.
@@ -397,6 +400,9 @@ impl Hooks for PermissionHooks {
                     }
                     PermissionAnswer::Deny => ToolDecision::Block {
                         reason: "denied by the user".into(),
+                    },
+                    PermissionAnswer::DenyWithReason(reason) => ToolDecision::Block {
+                        reason: format!("denied by the user: {reason}"),
                     },
                 }
             }

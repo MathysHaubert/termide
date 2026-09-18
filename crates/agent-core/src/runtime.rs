@@ -12,6 +12,7 @@ use std::thread::JoinHandle;
 
 use crate::agent::{Agent, AgentEvent, Hooks, QueueHandle};
 use crate::cancel::CancelToken;
+use crate::compaction::CompactionReason;
 use crate::message::UserMessage;
 use crate::permissions::ChannelPrompter;
 use crate::provider::ModelSpec;
@@ -45,6 +46,8 @@ enum WorkerCommand {
     Prompt(UserMessage),
     /// Applied to the agent between runs.
     Update(Box<dyn FnOnce(&mut Agent) + Send>),
+    /// Summarise the older part of the transcript now, on the user's word.
+    Compact(Option<String>),
     Shutdown,
 }
 
@@ -75,6 +78,9 @@ pub trait Backend: Send {
     /// Change the built-in agent between runs; [`PromptError::Unsupported`]
     /// for an external one.
     fn update(&self, update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError>;
+    /// Summarise the older part of the transcript now (`/compact`), with an
+    /// optional focus; [`PromptError::Unsupported`] for an external agent.
+    fn compact(&self, focus: Option<String>) -> Result<(), PromptError>;
     /// Stop and hand the built-in agent back, when there is one.
     fn into_agent(self: Box<Self>) -> Option<Agent>;
 }
@@ -100,6 +106,9 @@ impl Backend for AgentRuntime {
     }
     fn update(&self, update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
         AgentRuntime::update(self, update)
+    }
+    fn compact(&self, focus: Option<String>) -> Result<(), PromptError> {
+        AgentRuntime::compact(self, focus)
     }
     fn into_agent(self: Box<Self>) -> Option<Agent> {
         (*self).shutdown()
@@ -152,6 +161,16 @@ impl AgentRuntime {
                             worker_busy.store(false, Ordering::Release);
                         }
                         WorkerCommand::Update(update) => update(&mut agent),
+                        WorkerCommand::Compact(focus) => {
+                            let _ = agent.compact(
+                                CompactionReason::Manual,
+                                focus.as_deref(),
+                                &worker_cancel,
+                                &mut |event| {
+                                    let _ = event_tx.send(event);
+                                },
+                            );
+                        }
                         WorkerCommand::Shutdown => break,
                     }
                 }
@@ -207,6 +226,21 @@ impl AgentRuntime {
         }
         self.commands
             .send(WorkerCommand::Update(Box::new(update)))
+            .map_err(|_| PromptError::Stopped)
+    }
+
+    /// Compact the transcript between runs; refused while a run is active,
+    /// like [`AgentRuntime::update`]. Progress arrives as `CompactionStart`,
+    /// `Compacted` or `CompactionFailed` events.
+    pub fn compact(&self, focus: Option<String>) -> Result<(), PromptError> {
+        if self.worker.is_none() {
+            return Err(PromptError::Stopped);
+        }
+        if self.is_busy() {
+            return Err(PromptError::Busy);
+        }
+        self.commands
+            .send(WorkerCommand::Compact(focus))
             .map_err(|_| PromptError::Stopped)
     }
 
@@ -499,5 +533,30 @@ mod tests {
         let agent = runtime.shutdown().expect("worker returns the agent");
         assert_eq!(agent.model(), &other);
         assert_eq!(agent.system_prompt(), "terse");
+    }
+    #[test]
+    fn a_manual_compaction_reports_through_the_events() {
+        let provider = Arc::new(ScriptedProvider::new(vec![text_reply("hi")]));
+        let agent = Agent::new(
+            provider,
+            ToolRegistry::new(),
+            model(),
+            PathBuf::from("/tmp"),
+        );
+        let runtime = AgentRuntime::spawn(agent, Box::new(NoHooks));
+        runtime.compact(Some("the tests".into())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let failed = loop {
+            let events = runtime.drain();
+            if let Some(AgentEvent::CompactionFailed { error }) = events
+                .into_iter()
+                .find(|e| matches!(e, AgentEvent::CompactionFailed { .. }))
+            {
+                break error;
+            }
+            assert!(Instant::now() < deadline, "no compaction event");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert!(failed.contains("too few messages"), "{failed}");
     }
 }

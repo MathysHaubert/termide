@@ -35,13 +35,13 @@ terminal, the agent works in the directory of the panel that had focus when
 you opened it (a file manager's directory, an editor's file), or in the project
 root. The panel title is your first request, so several agent panels stay
 apart at a glance; before you ask anything it shows the working directory
-instead. Give a session a name
-of your own through the panel's `[≡]` menu → **Rename session**, and the title
-shows that name from then on.
+instead. Give a session a name of your own through the panel's `[≡]` menu →
+**Rename session**, and the title shows that name from then on.
 
 The same menu has **New session**, which starts an empty one, and **Open
-session**, which lists this project's sessions newest first (the current one
-marked `●`) so you can pick up where you left off. Switching waits for the
+session**, which lists the sessions of the directory the panel works in,
+newest first (the current one marked `●`), so you can pick up where you left
+off. Switching waits for the
 current task: stop it with `Esc` first if the agent is still working.
 
 | Key | Action |
@@ -51,7 +51,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in; `/compact [focus]` summarises the session |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -116,9 +116,14 @@ then the editor keeps them and marks the conflict, as with any change on disk
 ## Permissions
 
 Nothing that changes your project happens without your say-so. When the agent
-wants to do something that is not already allowed, a dialog offers four
-answers: allow once, allow for this session, allow always, or deny. "Allow
-always" appends a rule to `.termide/config.toml` in the project.
+wants to do something that is not already allowed, a card appears in the
+panel above the input with six rows: allow once, allow for this session,
+allow always, deny, **deny and tell the agent why** (a sentence you type,
+returned to the model as the reason, so it can take another way), and
+**stop the run**. `↑`/`↓` and `Enter`, the digits `1`–`6`, or a click answer
+it; `Esc` stops the run. The status line announces the question too, so a
+panel that is not in focus does not ask unseen. "Allow always" appends a rule
+to `.termide/config.toml` in the project.
 
 Rules live per tool. Among the rules that match, the strictest wins, so a
 `deny` always beats an `allow`:
@@ -175,7 +180,7 @@ levels, highest priority first:
    `~/Library/Application Support/termide/ai/` on macOS).
 
 A single file is taken from the first level that has it. A directory of named
-entries (agents, later skills and prompts) is the union of all levels, and a
+entries (agents, skills and prompt templates) is the union of all levels, and a
 name defined higher hides the same name below.
 
 ```
@@ -187,11 +192,13 @@ ai/
   prompts/<name>.md        prompt templates, typed as /name
   mcp.toml                 MCP servers, see below
   hooks.toml               command hooks, see below
+  system/compact.md        how the agent summarises a long session
+  system/compacted.md      how the summary is worded in the context
 ```
 
 The first time the panel opens, the configuration level is laid out:
-`AGENTS.md` receives the shipped template, `agents/`, `skills/` and
-`prompts/` are created empty. Nothing there is ever overwritten; delete
+`AGENTS.md` and the two `system/` files receive the shipped texts, `agents/`,
+`skills/` and `prompts/` are created empty. Nothing there is ever overwritten; delete
 `AGENTS.md` to get the shipped template back.
 
 ### Agents
@@ -236,7 +243,7 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 The program starts in the background when you switch to the agent; the first
 request waits for it. Its answers, thoughts and tool calls appear in the
 session like the built-in agent's, its permission requests use the same
-dialog, and it reads and writes files through TermIDE, so an open editor
+card, and it reads and writes files through TermIDE, so an open editor
 follows its edits. The **Model** and **Mode** chips disappear while an
 external agent is active: it has its own. Skills, prompt templates and MCP
 servers are the agent's own affair too; `model`, `mode` and `tools` in
@@ -247,7 +254,7 @@ does not know them, and the panel says so.
 ### The system prompt
 
 The prompt the model receives is assembled from files: the template
-`ai/AGENTS.md` with four placeholders the agent fills in. No prompt text is
+`ai/AGENTS.md` with placeholders the agent fills in. No prompt text is
 built into TermIDE; the template below ships as a data file
 (`crates/agent-core/assets/AGENTS.md`) and is written to the
 configuration level on first use, and from then on the file is what counts. A
@@ -266,6 +273,10 @@ You are a coding agent working inside termide, a terminal IDE. You help with sof
 - Be concise.
 {{guidelines}}
 
+# Skills
+When a task matches one of these, load it with the `skill` tool before starting.
+{{skills}}
+
 # Environment
 {{environment}}
 
@@ -273,13 +284,33 @@ You are a coding agent working inside termide, a terminal IDE. You help with sof
 ```
 
 `{{tools}}` is the tool list with a line per tool, `{{guidelines}}` the rules
-the tools themselves contribute, `{{environment}}` the working directory,
-platform, date and whether it is a git repository, and
-`{{project_instructions}}` the instruction files described next. Reword the
-file, drop a section or add your own; a placeholder you leave out is simply
-not sent. **Show system prompt** in the
-panel's `[≡]` menu opens the assembled result, so you can see exactly what
-the model gets.
+the tools themselves contribute, `{{skills}}` the skills by name and
+description, `{{environment}}` the working directory, platform, date and
+whether it is a git repository, and `{{project_instructions}}` the
+instruction files described below. Reword the file, drop a section or add
+your own; a placeholder you leave out is simply not sent. **Show system
+prompt** in the panel's `[≡]` menu opens the assembled result, so you can see
+exactly what the model gets.
+
+### Service prompts
+
+TermIDE's own prompts are files too, under `system/`, at any of the three
+levels and seeded on first use like `AGENTS.md`. Compaction, the summary that
+replaces the older part of a long session, uses two: `compact.md` is the
+system prompt of the summarising call, with the closing user turn in its
+front matter (`request:`) and `{{focus}}` where the words given to `/compact`
+go; `compacted.md` is the message the summary becomes in the context, with
+`{{summary}}` for the model's text. Edit them to change what a summary keeps
+or how it is introduced.
+
+```
+/compact              summarise now
+/compact the API      summarise now, concentrating on the API
+```
+
+`/compact` is built in and sits in the `/` list beside your templates; it
+waits for a running task like every other switch. Automatic compaction, when
+the session approaches the context window, uses the same files.
 
 ### Skills
 
@@ -408,12 +439,14 @@ Every session is written to a log in JSON Lines, one file per session, under
 `ai/sessions/<path of the panel's directory>/` in the TermIDE configuration
 directory, beside the agents. The log records the model and the agent the
 session started with and every switch, so a reopened session continues on
-the model and as the agent it last used. When a session
-approaches the model's context window, the agent replaces the older part with
-a summary it writes itself and keeps the recent messages verbatim; the panel
-says when this happens.
+the model and as the agent it last used. When a session approaches the
+model's context window, the agent replaces the older part with a summary it
+writes itself and keeps the recent messages verbatim; the panel says when this
+happens, and `/compact` does it on request (see
+[Service prompts](#service-prompts)).
 
 When TermIDE reopens a saved layout, the agent panel comes back with it and
-continues the session it was in, on that session's model. If the log has been
+continues the session it was in, on that session's model and as its agent. If
+the log has been
 deleted the panel starts a fresh session; if no model is configured any more
 the panel is left out of the layout.

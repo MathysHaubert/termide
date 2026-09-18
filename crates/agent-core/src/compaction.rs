@@ -44,37 +44,70 @@ pub enum CompactionReason {
     Manual,
 }
 
-/// System prompt of the summarisation call. The list mirrors what Claude
-/// Code's compaction preserves; being explicit about paths and next steps is
-/// what lets a fresh context continue the work.
-pub const SUMMARY_PROMPT: &str = "You are compacting a coding session. Write a summary that lets \
-an assistant continue the work without the original transcript. Cover, in this order:\n\
-1. The user's request and intent, including constraints they stated.\n\
-2. Decisions made and why.\n\
-3. Files read or changed, with paths, and what changed in each.\n\
-4. Commands run and their outcomes.\n\
-5. Errors seen and how they were resolved.\n\
-6. What remains to be done and the exact next step.\n\
-Be specific about paths, names and values. Plain text, no preamble.";
+/// The seed of `ai/system/compact.md`: instructions of the summarisation
+/// call, with the closing user turn in its front matter.
+pub const SEED_COMPACT: &str = include_str!("../assets/system/compact.md");
+/// The seed of `ai/system/compacted.md`: how the summary is worded when it
+/// stands in for the summarised part of the transcript.
+pub const SEED_COMPACTED: &str = include_str!("../assets/system/compacted.md");
 
-/// The user turn that closes the summarisation request.
-pub const SUMMARY_REQUEST: &str = "Summarize the conversation above following the instructions.";
+/// The texts of a compaction, read from the `system/` files of the agent
+/// directory so they can be seen and changed like the system prompt. No
+/// prompt text lives in code: the seeds above are data files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionPrompts {
+    /// System prompt of the summarisation call; `{{focus}}` takes the words
+    /// the user gave to `/compact`, or disappears.
+    pub instructions: String,
+    /// The user turn that closes the summarisation request.
+    pub request: String,
+    /// The message that carries the summary back into the context;
+    /// `{{summary}}` is replaced by the model's text.
+    pub wrapper: String,
+}
 
-/// Prefix of the message that carries the summary in the compacted context.
-pub const SUMMARY_PREFIX: &str = "Summary of the earlier conversation (compacted):\n\n";
+impl Default for CompactionPrompts {
+    fn default() -> Self {
+        Self::from_files(SEED_COMPACT, SEED_COMPACTED)
+    }
+}
 
-/// Closes the summary message so the model resumes instead of asking what
-/// to do.
-pub const SUMMARY_SUFFIX: &str =
-    "\n\nContinue the task from this summary without repeating completed steps.";
+impl CompactionPrompts {
+    /// Parse `compact.md` (front matter `request:` plus the instructions)
+    /// and `compacted.md` (the wrapper).
+    #[must_use]
+    pub fn from_files(compact: &str, compacted: &str) -> Self {
+        let (fields, body) = crate::layers::split_front_matter(compact);
+        Self {
+            instructions: body.trim().to_string(),
+            request: fields.get("request").cloned().unwrap_or_default(),
+            wrapper: compacted.trim().to_string(),
+        }
+    }
 
-/// The transcript message that stands in for the summarised part.
-#[must_use]
-pub fn summary_message(summary: &str) -> Message {
-    Message::User(UserMessage::text(format!(
-        "{SUMMARY_PREFIX}{}{SUMMARY_SUFFIX}",
-        summary.trim()
-    )))
+    /// The system prompt of the summarisation call, with `focus` in place
+    /// of `{{focus}}` when there is one.
+    #[must_use]
+    pub fn system_prompt(&self, focus: Option<&str>) -> String {
+        let focus = focus.map(str::trim).filter(|f| !f.is_empty());
+        let text = self.instructions.replace(
+            "{{focus}}",
+            &focus.map_or(String::new(), |f| format!("Focus on: {f}")),
+        );
+        let mut text = text.trim_end().to_string();
+        while text.contains("\n\n\n") {
+            text = text.replace("\n\n\n", "\n\n");
+        }
+        text
+    }
+
+    /// The transcript message that stands in for the summarised part.
+    #[must_use]
+    pub fn summary_message(&self, summary: &str) -> Message {
+        Message::User(UserMessage::text(
+            self.wrapper.replace("{{summary}}", summary.trim()),
+        ))
+    }
 }
 
 /// Rough token count of messages with no usage data: characters over four.
@@ -292,13 +325,39 @@ mod tests {
     }
 
     #[test]
-    fn summary_message_is_a_prefixed_user_turn() {
-        let Message::User(u) = summary_message("  done things \n") else {
+    fn prompts_come_from_the_files_and_take_a_focus() {
+        let prompts = CompactionPrompts::default();
+        assert!(prompts
+            .instructions
+            .starts_with("You are compacting a coding session."));
+        assert_eq!(
+            prompts.request,
+            "Summarize the conversation above following the instructions."
+        );
+        let Message::User(u) = prompts.summary_message("  done things \n") else {
             panic!()
         };
         assert_eq!(
             u.plain_text(),
-            format!("{SUMMARY_PREFIX}done things{SUMMARY_SUFFIX}")
+            "Summary of the earlier conversation (compacted):\n\ndone things\n\nContinue the task from this summary without repeating completed steps."
         );
+        // Without a focus the placeholder line goes; with one it is filled.
+        assert!(prompts
+            .system_prompt(None)
+            .ends_with("Plain text, no preamble."));
+        assert!(prompts
+            .system_prompt(Some(" the API changes "))
+            .ends_with("Focus on: the API changes"));
+
+        let custom = CompactionPrompts::from_files(
+            "---\nrequest: Wrap it up.\n---\nBe brief.\n{{focus}}\n",
+            "Earlier: {{summary}}",
+        );
+        assert_eq!(custom.request, "Wrap it up.");
+        assert_eq!(custom.system_prompt(None), "Be brief.");
+        let Message::User(u) = custom.summary_message("x") else {
+            panic!()
+        };
+        assert_eq!(u.plain_text(), "Earlier: x");
     }
 }

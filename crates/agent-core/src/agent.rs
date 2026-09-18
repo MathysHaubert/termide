@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::cancel::CancelToken;
 use crate::compaction::{
-    context_tokens, is_context_overflow_error, should_compact, split_point, summary_message,
-    CompactionPolicy, CompactionReason, MIN_SUMMARY_CHARS, SUMMARY_PROMPT, SUMMARY_REQUEST,
+    context_tokens, is_context_overflow_error, should_compact, split_point, CompactionPolicy,
+    CompactionPrompts, CompactionReason, MIN_SUMMARY_CHARS,
 };
 use crate::message::{
     AssistantMessage, Message, StopReason, ToolCall, ToolResultMessage, UserMessage,
@@ -268,6 +268,7 @@ pub struct Agent {
     queues: QueueHandle,
     config: AgentConfig,
     compaction: CompactionPolicy,
+    compaction_prompts: CompactionPrompts,
 }
 
 impl Agent {
@@ -289,6 +290,7 @@ impl Agent {
             queues: QueueHandle::default(),
             config: AgentConfig::default(),
             compaction: CompactionPolicy::default(),
+            compaction_prompts: CompactionPrompts::default(),
         }
     }
 
@@ -305,6 +307,17 @@ impl Agent {
     #[must_use]
     pub fn compaction(&self) -> &CompactionPolicy {
         &self.compaction
+    }
+
+    #[must_use]
+    pub fn with_compaction_prompts(mut self, prompts: CompactionPrompts) -> Self {
+        self.compaction_prompts = prompts;
+        self
+    }
+
+    #[must_use]
+    pub fn compaction_prompts(&self) -> &CompactionPrompts {
+        &self.compaction_prompts
     }
 
     #[must_use]
@@ -442,7 +455,7 @@ impl Agent {
         if should_compact(&self.messages, self.model.context_window, &self.compaction) {
             // A failed compaction is reported through events; the turn still
             // runs and may hit the overflow path below.
-            let _ = self.compact(CompactionReason::Threshold, cancel, emit);
+            let _ = self.compact(CompactionReason::Threshold, None, cancel, emit);
         }
 
         emit(AgentEvent::MessageStart);
@@ -458,7 +471,7 @@ impl Agent {
                 && !retried_after_overflow
                 && self.compaction.enabled
                 && self
-                    .compact(CompactionReason::Overflow, cancel, emit)
+                    .compact(CompactionReason::Overflow, None, cancel, emit)
                     .is_ok()
             {
                 retried_after_overflow = true;
@@ -576,9 +589,12 @@ impl Agent {
     /// keeping the most recent messages verbatim. Fails when there is too
     /// little to summarise or the summary call does not succeed; the
     /// transcript is untouched on failure.
+    /// Summarise the older part of the transcript with the compaction
+    /// prompts; `focus` is what the user asked `/compact` to concentrate on.
     pub fn compact(
         &mut self,
         reason: CompactionReason,
+        focus: Option<&str>,
         cancel: &CancelToken,
         emit: &mut dyn FnMut(AgentEvent),
     ) -> Result<(), String> {
@@ -588,16 +604,23 @@ impl Agent {
             .min(self.model.context_window / 4);
         let split = split_point(&self.messages, keep_tokens);
         if split == 0 {
-            return Err("too few messages to compact".to_string());
+            let error = "too few messages to compact".to_string();
+            emit(AgentEvent::CompactionFailed {
+                error: error.clone(),
+            });
+            return Err(error);
         }
         emit(AgentEvent::CompactionStart { reason });
         let tokens_before = context_tokens(&self.messages);
 
         let mut to_summarize = self.messages[..split].to_vec();
-        to_summarize.push(Message::User(UserMessage::text(SUMMARY_REQUEST)));
+        to_summarize.push(Message::User(UserMessage::text(
+            self.compaction_prompts.request.clone(),
+        )));
+        let system_prompt = self.compaction_prompts.system_prompt(focus);
         let request = Request {
             model: &self.model,
-            system_prompt: SUMMARY_PROMPT,
+            system_prompt: &system_prompt,
             messages: &to_summarize,
             tools: &[],
             thinking: ThinkingLevel::Off,
@@ -621,7 +644,7 @@ impl Agent {
 
         let tail = self.messages.split_off(split);
         let kept = tail.len();
-        self.messages = vec![summary_message(&summary)];
+        self.messages = vec![self.compaction_prompts.summary_message(&summary)];
         self.messages.extend(tail);
         emit(AgentEvent::Compacted {
             summary,
@@ -1260,7 +1283,7 @@ mod tests {
         // The summary call ends with the summary request and carries no tail.
         assert!(matches!(
             seen[1].last(),
-            Some(Message::User(u)) if u.plain_text() == SUMMARY_REQUEST
+            Some(Message::User(u)) if u.plain_text() == CompactionPrompts::default().request
         ));
         // The new prompt is already in the transcript and is the kept tail,
         // so the summarised part is the first exchange.
@@ -1268,7 +1291,7 @@ mod tests {
         // The real call starts from the summary and keeps the new prompt.
         assert!(matches!(
             &seen[2][0],
-            Message::User(u) if u.plain_text().starts_with(crate::compaction::SUMMARY_PREFIX)
+            Message::User(u) if u.plain_text().starts_with("Summary of the earlier conversation")
         ));
         assert_eq!(roles(&seen[2]), vec!["user", "user"]);
         assert_eq!(roles(agent.messages()), vec!["user", "user", "assistant"]);
@@ -1328,9 +1351,12 @@ mod tests {
             Message::Assistant(text_reply("b")),
         ]);
         let mut events = Vec::new();
-        let result = agent.compact(CompactionReason::Manual, &CancelToken::new(), &mut |e| {
-            events.push(e)
-        });
+        let result = agent.compact(
+            CompactionReason::Manual,
+            None,
+            &CancelToken::new(),
+            &mut |e| events.push(e),
+        );
         assert!(result.is_err());
         assert!(events
             .iter()
@@ -1344,7 +1370,12 @@ mod tests {
             PathBuf::from("/tmp"),
         );
         assert!(empty
-            .compact(CompactionReason::Manual, &CancelToken::new(), &mut |_| {})
+            .compact(
+                CompactionReason::Manual,
+                None,
+                &CancelToken::new(),
+                &mut |_| {}
+            )
             .is_err());
     }
 

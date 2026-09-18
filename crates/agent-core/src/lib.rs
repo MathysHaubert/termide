@@ -39,7 +39,7 @@ pub use agent::{
     ToolDecision,
 };
 pub use cancel::CancelToken;
-pub use compaction::{CompactionPolicy, CompactionReason};
+pub use compaction::{CompactionPolicy, CompactionPrompts, CompactionReason};
 pub use context::{
     build_system_prompt, civil_date, discover_context_files, ContextFile, PromptOptions,
     SEED_TEMPLATE,
@@ -49,6 +49,7 @@ pub use layers::{
     ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,
     PromptTemplate, SkillInfo, DEFAULT_AGENT, GLOBAL_AGENT_DIR, PROJECT_AGENT_DIR, PROMPTS_DIR,
     ROOT_SOUL_FILE, SESSIONS_DIR, SHARED_SKILLS_DIR, SKILLS_DIR, SKILL_FILE, SOUL_FILE, SPEC_FILE,
+    SYSTEM_DIR,
 };
 pub use mcp::{expand_env, McpServerConfig, MCP_FILE};
 pub use message::{
