@@ -355,6 +355,7 @@ impl Translation for RuntimeTranslation {
         agent_mode_ask,
         agent_mode_accept_edits,
         agent_mode_auto,
+        agent_mode_plan,
         agent_show_prompt,
         agent_change_agent,
         agent_prompts,

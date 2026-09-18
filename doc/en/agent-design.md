@@ -102,6 +102,36 @@ project never prompt. Suggested rule for "allow always": `git push *` style
 for shell (first two words for `git`, `cargo`, `npm`, ...), the exact path for
 files.
 
+## 4a. Plan mode
+
+Claude Code: `plan` is one of the permission modes in the `Shift+Tab` cycle;
+it allows read-only tools only, injects plan-mode instructions into the
+turn, and ends with an `ExitPlanMode` tool call that asks the user to
+approve, offering "auto-accept edits", "manually approve" or "keep planning";
+the plan is a file. Codex has a plan mode too *(unverified)*, Gemini CLI a
+read-only `plan` approval mode writing the plan under `.gemini/plans`,
+OpenCode a separate `plan` agent with edit/write/bash denied, switched with
+`Tab`. pi has none.
+
+Decision: a fourth permission mode, `plan`, not a separate agent — the mode
+is already the thing the user flips mid-run, and an agent definition can
+still fix it (`mode = "plan"` in `agent.toml`, which gives OpenCode's plan
+agent for free). The guard is `PlanGuard` in `permissions.rs`, first in the
+hook chain, so it also overrides a command hook's `allow`: in plan mode only
+`read`, `skill` and a shell command made of look-only parts without
+substitution pass; everything else is blocked with a fixed reason the model
+reads. Instructions come from `ai/system/plan.md`, appended to the system
+prompt while the mode is on (the panel updates the worker's prompt on the
+toggle, or at the end of the run if one is in flight) — a prompt suffix
+rather than Claude Code's per-turn reminder, so the log holds only the user's
+words. No exit tool: when the run ends in plan mode with an answer, the panel
+shows a `ChoiceForm` — carry out accepting edits, carry out asking, keep
+planning — and accepting switches the mode and sends the `request:` from the
+same file, so the plan stays in context. The plan is the answer in the
+session, not a file: the session log is the record, and the panel's `/undo`
+checkpoints cover the changes the accepted plan then makes. Not covered: MCP tools with
+a read-only annotation are blocked too, since annotations are not plumbed.
+
 ## 5. Hooks and extension mechanism
 
 | Mechanism | Who uses it |

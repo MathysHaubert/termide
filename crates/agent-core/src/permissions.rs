@@ -37,11 +37,14 @@ pub enum Mode {
     AcceptEdits,
     /// Allow everything; for containers and unattended runs.
     Auto,
+    /// Read only: the agent explores and answers with a plan; every tool
+    /// that could change something is refused, whatever the rules say.
+    Plan,
 }
 
 impl Mode {
     /// Every mode, in the order the UI cycles through them.
-    pub const ALL: [Mode; 3] = [Mode::Ask, Mode::AcceptEdits, Mode::Auto];
+    pub const ALL: [Mode; 4] = [Mode::Ask, Mode::AcceptEdits, Mode::Auto, Mode::Plan];
 
     /// The kebab-case spelling used in configuration and the status bar.
     #[must_use]
@@ -50,16 +53,65 @@ impl Mode {
             Mode::Ask => "ask",
             Mode::AcceptEdits => "accept-edits",
             Mode::Auto => "auto",
+            Mode::Plan => "plan",
         }
     }
 
-    /// The mode after this one, wrapping from `auto` back to `ask`.
+    /// The mode after this one, wrapping from `plan` back to `ask`.
     #[must_use]
     pub fn next(self) -> Mode {
         match self {
             Mode::Ask => Mode::AcceptEdits,
             Mode::AcceptEdits => Mode::Auto,
-            Mode::Auto => Mode::Ask,
+            Mode::Auto => Mode::Plan,
+            Mode::Plan => Mode::Ask,
+        }
+    }
+}
+
+/// Why a call was refused in plan mode; the model reads it as the result.
+pub const PLAN_MODE_REASON: &str =
+    "plan mode: only reading is allowed; describe the change in the plan and wait for the user to leave plan mode";
+
+/// Whether a call can change nothing: a read, a skill, or a shell command
+/// made only of read-only parts without substitution.
+#[must_use]
+pub fn is_read_only_call(call: &ToolCall) -> bool {
+    match call.name.as_str() {
+        "read" | "skill" => true,
+        "bash" => {
+            let parsed = split_shell(call.arguments["command"].as_str().unwrap_or(""));
+            !parsed.has_substitution
+                && !parsed.parts.is_empty()
+                && parsed.parts.iter().all(|part| is_read_only_command(part))
+        }
+        _ => false,
+    }
+}
+
+/// Refuses every call that could change something while the shared mode is
+/// [`Mode::Plan`]. It sits first in the hook chain, ahead of command hooks,
+/// so nothing — not even a hook's approval — lets a change through in plan
+/// mode; in every other mode it does nothing.
+pub struct PlanGuard {
+    mode: ModeHandle,
+}
+
+impl PlanGuard {
+    #[must_use]
+    pub fn new(mode: ModeHandle) -> Self {
+        Self { mode }
+    }
+}
+
+impl Hooks for PlanGuard {
+    fn before_tool_call(&mut self, call: &ToolCall, _ctx: &ToolContext) -> ToolDecision {
+        if self.mode.get() == Mode::Plan && !is_read_only_call(call) {
+            ToolDecision::Block {
+                reason: PLAN_MODE_REASON.into(),
+            }
+        } else {
+            ToolDecision::Allow
         }
     }
 }
@@ -984,8 +1036,10 @@ mod tests {
         assert!(asked.lock().unwrap().is_empty());
 
         assert_eq!(Mode::Ask.next(), Mode::AcceptEdits);
-        assert_eq!(Mode::Auto.next(), Mode::Ask);
+        assert_eq!(Mode::Auto.next(), Mode::Plan);
+        assert_eq!(Mode::Plan.next(), Mode::Ask);
         assert_eq!(Mode::AcceptEdits.label(), "accept-edits");
+        assert_eq!(Mode::Plan.label(), "plan");
     }
     #[test]
     fn loading_a_skill_never_asks() {
@@ -1000,6 +1054,61 @@ mod tests {
             hooks.decide(&call("skill", json!({ "name": "deploy" })), &ctx()),
             Decision::Allow
         );
+    }
+    #[test]
+    fn plan_mode_refuses_every_change_and_lets_reads_through() {
+        let mode = ModeHandle::new(Mode::Plan);
+        let mut guard = PlanGuard::new(mode.clone());
+        let blocked = |guard: &mut PlanGuard, call: &ToolCall| {
+            matches!(
+                guard.before_tool_call(call, &ctx()),
+                ToolDecision::Block { reason } if reason == PLAN_MODE_REASON
+            )
+        };
+        assert!(!blocked(
+            &mut guard,
+            &call("read", json!({ "path": "src/main.rs" }))
+        ));
+        assert!(!blocked(
+            &mut guard,
+            &call("skill", json!({ "name": "deploy" }))
+        ));
+        assert!(!blocked(
+            &mut guard,
+            &call("bash", json!({ "command": "git status && rg TODO src" }))
+        ));
+        assert!(blocked(
+            &mut guard,
+            &call("bash", json!({ "command": "cat $(ls)" }))
+        ));
+        assert!(blocked(
+            &mut guard,
+            &call("bash", json!({ "command": "ls > out" }))
+        ));
+        assert!(blocked(
+            &mut guard,
+            &call("bash", json!({ "command": "git status; cargo build" }))
+        ));
+        assert!(blocked(&mut guard, &call("bash", json!({ "command": "" }))));
+        assert!(blocked(
+            &mut guard,
+            &call("edit", json!({ "path": "src/main.rs" }))
+        ));
+        assert!(blocked(
+            &mut guard,
+            &call("write", json!({ "path": "new.rs" }))
+        ));
+        assert!(blocked(
+            &mut guard,
+            &call("fs__search", json!({ "query": "x" }))
+        ));
+
+        // Any other mode: the guard steps aside, the rules decide.
+        mode.set(Mode::Auto);
+        assert!(!blocked(
+            &mut guard,
+            &call("edit", json!({ "path": "src/main.rs" }))
+        ));
     }
 }
 

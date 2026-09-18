@@ -19,6 +19,7 @@ use crate::context::SEED_TEMPLATE;
 use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
 use crate::permissions::Mode;
+use crate::plan::{PlanPrompt, SEED_PLAN};
 
 /// The `ai` directory inside the configuration directory.
 pub const GLOBAL_AGENT_DIR: &str = "ai";
@@ -155,6 +156,7 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
         (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
         (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
         (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
+        (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
     ] {
         let path = global.join(relative);
         if !path.exists() {
@@ -256,22 +258,32 @@ impl AgentDirs {
     /// from the highest root that has each, the shipped seeds otherwise.
     #[must_use]
     pub fn compaction_prompts(&self) -> CompactionPrompts {
-        let read = |name: &str, seed: &str| -> String {
-            self.find_file(Path::new(SYSTEM_DIR).join(name))
-                .and_then(|path| match std::fs::read_to_string(&path) {
-                    Ok(text) if !text.trim().is_empty() => Some(text),
-                    Ok(_) => None,
-                    Err(error) => {
-                        log::warn!("cannot read {}: {error}", path.display());
-                        None
-                    }
-                })
-                .unwrap_or_else(|| seed.to_string())
-        };
         CompactionPrompts::from_files(
-            &read("compact.md", SEED_COMPACT),
-            &read("compacted.md", SEED_COMPACTED),
+            &self.system_file("compact.md", SEED_COMPACT),
+            &self.system_file("compacted.md", SEED_COMPACTED),
         )
+    }
+
+    /// The plan-mode texts: `system/plan.md` from the first level that has
+    /// it, the seed otherwise.
+    #[must_use]
+    pub fn plan_prompt(&self) -> PlanPrompt {
+        PlanPrompt::from_file(&self.system_file("plan.md", SEED_PLAN))
+    }
+
+    /// `system/<name>` from the first level that has a non-empty one, else
+    /// `seed`.
+    fn system_file(&self, name: &str, seed: &str) -> String {
+        self.find_file(Path::new(SYSTEM_DIR).join(name))
+            .and_then(|path| match std::fs::read_to_string(&path) {
+                Ok(text) if !text.trim().is_empty() => Some(text),
+                Ok(_) => None,
+                Err(error) => {
+                    log::warn!("cannot read {}: {error}", path.display());
+                    None
+                }
+            })
+            .unwrap_or_else(|| seed.to_string())
     }
 
     /// Command hooks from every root's `hooks.toml`, by name; a higher root's
@@ -602,6 +614,19 @@ mod tests {
             dirs.compaction_prompts().request,
             CompactionPrompts::default().request
         );
+        // Plan mode's text the same way.
+        assert_eq!(
+            std::fs::read_to_string(global.join("system/plan.md")).unwrap(),
+            SEED_PLAN
+        );
+        assert_eq!(dirs.plan_prompt(), PlanPrompt::default());
+        std::fs::write(
+            project.join("plan.md"),
+            "---\nrequest: Go.\n---\nPlan first.",
+        )
+        .unwrap();
+        assert_eq!(dirs.plan_prompt().request, "Go.");
+        assert_eq!(dirs.plan_prompt().instructions, "Plan first.");
 
         std::fs::write(&soul, "mine").unwrap();
         ensure_global_layout(&global).unwrap();

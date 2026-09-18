@@ -426,6 +426,8 @@ pub trait Translation: Send + Sync {
     fn agent_mode_accept_edits(&self) -> &str;
     /// Permission-mode picker: auto
     fn agent_mode_auto(&self) -> &str;
+    /// Agent panel: the plan permission mode (read only, plan first)
+    fn agent_mode_plan(&self) -> &str;
     /// Agent panel context menu: open the assembled system prompt
     fn agent_show_prompt(&self) -> &str;
     /// Agent panel: open the agent picker

@@ -22,8 +22,8 @@ use termide_agent_core::{
     civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
     ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
     CompactionPrompts, Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
-    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule,
-    PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
+    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard,
+    PlanPrompt, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
     ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
@@ -89,6 +89,10 @@ enum Pending {
     Undo {
         form: ChoiceForm,
     },
+    /// Plan mode: the agent answered, carry the plan out or keep planning?
+    Plan {
+        form: ChoiceForm,
+    },
 }
 
 impl Pending {
@@ -96,7 +100,8 @@ impl Pending {
         match self {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
-            | Pending::Undo { form } => form,
+            | Pending::Undo { form }
+            | Pending::Plan { form } => form,
         }
     }
 
@@ -104,7 +109,8 @@ impl Pending {
         match self {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
-            | Pending::Undo { form } => form,
+            | Pending::Undo { form }
+            | Pending::Plan { form } => form,
         }
     }
 }
@@ -134,6 +140,8 @@ pub struct AgentPanelSetup {
     pub compaction: CompactionPolicy,
     /// The texts of a compaction, from the agent directory's `system/` files.
     pub compaction_prompts: CompactionPrompts,
+    /// Plan mode's instructions and the request that carries a plan out.
+    pub plan_prompt: PlanPrompt,
     /// Where "allow always" rules go; a plain function so it survives a
     /// session switch. `None` keeps such rules in memory only.
     pub persist_rule: Option<PersistFn>,
@@ -241,6 +249,10 @@ pub struct AgentPanel {
     system_prompt: String,
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
+    plan_prompt: PlanPrompt,
+    /// The worker still has the prompt of the other plan-ness: a mode
+    /// switch during a run could not update it, `AgentEnd` retries.
+    prompt_stale: bool,
     persist_rule: Option<PersistFn>,
 
     transcript: Transcript,
@@ -270,7 +282,7 @@ pub struct AgentPanel {
 
 impl AgentPanel {
     #[must_use]
-    pub fn new(setup: AgentPanelSetup) -> Self {
+    pub fn new(mut setup: AgentPanelSetup) -> Self {
         let session = setup.session.or_else(|| {
             start_session(
                 setup.session_dir.as_deref(),
@@ -297,6 +309,9 @@ impl AgentPanel {
             tools = profile.tools;
             late_tools = profile.late_tools;
             backend = profile.backend;
+            if let Some(mode) = profile.mode {
+                setup.rules.mode = mode;
+            }
         }
         let Spawned {
             runtime,
@@ -313,6 +328,7 @@ impl AgentPanel {
             setup.rules.clone(),
             setup.compaction,
             &setup.compaction_prompts,
+            &setup.plan_prompt,
             setup.persist_rule,
             setup.hooks.as_ref(),
             backend.as_ref(),
@@ -351,6 +367,8 @@ impl AgentPanel {
             system_prompt,
             compaction: setup.compaction,
             compaction_prompts: setup.compaction_prompts,
+            plan_prompt: setup.plan_prompt,
+            prompt_stale: false,
             persist_rule: setup.persist_rule,
             transcript,
             input: TextArea::new(),
@@ -402,6 +420,9 @@ impl AgentPanel {
             self.late_tools = profile.late_tools;
             self.backend = profile.backend;
             self.waiting_tools.clear();
+            if let Some(mode) = profile.mode {
+                self.rules.mode = mode;
+            }
         }
         let Spawned {
             runtime,
@@ -418,6 +439,7 @@ impl AgentPanel {
             self.rules.clone(),
             self.compaction,
             &self.compaction_prompts,
+            &self.plan_prompt,
             self.persist_rule,
             self.hooks.as_ref(),
             self.backend.as_ref(),
@@ -586,6 +608,10 @@ impl AgentPanel {
                 if let Some(store) = &self.checkpoints {
                     store.lock().unwrap().end_run();
                 }
+                if self.prompt_stale {
+                    self.sync_system_prompt();
+                }
+                self.offer_plan();
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => self.transcript.push(Item::Assistant {
@@ -792,7 +818,7 @@ impl AgentPanel {
         let dir = self.session_dir.clone().unwrap_or_else(std::env::temp_dir);
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("system-prompt.md");
-        std::fs::write(&path, &self.system_prompt)?;
+        std::fs::write(&path, self.effective_system_prompt())?;
         Ok(path)
     }
 
@@ -871,6 +897,7 @@ impl AgentPanel {
                     Mode::Ask => t.agent_mode_ask(),
                     Mode::AcceptEdits => t.agent_mode_accept_edits(),
                     Mode::Auto => t.agent_mode_auto(),
+                    Mode::Plan => t.agent_mode_plan(),
                 };
                 format!("{}{text}", current_mark(*mode == current))
             })
@@ -885,8 +912,12 @@ impl AgentPanel {
     /// Switch the permission mode. The handle is shared with the hooks, so
     /// a run in flight sees the new mode at its next tool call.
     fn set_mode(&mut self, mode: Mode) -> PanelEvent {
+        let was_plan = self.mode.get() == Mode::Plan;
         self.mode.set(mode);
         self.rules.mode = mode;
+        if was_plan != (mode == Mode::Plan) {
+            self.sync_system_prompt();
+        }
         PanelEvent::SetStatusMessage {
             message: format!(
                 "{}: {}",
@@ -895,6 +926,72 @@ impl AgentPanel {
             ),
             is_error: false,
         }
+    }
+
+    /// The prompt the worker runs on: the agent's, plus the plan-mode
+    /// instructions while that mode is on.
+    fn effective_system_prompt(&self) -> String {
+        if self.mode.get() == Mode::Plan {
+            self.plan_prompt.apply(&self.system_prompt)
+        } else {
+            self.system_prompt.clone()
+        }
+    }
+
+    /// Hand the worker the current effective prompt. During a run the
+    /// update is refused; it is retried when the run ends.
+    fn sync_system_prompt(&mut self) {
+        let prompt = self.effective_system_prompt();
+        match self
+            .runtime
+            .update(Box::new(move |agent| agent.set_system_prompt(prompt)))
+        {
+            Ok(()) => self.prompt_stale = false,
+            Err(PromptError::Busy) => self.prompt_stale = true,
+            // An external agent has no prompt of ours to update.
+            Err(_) => self.prompt_stale = false,
+        }
+    }
+
+    /// In plan mode, once the agent has answered: offer to carry the plan
+    /// out, in accept-edits or asking, or to keep planning.
+    fn offer_plan(&mut self) {
+        if self.external || self.mode.get() != Mode::Plan || self.pending.is_some() {
+            return;
+        }
+        let answered = matches!(
+            self.transcript.items().last(),
+            Some(Item::Assistant { text, error: None, .. }) if !text.trim().is_empty()
+        );
+        if !answered {
+            return;
+        }
+        let form = ChoiceForm::new(
+            "Plan mode: carry the plan out?",
+            vec![
+                "Yes, accepting edits".into(),
+                "Yes, asking before each change".into(),
+            ],
+        )
+        .with_cancel("Keep planning");
+        self.pending = Some(Pending::Plan { form });
+    }
+
+    /// The plan was accepted: leave plan mode for `mode` and send the
+    /// request that carries it out.
+    fn carry_out_plan(&mut self, mode: Mode) -> Vec<PanelEvent> {
+        let mut events = vec![self.set_mode(mode)];
+        let request = self.plan_prompt.request.trim().to_string();
+        if request.is_empty() {
+            self.notice(
+                "system/plan.md names no request: tell the agent to go ahead yourself",
+                NoticeKind::Warn,
+            );
+        } else {
+            events.extend(self.send(request));
+        }
+        events.push(PanelEvent::NeedsRedraw);
+        events
     }
 
     /// Take in tools that finished connecting and hand them to the worker as
@@ -1053,7 +1150,12 @@ impl AgentPanel {
             },
             _ => self.model.clone(),
         };
-        let prompt = profile.system_prompt.clone();
+        let mode_after = profile.mode.unwrap_or(self.mode.get());
+        let prompt = if mode_after == Mode::Plan {
+            self.plan_prompt.apply(&profile.system_prompt)
+        } else {
+            profile.system_prompt.clone()
+        };
         let tools = profile.tools.clone();
         let worker_model = model.clone();
         if let Err(error) = self.runtime.update(Box::new(move |agent| {
@@ -1314,6 +1416,19 @@ impl AgentPanel {
                 self.pending_events.extend(events);
             }
             (Some(Pending::Undo { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (Some(Pending::Plan { .. }), ChoiceAction::Chosen(index)) => {
+                self.pending = None;
+                let mode = if index == 0 {
+                    Mode::AcceptEdits
+                } else {
+                    Mode::Ask
+                };
+                let events = self.carry_out_plan(mode);
+                self.pending_events.extend(events);
+            }
+            (Some(Pending::Plan { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
             (None, _) => {}
@@ -1759,6 +1874,7 @@ fn spawn_runtime(
     rules: PermissionRules,
     compaction: CompactionPolicy,
     compaction_prompts: &CompactionPrompts,
+    plan_prompt: &PlanPrompt,
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
@@ -1767,6 +1883,12 @@ fn spawn_runtime(
 ) -> Spawned {
     let cancel = CancelToken::new();
     let (prompter, permission_rx) = permission_channel(cancel.clone());
+    let system_prompt = if rules.mode == Mode::Plan {
+        plan_prompt.apply(system_prompt)
+    } else {
+        system_prompt.to_string()
+    };
+    let system_prompt = system_prompt.as_str();
     let mut hooks = PermissionHooks::new(rules, Box::new(prompter));
     let mode = hooks.mode_handle();
     if let Some(persist) = persist_rule {
@@ -1823,10 +1945,12 @@ fn spawn_runtime(
     .with_compaction(compaction)
     .with_compaction_prompts(compaction_prompts.clone())
     .with_messages(messages);
-    // The checkpoint recorder goes first, so no call that runs is missed;
-    // then the command hooks, which may block or approve before anyone is
-    // asked, and whose rewritten arguments are what the rules then judge.
-    let mut chain: Vec<Box<dyn Hooks>> = Vec::new();
+    // Plan mode's guard goes first: nothing, not even a hook's approval,
+    // changes a file while it is on. Then the checkpoint recorder, so no
+    // call that runs is missed; then the command hooks, which may block or
+    // approve before anyone is asked, and whose rewritten arguments are what
+    // the rules then judge.
+    let mut chain: Vec<Box<dyn Hooks>> = vec![Box::new(PlanGuard::new(mode.clone()))];
     if let Some(store) = checkpoints {
         chain.push(Box::new(CheckpointHooks::new(store)));
     }
@@ -1834,11 +1958,7 @@ fn spawn_runtime(
         chain.push(factory());
     }
     chain.push(Box::new(hooks));
-    let hooks: Box<dyn Hooks> = if chain.len() == 1 {
-        chain.remove(0)
-    } else {
-        Box::new(ChainedHooks::new(chain))
-    };
+    let hooks: Box<dyn Hooks> = Box::new(ChainedHooks::new(chain));
     let runtime = AgentRuntime::spawn_with_cancel(agent, hooks, cancel);
     Spawned {
         runtime: Box::new(runtime),
@@ -2663,6 +2783,7 @@ mod tests {
             system_prompt: String::new(),
             compaction: CompactionPolicy::default(),
             compaction_prompts: CompactionPrompts::default(),
+            plan_prompt: PlanPrompt::default(),
             persist_rule: None,
             session_dir: None,
             session: None,
@@ -3095,8 +3216,9 @@ mod tests {
         let PanelEvent::ShowSelect { options, .. } = picker else {
             panic!("expected a picker, got {picker:?}");
         };
-        assert_eq!(options.len(), 3);
+        assert_eq!(options.len(), 4);
         assert!(options[1].starts_with("● accept-edits"), "{:?}", options[1]);
+        assert!(options[3].starts_with("  plan"), "{:?}", options[3]);
         assert!(matches!(
             select(&mut panel, picker, 2),
             CommandResult::Handled(true)
@@ -3109,7 +3231,10 @@ mod tests {
             PanelEvent::SetStatusMessage { message, .. } if message.ends_with("auto")
         )));
 
-        // Cycling wraps, and a rebuilt agent starts in the chosen mode.
+        // Cycling passes plan and wraps, and a rebuilt agent starts in the
+        // chosen mode.
+        panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(chip(&panel, MODE_ACTION), "plan");
         panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
         assert_eq!(chip(&panel, MODE_ACTION), "ask");
         panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
@@ -3923,5 +4048,56 @@ mod tests {
         ));
         let reopened = Session::open(panel.session_path().unwrap()).unwrap();
         assert_eq!(reopened.context_messages().len(), 2);
+    }
+    #[test]
+    fn plan_mode_adds_its_instructions_and_offers_to_carry_the_plan_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            system_prompt: "Base prompt.".into(),
+            plan_prompt: PlanPrompt::from_file("---\nrequest: Do it.\n---\nPlan first."),
+            ..setup(vec![reply("1. change a\n2. change b"), reply("done")])
+        });
+        // ask → accept-edits → auto → plan
+        for _ in 0..3 {
+            panel.handle_key(chord(KeyCode::BackTab, KeyModifiers::SHIFT));
+        }
+        assert_eq!(panel.mode.get(), Mode::Plan);
+        assert_eq!(chip(&panel, MODE_ACTION), "plan");
+        let shown = panel.write_system_prompt().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(shown).unwrap(),
+            "Base prompt.\n\nPlan first."
+        );
+
+        type_text(&mut panel, "add a feature");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let form = panel.pending.as_ref().expect("plan card").form();
+        assert!(form.title().starts_with("Plan mode"), "{}", form.title());
+
+        // Esc keeps planning; the next answer offers again.
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        assert_eq!(panel.mode.get(), Mode::Plan);
+
+        panel.offer_plan();
+        panel.handle_key(chord(KeyCode::Char('1'), KeyModifiers::NONE));
+        let _ = panel.tick();
+        assert_eq!(panel.mode.get(), Mode::AcceptEdits);
+        settle(&mut panel);
+        let users: Vec<&str> = panel
+            .transcript()
+            .items()
+            .iter()
+            .filter_map(|i| match i {
+                Item::User { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users, ["add a feature", "Do it."]);
+        let shown = panel.write_system_prompt().unwrap();
+        assert_eq!(std::fs::read_to_string(shown).unwrap(), "Base prompt.");
+        assert!(panel.pending.is_none(), "no card outside plan mode");
     }
 }

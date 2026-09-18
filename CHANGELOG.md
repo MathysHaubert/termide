@@ -58,8 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ask` beating `allow`; shell commands are judged per part, so `cargo build
   && rm -rf target` needs both halves allowed. Reading inside the project and
   a list of look-only commands (`ls`, `rg`, `git status`, …) never ask. The
-  **Mode** chip and `Shift+Tab` switch between ask, accept-edits and auto, and
-  the change reaches a running task at its next tool call.
+  **Mode** chip and `Shift+Tab` switch between ask, accept-edits, auto and
+  plan, and the change reaches a running task at its next tool call. In
+  plan mode nothing that changes anything runs: the agent explores and
+  answers with a plan, and a card then offers to carry it out, accepting
+  edits or asking, in the same session.
 
   The agent's own files live in an `ai` directory at three levels — the
   panel's directory, the project root and the configuration directory. The

@@ -50,7 +50,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every tool call |
-| `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
+| `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` while the list is open |
@@ -147,7 +147,7 @@ Rules live per tool. Among the rules that match, the strictest wins, so a
 
 ```toml
 [agent.permissions]
-mode = "ask"        # ask | accept-edits | auto
+mode = "ask"        # ask | accept-edits | auto | plan
 
 [agent.permissions.bash]
 "cargo *"     = "allow"
@@ -178,11 +178,41 @@ change it for the current panel.
   without asking; shell commands still ask.
 - **auto** allows everything. Use it only where a mistake costs nothing, such
   as a container or a scratch checkout.
+- **plan** allows nothing that changes anything: the agent reads, searches
+  and runs look-only commands, then answers with a plan. See below.
 
 Two things never ask in any mode: reading a file inside the project, and a
 short list of commands that only look at things (`ls`, `cat`, `rg`,
 `git status`, `find` without `-delete` or `-exec`, and similar). A redirection
 in the command disqualifies it.
+
+### Plan mode
+
+For a task you want to see thought through before a line changes, switch to
+**plan** (the chip, `Shift+Tab`, or an agent whose `agent.toml` says
+`mode = "plan"`). While it is on, the instructions from `system/plan.md` are
+added to the system prompt, and every tool call that could change something
+is refused with a message the model reads, whatever the rules, the session
+grants or a hook's approval say: `edit`, `write`, MCP tools, and any shell
+command that is not on the look-only list. Reading and `skill` stay as in
+`ask`.
+
+When the agent answers, a card asks what to do with the plan:
+
+```
+┌ Plan mode: carry the plan out? ────┐
+│ 1. Yes, accepting edits            │
+│ 2. Yes, asking before each change  │
+│ 3. Keep planning                   │
+└────────────────────────────────────┘
+```
+
+The first two leave plan mode for accept-edits or ask and send the request
+named in the front matter of `system/plan.md` (`request:`), so the same
+session goes on to carry the plan out with it in context; the third (or
+`Esc`) keeps plan mode, and whatever you type next refines the plan. The
+plan is the agent's answer in the session, nothing is written to a file; the
+`/undo` checkpoints cover the changes that follow.
 
 ## The agent directory
 
@@ -212,6 +242,7 @@ ai/
   hooks.toml               command hooks, see below
   system/compact.md        how the agent summarises a long session
   system/compacted.md      how the summary is worded in the context
+  system/plan.md           what plan mode tells the agent, and what accepting a plan sends
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -231,7 +262,7 @@ too. Beside it an `agent.toml` may set, every field optional:
 ```toml
 description = "Reviews diffs and points at risks"
 model = "Qwen3.8-27B-MTPLX-Optimized-Quality"   # at the configured endpoint
-mode = "accept-edits"                            # ask | accept-edits | auto
+mode = "accept-edits"                            # ask | accept-edits | auto | plan
 tools = ["read", "bash"]                         # a subset of the built-in tools
 ```
 
@@ -329,6 +360,11 @@ or how it is introduced.
 `/compact` is built in and sits in the `/` list beside your templates; it
 waits for a running task like every other switch. Automatic compaction, when
 the session approaches the context window, uses the same files.
+
+[Plan mode](#plan-mode) uses `plan.md`: its body is appended to the system
+prompt while the mode is on, and `request:` in its front matter is the
+message sent when you accept the plan. Reword the body to change what a plan
+must contain, or the request to change how the agent is told to go ahead.
 
 ### Skills
 

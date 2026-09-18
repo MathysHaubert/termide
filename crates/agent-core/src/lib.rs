@@ -30,6 +30,7 @@ pub mod layers;
 pub mod mcp;
 pub mod message;
 pub mod permissions;
+pub mod plan;
 pub mod provider;
 pub mod runtime;
 pub mod session;
@@ -61,10 +62,11 @@ pub use message::{
     ToolResultContent, ToolResultMessage, Usage, UserContent, UserMessage,
 };
 pub use permissions::{
-    permission_channel, ChannelPrompter, Decision, Mode, ModeHandle, PermissionAnswer,
-    PermissionEnvelope, PermissionHooks, PermissionPrompter, PermissionRequest, PermissionRules,
-    PersistRule,
+    is_read_only_call, permission_channel, ChannelPrompter, Decision, Mode, ModeHandle,
+    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionPrompter, PermissionRequest,
+    PermissionRules, PersistRule, PlanGuard, PLAN_MODE_REASON,
 };
+pub use plan::{PlanPrompt, SEED_PLAN};
 pub use provider::{ModelInfo, ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
 pub use runtime::{AgentRuntime, Backend, BackendSetup, PromptError};
 pub use session::{Entry, EntryKind, Session, SessionHeader, SessionModel, SessionSummary};
