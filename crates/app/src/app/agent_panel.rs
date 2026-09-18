@@ -498,6 +498,9 @@ pub enum HeadlessOutput {
     Text,
     /// One JSON object printed at the end: answer, usage, tool calls, status.
     Json,
+    /// One JSON object per event (NDJSON): a `tool_use`/`tool_result` per
+    /// tool, a `message` per assistant turn, a final `result`.
+    StreamJson,
 }
 
 pub fn run_agent_headless(
@@ -509,7 +512,9 @@ pub fn run_agent_headless(
     output: HeadlessOutput,
 ) -> i32 {
     use std::io::Write;
-    let json = output == HeadlessOutput::Json;
+    // Both JSON forms suppress the plain text/stderr chatter.
+    let quiet = output != HeadlessOutput::Text;
+    let stream = output == HeadlessOutput::StreamJson;
 
     if settings.model.trim().is_empty() {
         eprintln!("termide: no agent model configured (set [agent].model)");
@@ -590,13 +595,24 @@ pub fn run_agent_headless(
     // report and, in text mode, the stderr activity lines.
     let mut tools: Vec<(String, String, String, bool)> = Vec::new();
     {
+        let line = |value: &serde_json::Value| {
+            let mut out = stdout.lock();
+            let _ = writeln!(out, "{value}");
+            let _ = out.flush();
+        };
         let mut emit = |event: AgentEvent| match event {
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(text)) => {
-                if !json {
+                if !quiet {
                     let mut out = stdout.lock();
                     let _ = out.write_all(text.as_bytes());
                     let _ = out.flush();
                     wrote_text = true;
+                }
+            }
+            AgentEvent::MessageEnd(Message::Assistant(message)) if stream => {
+                let text = message.plain_text();
+                if !text.trim().is_empty() {
+                    line(&serde_json::json!({ "type": "message", "text": text }));
                 }
             }
             AgentEvent::ToolExecutionStart { call } => {
@@ -606,21 +622,40 @@ pub fn run_agent_headless(
                         cwd: cwd.to_path_buf(),
                     },
                 );
-                if !json {
+                if !quiet {
                     if subject.is_empty() {
                         eprintln!("· {}", call.name);
                     } else {
                         eprintln!("· {} {subject}", call.name);
                     }
                 }
+                if stream {
+                    line(&serde_json::json!({
+                        "type": "tool_use",
+                        "name": call.name,
+                        "subject": subject,
+                    }));
+                }
                 tools.push((call.id.clone(), call.name.clone(), subject, false));
             }
             AgentEvent::ToolExecutionEnd { result } => {
-                if let Some(entry) = tools.iter_mut().find(|t| t.0 == result.tool_call_id) {
-                    entry.3 = result.is_error;
-                }
-                if !json && result.is_error {
+                let name = tools
+                    .iter_mut()
+                    .find(|t| t.0 == result.tool_call_id)
+                    .map(|entry| {
+                        entry.3 = result.is_error;
+                        entry.1.clone()
+                    })
+                    .unwrap_or_default();
+                if !quiet && result.is_error {
                     eprintln!("  ! {}", result.plain_text());
+                }
+                if stream {
+                    line(&serde_json::json!({
+                        "type": "tool_result",
+                        "name": name,
+                        "error": result.is_error,
+                    }));
                 }
             }
             _ => {}
@@ -645,8 +680,8 @@ pub fn run_agent_headless(
         Some(_) => 0,
         None => 1,
     };
-    if json {
-        let report = serde_json::json!({
+    if quiet {
+        let mut report = serde_json::json!({
             "ok": code == 0,
             "answer": last.map(termide_agent_core::AssistantMessage::plain_text).unwrap_or_default(),
             "stop_reason": last.map(|m| stop_label(m.stop_reason)),
@@ -666,6 +701,10 @@ pub fn run_agent_headless(
             "error": last.and_then(|m| m.error_message.clone())
                 .or_else(|| (last.is_none()).then(|| "the agent produced no answer".to_string())),
         });
+        // In stream mode the report is the terminal event; tag it.
+        if stream {
+            report["type"] = serde_json::json!("result");
+        }
         println!("{report}");
     } else {
         match last {

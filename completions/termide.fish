@@ -26,6 +26,6 @@ complete -c termide -l completions -d 'Print a shell completion script and exit'
 complete -c termide -l install-completions -d 'Install the completion script for a shell, $SHELL by default' -x -a 'bash zsh fish'
 complete -c termide -l prompt -d 'Run one agent task without the UI and print the answer' -x
 complete -c termide -l agent -d 'Agent definition the --prompt run uses' -x
-complete -c termide -l output -d 'Headless output format' -x -a 'text json'
+complete -c termide -l output -d 'Headless output format' -x -a 'text json stream-json'
 complete -c termide -s h -l help -d 'Print help'
 complete -c termide -s V -l version -d 'Print version'

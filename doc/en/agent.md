@@ -583,7 +583,10 @@ default agent otherwise. The exit code is `0` on success, `1` on failure and
 
 For a machine-readable result, add `--output json`: instead of streaming, it
 prints one JSON object at the end with the answer, the token usage, the tool
-calls the run made and its status.
+calls the run made and its status. `--output stream-json` instead prints one
+JSON object per line as the run unfolds — a `tool_use` and `tool_result` for
+each tool, a `message` for each answer, and a final `result` line carrying the
+same fields as `json` — for a caller that follows a long run live.
 
 ```
 termide --prompt "count the TODOs in src" --output json

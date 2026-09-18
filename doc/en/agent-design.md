@@ -598,6 +598,7 @@ and an ACP agent is refused (no headless permission surface, as for
 subagents). `-` reads the prompt from stdin. Exit code: 0, 1 on a failed
 message, 130 on abort. `--output json` prints one object instead of streaming
 — answer, stop reason, model, provider, usage and the tool calls — for a
-consumer that parses rather than reads. Not done yet: a streaming JSON form
-(one object per event), and `--agent` delegation to the `task` tool (headless
-carries the built-in tools and skills only).
+consumer that parses rather than reads, and `--output stream-json` prints one
+object per line as the run unfolds (`tool_use`/`tool_result`/`message`, then a
+`result`), for one that follows it live. Not done yet: `--agent` delegation to
+the `task` tool (headless carries the built-in tools and skills only).

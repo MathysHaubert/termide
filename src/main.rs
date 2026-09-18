@@ -85,7 +85,7 @@ struct Cli {
     /// How a `--prompt` run reports: `text` (the answer on stdout, the
     /// default) or `json` (one object with the answer, token usage, the tool
     /// calls and the status).
-    #[arg(long, value_name = "FORMAT", requires = "prompt", value_parser = ["text", "json"], default_value = "text")]
+    #[arg(long, value_name = "FORMAT", requires = "prompt", value_parser = ["text", "json", "stream-json"], default_value = "text")]
     output: String,
 
     /// File(s) to open. Given a path, termide starts in a clean editor view
@@ -380,10 +380,10 @@ fn main() -> Result<()> {
             prompt
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| project_root.clone());
-        let output = if cli.output == "json" {
-            termide_app::HeadlessOutput::Json
-        } else {
-            termide_app::HeadlessOutput::Text
+        let output = match cli.output.as_str() {
+            "json" => termide_app::HeadlessOutput::Json,
+            "stream-json" => termide_app::HeadlessOutput::StreamJson,
+            _ => termide_app::HeadlessOutput::Text,
         };
         let code = termide_app::run_agent_headless(
             &config.agent,
@@ -567,6 +567,12 @@ mod cli_tests {
                 .unwrap()
                 .output,
             "json"
+        );
+        assert_eq!(
+            Cli::try_parse_from(["termide", "--prompt", "x", "--output", "stream-json"])
+                .unwrap()
+                .output,
+            "stream-json"
         );
         assert!(Cli::try_parse_from(["termide", "--prompt", "x", "--output", "yaml"]).is_err());
         assert!(Cli::try_parse_from(["termide", "--output", "json"]).is_err());
