@@ -115,6 +115,12 @@ pub trait Provider: Send + Sync {
         cancel: &CancelToken,
     ) -> AssistantMessage;
 
+    /// Where the models are served, for the status line: a host and port, a
+    /// gateway's name. `None` when there is nothing useful to show.
+    fn endpoint(&self) -> Option<String> {
+        None
+    }
+
     /// The models the endpoint serves, for a picker. Blocking; call it off
     /// the UI thread. The default says the provider cannot enumerate them,
     /// and callers fall back to a typed id.

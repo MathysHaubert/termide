@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Gemini CLI through their adapters — in the same panel, with the same
   permission dialog and editor reloads.
 
+  The input recalls earlier requests with `↑`/`↓` and completes `/commands`
+  from a list that opens as you type; the status line names the endpoint
+  beside the model and the size of the context window beside its usage.
+
   The **Mode** and **Model** status chips are buttons: the first switches the
   permission mode (so does `Shift+Tab`, cycling ask → accept-edits → auto), and
   the change reaches a task already running at its next tool call; the second

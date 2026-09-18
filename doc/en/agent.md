@@ -52,6 +52,8 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Ctrl+O` | Expand or collapse every tool call |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in |
+| `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
+| `Tab` | Complete the highlighted `/command` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
@@ -60,9 +62,15 @@ succeeded. Click it or press `Ctrl+O` to see the full output. The panel
 follows the newest output until you scroll up, and resumes following when you
 scroll back to the bottom.
 
-The status chips show the permission mode, the model, how much of the context
-window is used, whether the agent is working and how many messages are queued.
-The first two are buttons, and the same two entries sit in the `[≡]` menu.
+The status chips show the permission mode, the model with the endpoint it is
+served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), the agent, the context
+window with how much of it the last answer used (`Context: 12% of 32k`),
+whether the agent is working and how many messages are queued. Mode, model
+and agent are buttons, and the same entries sit in the `[≡]` menu.
+
+Typing `/` opens a list of the matching prompt templates above the input;
+`↑`/`↓` move in it, `Tab` or `Enter` complete the highlighted one, and `Enter`
+on a name typed in full sends it.
 
 **Model** asks the endpoint for the models it serves and lists them, the
 current one marked `●`; the last entry lets you type an id instead, which is

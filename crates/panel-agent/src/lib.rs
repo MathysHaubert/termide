@@ -47,6 +47,14 @@ const PERMISSION_OPTIONS: [&str; 4] = [
 ];
 /// Longest input the panel grows to before it scrolls.
 const MAX_INPUT_ROWS: u16 = 5;
+/// Rows the `/command` completion popup takes at most.
+const MAX_COMPLETION_ROWS: usize = 6;
+
+/// Prompt templates matching the `/word` being typed.
+struct Completion {
+    matches: Vec<PromptTemplate>,
+    selected: usize,
+}
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that starts a fresh session.
@@ -187,6 +195,13 @@ pub struct AgentPanel {
 
     transcript: Transcript,
     input: TextArea,
+    /// Which earlier request the input shows while browsing history with
+    /// the arrow keys; `None` while typing.
+    history_pos: Option<usize>,
+    /// What was being typed when browsing started, restored on the way back.
+    draft: String,
+    /// The `/command` completion popup, while the input is a lone `/word`.
+    completion: Option<Completion>,
     /// First visible transcript line.
     top: usize,
     /// Keep the view pinned to the newest line while true.
@@ -282,6 +297,9 @@ impl AgentPanel {
             persist_rule: setup.persist_rule,
             transcript,
             input: TextArea::new(),
+            history_pos: None,
+            draft: String::new(),
+            completion: None,
             top: 0,
             follow: true,
             busy: false,
@@ -361,6 +379,9 @@ impl AgentPanel {
         self.model_choices.clear();
         self.model_fetch = None;
         self.input = TextArea::new();
+        self.history_pos = None;
+        self.draft.clear();
+        self.completion = None;
         self.top = 0;
         self.follow = true;
         self.queued = (0, 0);
@@ -404,6 +425,9 @@ impl AgentPanel {
         if text.is_empty() {
             return vec![];
         }
+        self.completion = None;
+        self.history_pos = None;
+        self.draft.clear();
         let text = match slash_command(&text) {
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
@@ -1026,6 +1050,141 @@ impl AgentPanel {
         true
     }
 
+    /// Earlier requests of this session, oldest first, repeats collapsed.
+    fn history(&self) -> Vec<String> {
+        let mut history: Vec<String> = Vec::new();
+        for item in self.transcript.items() {
+            if let Item::User { text } = item {
+                if history.last() != Some(text) {
+                    history.push(text.clone());
+                }
+            }
+        }
+        history
+    }
+
+    /// Show an earlier (`older`) or later request in the input, the way a
+    /// shell recalls its history; past the newest, the draft comes back.
+    fn recall(&mut self, older: bool) -> bool {
+        let history = self.history();
+        let next = match (self.history_pos, older) {
+            (None, true) if !history.is_empty() => {
+                self.draft = self.input.text();
+                Some(history.len() - 1)
+            }
+            (None, _) => return false,
+            (Some(pos), true) => Some(pos.saturating_sub(1)),
+            (Some(pos), false) if pos + 1 < history.len() => Some(pos + 1),
+            (Some(_), false) => None,
+        };
+        self.history_pos = next;
+        let text = match next {
+            Some(pos) => history[pos].clone(),
+            None => std::mem::take(&mut self.draft),
+        };
+        self.set_input(&text);
+        true
+    }
+
+    /// Replace the input with `text`, cursor at its end.
+    fn set_input(&mut self, text: &str) {
+        self.input = TextArea::with_text(text);
+        while self.input.move_down() {}
+        self.input.move_end();
+    }
+
+    /// Recompute the `/command` popup after the input changed: it shows
+    /// while the input is a single `/word` with no space yet.
+    fn refresh_completion(&mut self) {
+        let text = self.input.text();
+        let word = text
+            .strip_prefix('/')
+            .filter(|rest| self.input.line_count() <= 1 && !rest.contains(char::is_whitespace));
+        let Some(prefix) = word else {
+            self.completion = None;
+            return;
+        };
+        let matches: Vec<PromptTemplate> = self
+            .catalog
+            .prompts()
+            .into_iter()
+            .filter(|template| template.name.starts_with(prefix))
+            .collect();
+        if matches.is_empty() {
+            self.completion = None;
+            return;
+        }
+        let selected = self
+            .completion
+            .as_ref()
+            .map_or(0, |c| c.selected.min(matches.len() - 1));
+        self.completion = Some(Completion { matches, selected });
+    }
+
+    /// Put the highlighted command into the input, ready for arguments.
+    fn accept_completion(&mut self) -> bool {
+        let Some(completion) = self.completion.take() else {
+            return false;
+        };
+        let Some(template) = completion.matches.get(completion.selected) else {
+            return false;
+        };
+        let text = format!("/{} ", template.name);
+        self.set_input(&text);
+        true
+    }
+
+    /// The input changed by typing: history browsing ends, the popup follows.
+    fn after_edit(&mut self) {
+        self.history_pos = None;
+        self.refresh_completion();
+    }
+
+    /// The `/command` popup, drawn over the bottom of the transcript just
+    /// above the input's separator.
+    fn render_completion(&self, area: Rect, buf: &mut Buffer) {
+        let Some(completion) = &self.completion else {
+            return;
+        };
+        let rows = completion
+            .matches
+            .len()
+            .min(MAX_COMPLETION_ROWS)
+            .min(self.transcript_area.height as usize);
+        if rows == 0 {
+            return;
+        }
+        // Keep the highlighted entry in view when there are more than rows.
+        let first = completion
+            .selected
+            .saturating_sub(rows - 1)
+            .min(completion.matches.len() - rows);
+        let width = area.width as usize;
+        let top = self.input_area.y - 1 - rows as u16;
+        for (row, template) in completion.matches.iter().skip(first).take(rows).enumerate() {
+            let selected = first + row == completion.selected;
+            let style = if selected {
+                Style::default()
+                    .fg(self.colors.selection_fg)
+                    .bg(self.colors.selection_bg)
+            } else {
+                Style::default().fg(self.colors.fg).bg(self.colors.bg)
+            };
+            let mut line = format!(" /{}", template.name);
+            if !template.argument_hint.is_empty() {
+                line.push(' ');
+                line.push_str(&template.argument_hint);
+            }
+            if !template.description.is_empty() {
+                line.push_str("  ");
+                line.push_str(&template.description);
+            }
+            let y = top + row as u16;
+            buf.set_string(area.x, y, " ".repeat(width), style);
+            buf.set_stringn(area.x, y, line, width, style);
+        }
+    }
+
     fn viewport_height(&self) -> usize {
         self.transcript_area.height as usize
     }
@@ -1145,6 +1304,22 @@ fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
         .get("path")?
         .as_str()
         .map(PathBuf::from)
+}
+
+/// Token counts as the status line shows them: `32k`, `1.2M`.
+fn format_tokens(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        let millions = tokens as f64 / 1_000_000.0;
+        if millions.fract() < 0.05 {
+            format!("{millions:.0}M")
+        } else {
+            format!("{millions:.1}M")
+        }
+    } else if tokens >= 1000 {
+        format!("{}k", (tokens + 500) / 1000)
+    } else {
+        tokens.to_string()
+    }
 }
 
 /// `/<name> args` at the start of a message: the template name and the
@@ -1559,6 +1734,9 @@ impl Panel for AgentPanel {
         }
         let input_area = self.input_area;
         self.render_input(input_area, buf, ctx.is_focused);
+        if ctx.is_focused && has_separator {
+            self.render_completion(area, buf);
+        }
     }
 
     fn handle_key(&mut self, chord: KeyChord) -> Vec<PanelEvent> {
@@ -1568,18 +1746,44 @@ impl Panel for AgentPanel {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let page = (self.viewport_height() as i32 - 1).max(1);
 
+        let completing = self.completion.is_some();
         match key.code {
+            KeyCode::Esc if completing => self.completion = None,
             KeyCode::Esc => {
                 if self.is_busy() {
                     self.abort();
                 } else if !self.input.is_empty() {
                     self.input = TextArea::new();
+                    self.after_edit();
                 } else {
                     return vec![];
                 }
             }
-            KeyCode::Enter if shift || alt => self.input.insert_newline(),
-            KeyCode::Char('j') if ctrl => self.input.insert_newline(),
+            KeyCode::Enter if shift || alt => {
+                self.input.insert_newline();
+                self.after_edit();
+            }
+            KeyCode::Char('j') if ctrl => {
+                self.input.insert_newline();
+                self.after_edit();
+            }
+            KeyCode::Tab if completing => {
+                self.accept_completion();
+            }
+            KeyCode::Enter if completing => {
+                // Enter on the command already typed in full sends it; on a
+                // partial one it completes, like a shell.
+                let typed = self.input.text();
+                let exact = self
+                    .completion
+                    .as_ref()
+                    .and_then(|c| c.matches.get(c.selected))
+                    .is_some_and(|t| format!("/{}", t.name) == typed.trim());
+                if exact {
+                    return self.submit();
+                }
+                self.accept_completion();
+            }
             KeyCode::Enter => return self.submit(),
             KeyCode::Char('o') if ctrl => {
                 let expand = !self.transcript.any_expanded();
@@ -1598,11 +1802,27 @@ impl Panel for AgentPanel {
             KeyCode::End if ctrl => self.follow = true,
             KeyCode::Up if ctrl => self.scroll_by(-1),
             KeyCode::Down if ctrl => self.scroll_by(1),
+            KeyCode::Up if completing => {
+                if let Some(c) = &mut self.completion {
+                    c.selected = c.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down if completing => {
+                if let Some(c) = &mut self.completion {
+                    c.selected = (c.selected + 1).min(c.matches.len() - 1);
+                }
+            }
             KeyCode::Up => {
-                self.input.move_up();
+                // Past the first line, the arrow walks back through what was
+                // asked before, as in a shell.
+                if !self.input.move_up() && !self.recall(true) {
+                    return vec![];
+                }
             }
             KeyCode::Down => {
-                self.input.move_down();
+                if !self.input.move_down() && !self.recall(false) {
+                    return vec![];
+                }
             }
             KeyCode::Left => {
                 self.input.move_left();
@@ -1614,11 +1834,16 @@ impl Panel for AgentPanel {
             KeyCode::End => self.input.move_end(),
             KeyCode::Backspace => {
                 self.input.backspace();
+                self.after_edit();
             }
             KeyCode::Delete => {
                 self.input.delete();
+                self.after_edit();
             }
-            KeyCode::Char(c) if !ctrl && !alt => self.input.insert(c),
+            KeyCode::Char(c) if !ctrl && !alt => {
+                self.input.insert(c);
+                self.after_edit();
+            }
             _ => return vec![],
         }
         vec![PanelEvent::NeedsRedraw]
@@ -1688,6 +1913,7 @@ impl Panel for AgentPanel {
         match cmd {
             PanelCommand::PasteText { text } => {
                 self.input.insert_str(&text);
+                self.after_edit();
                 CommandResult::NeedsRedraw(true)
             }
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
@@ -1697,8 +1923,8 @@ impl Panel for AgentPanel {
                 let choice = self.prompt_choices.get(index).cloned();
                 self.prompt_choices.clear();
                 if let Some(template) = choice {
-                    self.input = TextArea::new();
-                    self.input.insert_str(&format!("/{} ", template.name));
+                    self.set_input(&format!("/{} ", template.name));
+                    self.after_edit();
                 }
                 CommandResult::Handled(true)
             }
@@ -1763,8 +1989,14 @@ impl Panel for AgentPanel {
                 sep(),
                 StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
                 StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
-                sep(),
             ]);
+            if let Some(endpoint) = self.provider.endpoint() {
+                segments.push(StatusSegment::new(
+                    format!(" @ {endpoint}"),
+                    SegmentKind::Label,
+                ));
+            }
+            segments.push(sep());
         }
         segments.extend([
             StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
@@ -1773,16 +2005,21 @@ impl Panel for AgentPanel {
         if self.external {
             segments.push(StatusSegment::new(" (acp)", SegmentKind::Label));
         }
-        if self.model.context_window > 0 && self.context_tokens > 0 {
-            let percent = self.context_tokens * 100 / self.model.context_window;
-            let kind = if percent >= 80 {
-                SegmentKind::Warn
-            } else {
-                SegmentKind::Value
-            };
+        if !self.external && self.model.context_window > 0 {
             segments.push(sep());
             segments.push(StatusSegment::new("Context: ", SegmentKind::Label));
-            segments.push(StatusSegment::new(format!("{percent}%"), kind));
+            let window = format_tokens(self.model.context_window);
+            if self.context_tokens > 0 {
+                let percent = self.context_tokens * 100 / self.model.context_window;
+                let kind = if percent >= 80 {
+                    SegmentKind::Warn
+                } else {
+                    SegmentKind::Value
+                };
+                segments.push(StatusSegment::new(format!("{percent}% of {window}"), kind));
+            } else {
+                segments.push(StatusSegment::new(window, SegmentKind::Value));
+            }
         }
         if self.is_busy() {
             segments.push(sep());
@@ -2138,7 +2375,7 @@ mod tests {
             .collect();
         assert_eq!(
             chips,
-            " Mode: ask │ Model: m │ Agent: default │ Context: 12%"
+            " Mode: ask │ Model: m │ Agent: default │ Context: 12% of 1k"
         );
     }
 
@@ -2935,5 +3172,86 @@ mod tests {
         assert!(panel.switch_agent("default"));
         assert!(!panel.external);
         assert_eq!(chip(&panel, MODE_ACTION), "ask");
+    }
+    #[test]
+    fn arrow_keys_recall_earlier_requests_and_bring_the_draft_back() {
+        let mut panel = panel(vec![reply("a"), reply("b")]);
+        for request in ["first request", "second request"] {
+            type_text(&mut panel, request);
+            panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+            settle(&mut panel);
+        }
+        type_text(&mut panel, "half typ");
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "second request");
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "first request");
+        // Past the oldest it stays; back down it returns to the draft.
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "first request");
+        panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+        panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "half typ");
+        assert!(panel.history_pos.is_none());
+        // Typing ends browsing; the arrows then move inside a multi-line input.
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_text(&mut panel, "more");
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "half typ\nmore");
+        assert_eq!(format_tokens(32_000), "32k");
+        assert_eq!(format_tokens(262_144), "262k");
+        assert_eq!(format_tokens(1_000_000), "1M");
+        assert_eq!(format_tokens(1_250_000), "1.2M");
+        assert_eq!(format_tokens(512), "512");
+    }
+
+    #[test]
+    fn typing_a_slash_offers_templates_and_tab_or_enter_completes() {
+        let mut panel = panel(vec![reply("ok")]);
+        type_text(&mut panel, "/re");
+        let popup = panel.completion.as_ref().expect("popup");
+        assert_eq!(popup.matches[0].name, "review");
+        let rows = render_text(&mut panel, 60, 12);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("/review <path>  Review a file")),
+            "{rows:?}"
+        );
+        // Tab completes and closes the popup; the space invites arguments.
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "/review ");
+        assert!(panel.completion.is_none());
+
+        // Enter on a partial name completes; on the full name it sends.
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        type_text(&mut panel, "/rev");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "/review ");
+        assert!(panel.transcript().items().is_empty());
+        panel.handle_key(chord(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(
+            panel.completion.is_some(),
+            "a lone /review shows the popup again"
+        );
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert!(matches!(
+            panel.transcript().items().first(),
+            Some(Item::User { text }) if text == "Review  carefully."
+        ));
+
+        // No match, no popup; Esc closes an open one.
+        type_text(&mut panel, "/zzz");
+        assert!(panel.completion.is_none());
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        type_text(&mut panel, "/r");
+        assert!(panel.completion.is_some());
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(panel.completion.is_none());
+        assert_eq!(
+            panel.input_text(),
+            "/r",
+            "Esc closes the popup, not the input"
+        );
     }
 }

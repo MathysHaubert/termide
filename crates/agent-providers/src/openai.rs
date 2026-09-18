@@ -314,6 +314,17 @@ impl Provider for OpenAiCompatProvider {
 
     /// `GET /models`, which every OpenAI-compatible server answers with the
     /// ids it serves. One attempt, no retries: a picker is interactive.
+    /// The host (and port) of the base URL: `127.0.0.1:10000`,
+    /// `openrouter.ai`.
+    fn endpoint(&self) -> Option<String> {
+        let rest = self
+            .base_url
+            .split_once("://")
+            .map_or(self.base_url.as_str(), |(_, rest)| rest);
+        let host = rest.split('/').next().unwrap_or("");
+        (!host.is_empty()).then(|| host.to_string())
+    }
+
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
         let url = format!("{}/models", self.base_url);
         let mut http = self.agent.get(&url).set("Accept", "application/json");
@@ -838,5 +849,16 @@ data: [DONE]\n";
             .unwrap_err()
             .contains("no `data` array"));
         assert!(parse_model_list("<html>").unwrap_err().contains("not JSON"));
+    }
+    #[test]
+    fn the_endpoint_is_the_host_of_the_base_url() {
+        assert_eq!(
+            OpenAiCompatProvider::new("p", "http://127.0.0.1:10000/v1").endpoint(),
+            Some("127.0.0.1:10000".to_string())
+        );
+        assert_eq!(
+            OpenAiCompatProvider::new("p", "https://openrouter.ai/api/v1/").endpoint(),
+            Some("openrouter.ai".to_string())
+        );
     }
 }
