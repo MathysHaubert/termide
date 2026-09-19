@@ -485,6 +485,13 @@ impl AgentPanel {
         self.permission_rx = permission_rx;
         self.pending = None;
         self.transcript = transcript;
+        // Leaving the current session: if it was never used, delete it so an
+        // empty session does not clutter the list or the disk. On a
+        // same-session rebuild (switch agent, undo) the caller has already
+        // taken the session out, so there is nothing to leave here.
+        if let Some(old) = self.session.take() {
+            discard_if_empty(old);
+        }
         self.session = session;
         self.model = model;
         self.agent = agent;
@@ -1866,6 +1873,16 @@ impl AgentPanel {
     }
 }
 
+impl Drop for AgentPanel {
+    /// Closing the panel discards its session when it was never used, so an
+    /// empty session leaves nothing behind in the list or on disk.
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            discard_if_empty(session);
+        }
+    }
+}
+
 /// Longest prompt shown in the panel title before it is cut.
 const MAX_TITLE_CHARS: usize = 60;
 
@@ -1942,6 +1959,17 @@ fn slash_command(text: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((name, args.trim()))
+}
+
+/// Delete a session the panel is leaving when it holds no conversation, so
+/// empty sessions do not clutter the list or the disk. A session with any
+/// message or a user-given name is kept.
+fn discard_if_empty(session: Session) {
+    if session.is_empty() {
+        if let Err(error) = session.discard() {
+            log::warn!("could not remove empty agent session: {error}");
+        }
+    }
 }
 
 /// The checkpoint store of `session`, under the session directory.
@@ -3343,6 +3371,56 @@ mod tests {
         }];
         assert!(!panel.adopt_context_window(&models));
         assert_eq!(panel.model.context_window, 1000);
+    }
+
+    #[test]
+    fn an_empty_session_is_discarded_on_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = {
+            let panel = AgentPanel::new(AgentPanelSetup {
+                session_dir: Some(dir.path().to_path_buf()),
+                ..setup(vec![reply("ok")])
+            });
+            let path = panel.session.as_ref().unwrap().path().to_path_buf();
+            assert!(path.exists());
+            path
+        };
+        assert!(!path.exists(), "an unused session is removed on close");
+    }
+
+    #[test]
+    fn a_session_with_messages_survives_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = {
+            let mut panel = AgentPanel::new(AgentPanelSetup {
+                session_dir: Some(dir.path().to_path_buf()),
+                ..setup(vec![reply("ok")])
+            });
+            let path = panel.session.as_ref().unwrap().path().to_path_buf();
+            type_text(&mut panel, "do something");
+            panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+            settle(&mut panel);
+            assert!(path.exists());
+            path
+        };
+        assert!(path.exists(), "a session with a conversation is kept");
+    }
+
+    #[test]
+    fn switching_away_from_an_empty_session_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        let empty = panel.session.as_ref().unwrap().path().to_path_buf();
+        assert!(empty.exists());
+        // A new session: the empty one we leave is discarded, not listed.
+        assert!(panel.switch_session(None));
+        assert!(!empty.exists(), "the empty session is removed on switch");
+        let fresh = panel.session.as_ref().unwrap().path().to_path_buf();
+        assert!(fresh.exists());
+        assert_ne!(empty, fresh);
     }
 
     #[test]

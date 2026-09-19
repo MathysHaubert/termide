@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unset). Re-selecting the current model in the picker now also refreshes its
   window.
 
+- **Unused agent sessions clean themselves up.** A session you never send
+  anything to is discarded when you switch away from it or close the panel, so
+  opening and closing an agent panel — or trying a couple of new sessions —
+  no longer leaves empty logs cluttering the session list or the disk. A
+  session with a name or any message is always kept.
+
 ### Added
 
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you

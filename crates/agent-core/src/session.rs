@@ -288,6 +288,30 @@ impl Session {
         &self.entries
     }
 
+    /// Whether the session holds no conversation: no messages and no
+    /// user-given name, only setup entries (the model and agent it was
+    /// created with). Such a fresh, untouched session is safe to discard so
+    /// it does not clutter the session list or the disk.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.entries.iter().any(|e| {
+            matches!(
+                e.kind,
+                EntryKind::Message { .. } | EntryKind::SessionName { .. }
+            )
+        })
+    }
+
+    /// Delete the session's file from disk, consuming the session (its lock is
+    /// released as it drops). A missing file is not an error.
+    pub fn discard(self) -> std::io::Result<()> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     #[must_use]
     pub fn leaf_id(&self) -> Option<&str> {
         self.leaf.as_deref()
@@ -580,6 +604,34 @@ mod tests {
     use super::*;
     use crate::agent::test_support::text_reply;
     use crate::message::UserMessage;
+
+    #[test]
+    fn is_empty_tracks_conversation_and_discard_removes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), Path::new("/work")).unwrap();
+        // Setup entries alone (model, agent) leave the session empty.
+        session
+            .append_model_change("local", "qwen", Some(32_000))
+            .unwrap();
+        session.append_agent_change("default").unwrap();
+        assert!(session.is_empty());
+        // A user-given name marks intent to keep it.
+        session.set_name("keep me").unwrap();
+        assert!(!session.is_empty());
+
+        // A fresh session with a message is not empty either.
+        let mut chatted = Session::create(dir.path(), Path::new("/work")).unwrap();
+        chatted
+            .append_message(&Message::User(UserMessage::text("hi")))
+            .unwrap();
+        assert!(!chatted.is_empty());
+
+        // Discard deletes the file (and a missing file is not an error).
+        let path = chatted.path().to_path_buf();
+        assert!(path.exists());
+        chatted.discard().unwrap();
+        assert!(!path.exists());
+    }
 
     #[test]
     fn create_append_reopen_round_trip() {

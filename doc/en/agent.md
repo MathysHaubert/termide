@@ -62,6 +62,11 @@ newest first (the current one marked `●`), so you can pick up where you left
 off. Switching waits for the
 current task: stop it with `Esc` first if the agent is still working.
 
+A session you never send anything to is discarded when you switch away from it
+or close the panel, so opening a panel and closing it — or trying a couple of
+new sessions — leaves no empty logs cluttering the list or the disk. A session
+you have named or sent even one message to is always kept.
+
 | Key | Action |
 |---|---|
 | `Enter` | Send. While the agent works, the text is queued for the next turn instead |
