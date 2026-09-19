@@ -369,6 +369,17 @@ impl SettingsModal {
                 self.apply_text(tab, field_idx, &text);
                 self.dirty = true;
             }
+            FieldType::OptionalNumber => {
+                // Empty or zero clears the field back to "(auto)".
+                let val = self
+                    .edit_buffer
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|n| *n > 0);
+                self.apply_optional_number(tab, field_idx, val);
+                self.dirty = true;
+            }
             _ => {}
         }
         self.editing = false;
@@ -430,12 +441,19 @@ impl SettingsModal {
                     self.config.vfs.connection_timeout_secs = val;
                 }
             }
-            SettingsTab::Agent => match index {
-                4 => self.config.agent.context_window = val,
-                5 => self.config.agent.max_tokens = val,
-                _ => {}
-            },
+            SettingsTab::Agent => {
+                if index == 5 {
+                    self.config.agent.max_tokens = val;
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Apply an optional-number field (`None` means "(auto)").
+    fn apply_optional_number(&mut self, tab: SettingsTab, index: usize, val: Option<u64>) {
+        if tab == SettingsTab::Agent && index == 4 {
+            self.config.agent.context_window = val;
         }
     }
 

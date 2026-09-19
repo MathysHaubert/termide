@@ -130,7 +130,7 @@ impl SettingsModal {
                             self.mark_dirty();
                         }
                         FieldType::Enum => self.open_enum_picker(field_idx),
-                        FieldType::Number | FieldType::OptionalText => {
+                        FieldType::Number | FieldType::OptionalText | FieldType::OptionalNumber => {
                             self.start_edit();
                         }
                     }
@@ -430,7 +430,7 @@ impl SettingsModal {
                 if let Some(field_idx) = self.current_field_idx() {
                     let fields = fields_for_tab(self.active_tab);
                     if let Some(d) = fields.get(field_idx) {
-                        if d.field_type == FieldType::Number {
+                        if matches!(d.field_type, FieldType::Number | FieldType::OptionalNumber) {
                             if c.is_ascii_digit() {
                                 self.edit_buffer.push(c);
                             }

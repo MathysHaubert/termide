@@ -108,9 +108,12 @@ pub struct AgentSettings {
     #[serde(default = "agent_defaults::api_key_env")]
     pub api_key_env: String,
 
-    /// Context window in tokens; drives the compaction threshold.
-    #[serde(default = "agent_defaults::context_window")]
-    pub context_window: u64,
+    /// Context window in tokens; drives the compaction threshold. `None`
+    /// (unset) auto-detects it from the provider (a local server's
+    /// `max_model_len`), falling back to [`agent_defaults::context_window`]
+    /// until known; a set value is honored as a fixed cap.
+    #[serde(default)]
+    pub context_window: Option<u64>,
 
     /// Upper bound on tokens per response.
     #[serde(default = "agent_defaults::max_tokens")]
@@ -134,6 +137,16 @@ pub struct AgentSettings {
     pub autofold: bool,
 }
 
+impl AgentSettings {
+    /// The context window to start with: the configured cap when set, else the
+    /// fallback used until the provider's real `max_model_len` is known.
+    #[must_use]
+    pub fn effective_context_window(&self) -> u64 {
+        self.context_window
+            .unwrap_or_else(agent_defaults::context_window)
+    }
+}
+
 impl Default for AgentSettings {
     fn default() -> Self {
         Self {
@@ -141,7 +154,7 @@ impl Default for AgentSettings {
             base_url: agent_defaults::base_url(),
             model: String::new(),
             api_key_env: agent_defaults::api_key_env(),
-            context_window: agent_defaults::context_window(),
+            context_window: None,
             max_tokens: agent_defaults::max_tokens(),
             reasoning: false,
             permissions: termide_agent_core::PermissionRules::default(),

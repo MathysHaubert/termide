@@ -21,6 +21,9 @@ pub(super) enum FieldType {
     Enum,
     /// Optional string — shows "(auto)" placeholder when None
     OptionalText,
+    /// Optional unsigned integer — shows "(auto)" when None; an empty or zero
+    /// entry clears it back to None.
+    OptionalNumber,
 }
 
 /// Descriptor for a single settings field.
@@ -200,7 +203,7 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
             },
             FieldDescriptor {
                 label: t.settings_agent_context_window(),
-                field_type: FieldType::Number,
+                field_type: FieldType::OptionalNumber,
             },
             FieldDescriptor {
                 label: t.settings_agent_max_tokens(),
@@ -290,7 +293,10 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             1 => empty_or(&config.agent.base_url),
             2 => empty_or(&config.agent.model),
             3 => empty_or(&config.agent.api_key_env),
-            4 => config.agent.context_window.to_string(),
+            4 => config
+                .agent
+                .context_window
+                .map_or_else(|| "(auto)".to_string(), |n| n.to_string()),
             5 => config.agent.max_tokens.to_string(),
             6 => bool_str(config.agent.reasoning),
             7 => bool_str(config.agent.autofold),

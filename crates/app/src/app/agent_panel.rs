@@ -417,7 +417,7 @@ fn agent_setup(
         project_root: project_root.to_path_buf(),
         rules: settings.permissions.clone(),
         default_model: settings.model.clone(),
-        context_window: settings.context_window,
+        context_window: settings.effective_context_window(),
         max_tokens: settings.max_tokens,
         reasoning: settings.reasoning,
         compaction: settings.compaction,
@@ -447,7 +447,7 @@ fn agent_setup(
     let model = ModelSpec {
         provider: "agent".to_string(),
         id: profile.model.unwrap_or_else(|| settings.model.clone()),
-        context_window: settings.context_window,
+        context_window: settings.effective_context_window(),
         max_tokens: settings.max_tokens,
         reasoning: settings.reasoning,
     };
@@ -563,7 +563,7 @@ pub fn run_agent_headless(
             .model
             .clone()
             .unwrap_or_else(|| settings.model.clone()),
-        context_window: settings.context_window,
+        context_window: settings.effective_context_window(),
         max_tokens: settings.max_tokens,
         reasoning: settings.reasoning,
     };
