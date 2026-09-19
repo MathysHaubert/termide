@@ -27,13 +27,11 @@ use termide_panel_agent::{
 use super::App;
 
 impl App {
-    /// Open the agent panel (singleton). Reports a status message instead of
-    /// opening when no model is configured.
+    /// Open a new agent panel. Like a new terminal, each call opens another
+    /// one, so several agents can work in a project at once. Reports a status
+    /// message instead of opening when no model is configured.
     pub(in crate::app) fn handle_open_agent(&mut self) -> Result<()> {
         self.close_help_panels();
-        if self.find_and_focus_panel_by_name("agent") {
-            return Ok(());
-        }
 
         let settings = self.state.config.agent.clone();
         if settings.model.trim().is_empty() {
@@ -78,7 +76,9 @@ pub(crate) fn restore_agent_panel(
         log::warn!("agent panel not restored: no agent.model configured");
         return None;
     }
-    let session = session.and_then(|path| match Session::open(&path) {
+    // Exclusive: if this session is already open in another restored panel,
+    // fall back to a fresh one rather than back two panels with one log.
+    let session = session.and_then(|path| match Session::open_exclusive(&path) {
         Ok(session) => Some(session),
         Err(error) => {
             log::warn!("cannot reopen agent session {}: {error}", path.display());

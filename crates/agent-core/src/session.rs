@@ -7,12 +7,13 @@
 //! anything.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -120,6 +121,45 @@ pub struct Session {
     entries: Vec<Entry>,
     leaf: Option<String>,
     file: File,
+    /// The canonical path this session holds an exclusive claim on, when it
+    /// was opened with [`Session::open_exclusive`] / [`Session::create_exclusive`].
+    /// Released on drop so a session is never live in two panels at once.
+    lock: Option<PathBuf>,
+}
+
+/// Paths currently open exclusively, so the same session log cannot back two
+/// agent panels (which would interleave writes and corrupt it). Process-wide,
+/// which covers every panel of one termide instance.
+fn open_registry() -> &'static Mutex<HashSet<PathBuf>> {
+    static OPEN: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    OPEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// The registry key for `path`: canonical when it exists, else the path as
+/// given, so different spellings of one file still collide.
+fn lock_key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn claim(path: &Path) -> Option<PathBuf> {
+    let key = lock_key(path);
+    let mut open = open_registry().lock().unwrap_or_else(|e| e.into_inner());
+    open.insert(key.clone()).then_some(key)
+}
+
+fn release(key: &Path) {
+    open_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(key);
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(key) = self.lock.take() {
+            release(&key);
+        }
+    }
 }
 
 impl Session {
@@ -153,6 +193,7 @@ impl Session {
             entries: Vec::new(),
             leaf: None,
             file,
+            lock: None,
         })
     }
 
@@ -194,7 +235,37 @@ impl Session {
             entries,
             leaf,
             file,
+            lock: None,
         })
+    }
+
+    /// Like [`Session::create`], but claims the session exclusively so it
+    /// cannot also be opened in another panel; the claim is released on drop.
+    pub fn create_exclusive(dir: &Path, cwd: &Path) -> std::io::Result<Self> {
+        let mut session = Self::create(dir, cwd)?;
+        session.lock = claim(&session.path);
+        Ok(session)
+    }
+
+    /// Like [`Session::open`], but fails if the session is already open in
+    /// another panel, so its log is never written from two places at once.
+    pub fn open_exclusive(path: &Path) -> std::io::Result<Self> {
+        let Some(key) = claim(path) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "this session is already open in another panel",
+            ));
+        };
+        match Self::open(path) {
+            Ok(mut session) => {
+                session.lock = Some(key);
+                Ok(session)
+            }
+            Err(error) => {
+                release(&key);
+                Err(error)
+            }
+        }
     }
 
     #[must_use]
@@ -692,5 +763,24 @@ mod tests {
             .collect();
         assert_eq!(texts, ["one", "a", "three"]);
         assert!(session.rewind_to(Some("missing")).is_err());
+    }
+}
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn an_exclusive_session_cannot_be_opened_twice_until_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::create_exclusive(dir.path(), Path::new("/work")).unwrap();
+        let path = session.path().to_path_buf();
+        // A second exclusive open is refused while the first is alive.
+        let again = Session::open_exclusive(&path);
+        assert_eq!(again.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        // A plain open (for reads/tests) is still allowed.
+        assert!(Session::open(&path).is_ok());
+        // Dropping the holder releases the claim.
+        drop(session);
+        assert!(Session::open_exclusive(&path).is_ok());
     }
 }

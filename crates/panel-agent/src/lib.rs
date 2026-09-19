@@ -804,7 +804,7 @@ impl AgentPanel {
         if self.session.as_ref().map(Session::path) == Some(summary.path.as_path()) {
             return true; // already open
         }
-        match Session::open(&summary.path) {
+        match Session::open_exclusive(&summary.path) {
             Ok(session) => {
                 self.switch_session(Some(session));
             }
@@ -2040,7 +2040,7 @@ fn start_session(
     model: &ModelSpec,
     agent: &str,
 ) -> Option<Session> {
-    let mut session = match Session::create(dir?, cwd) {
+    let mut session = match Session::create_exclusive(dir?, cwd) {
         Ok(session) => session,
         Err(error) => {
             log::warn!("cannot start an agent session log: {error}");
