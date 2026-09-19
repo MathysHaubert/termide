@@ -176,40 +176,6 @@ pub fn render_input_field(
     }
 }
 
-/// Render a labeled input field.
-#[allow(clippy::too_many_arguments)]
-pub fn render_labeled_input(
-    buf: &mut Buffer,
-    area: Rect,
-    label: &str,
-    text: &str,
-    cursor_pos: usize,
-    selection_range: Option<(usize, usize)>,
-    is_focused: bool,
-    theme: &Theme,
-) {
-    let label_width = label.len() as u16;
-
-    // Render label
-    buf.set_string(area.x, area.y, label, Style::default().fg(theme.fg));
-
-    // Render input field
-    let input_x = area.x + label_width;
-    let input_width = area.width.saturating_sub(label_width);
-
-    render_input_field(
-        buf,
-        input_x,
-        area.y,
-        input_width,
-        text,
-        cursor_pos,
-        selection_range,
-        is_focused,
-        theme,
-    );
-}
-
 /// Result of checking mouse click position in a modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseClickResult {

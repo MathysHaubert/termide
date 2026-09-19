@@ -385,7 +385,23 @@ impl InputBar {
                 height: 1,
             };
             self.render_controls(row, buf, colors, active, focus);
+        } else if let Some(last) = self.field_areas.last().copied() {
+            // With no controls row, the status rides on the last field row so
+            // a bar of fields alone (a name search) still shows its counter.
+            self.render_status(last, buf, colors);
         }
+    }
+
+    /// Right-aligned status text; returns the x where it starts so controls
+    /// can stop short of it.
+    fn render_status(&self, area: Rect, buf: &mut Buffer, colors: &ThemeColors) -> u16 {
+        let status = self.status.as_deref().unwrap_or("");
+        let status_w = str_display_width(status) as u16;
+        let left = area.x + area.width.saturating_sub(status_w);
+        if !status.is_empty() {
+            buf.set_string(left, area.y, status, Style::default().fg(colors.disabled));
+        }
+        left
     }
 
     fn render_controls(
@@ -397,17 +413,7 @@ impl InputBar {
         focus: Focus,
     ) {
         // Right-aligned status first, so controls stop short of it.
-        let status = self.status.clone().unwrap_or_default();
-        let status_w = str_display_width(&status) as u16;
-        let status_left = area.x + area.width.saturating_sub(status_w);
-        if !status.is_empty() {
-            buf.set_string(
-                status_left,
-                area.y,
-                &status,
-                Style::default().fg(colors.disabled),
-            );
-        }
+        let status_left = self.render_status(area, buf, colors);
 
         let mut x = area.x;
         for idx in 0..self.controls.len() {
