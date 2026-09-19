@@ -596,12 +596,12 @@ impl Panel for FileManager {
         // the mouse dispatcher to hit-test against.
         self.scrollbars = termide_core::ScrollBars::default();
 
-        // Inline content bar: dock it at the top, render results below.
+        // Inline content bar: dock it at the bottom, render results above.
         if let Some(mut bar) = self.search_bar.take() {
             let bar_h = bar.height().min(area.height);
             let bar_area = Rect {
                 x: area.x,
-                y: area.y,
+                y: area.y + area.height - bar_h,
                 width: area.width,
                 height: bar_h,
             };
@@ -609,23 +609,12 @@ impl Panel for FileManager {
             bar.render(bar_area, buf, &self.cached_theme, active);
             self.search_bar = Some(bar);
 
-            // Pseudographic separator between the form and the results.
-            let sep_y = area.y + bar_h;
-            let mut drew_sep = false;
-            if sep_y < area.y + area.height {
-                let style = ratatui::style::Style::default().fg(self.cached_theme.disabled);
-                for dx in 0..area.width {
-                    buf[(area.x + dx, sep_y)].set_symbol("─").set_style(style);
-                }
-                drew_sep = true;
-            }
-
-            let used = bar_h + u16::from(drew_sep);
+            // The bar draws its own titled top border, which is the divider.
             let results_area = Rect {
                 x: area.x,
-                y: area.y + used,
+                y: area.y,
                 width: area.width,
-                height: area.height.saturating_sub(used),
+                height: area.height.saturating_sub(bar_h),
             };
             self.search_results_area = Some(results_area);
             if results_area.height > 0 {

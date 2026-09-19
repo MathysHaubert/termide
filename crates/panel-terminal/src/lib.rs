@@ -857,15 +857,15 @@ impl Panel for Terminal {
         // area is already the inner content area (accordion drew outer border)
         let theme = self.cached_theme;
 
-        // Dock the inline find bar at the TOP (with a pseudographic separator),
-        // shrinking the grid area so the PTY resize / scroll / mouse math see
-        // the reduced height — consistent with the editor and file manager.
+        // Dock the inline find bar at the BOTTOM (with a pseudographic separator
+        // above it), shrinking the grid area so the PTY resize / scroll / mouse
+        // math see the reduced height — consistent with the agent prompt input.
         let mut area = area;
         if let Some(mut bar) = self.find_bar.take() {
             let bar_h = bar.height().min(area.height);
             let bar_area = Rect {
                 x: area.x,
-                y: area.y,
+                y: area.y + area.height - bar_h,
                 width: area.width,
                 height: bar_h,
             };
@@ -873,20 +873,12 @@ impl Panel for Terminal {
             bar.render(bar_area, buf, &theme, active);
             self.find_bar = Some(bar);
 
-            let sep_y = area.y + bar_h;
-            let mut used = bar_h;
-            if sep_y < area.y + area.height {
-                let style = Style::default().fg(theme.disabled);
-                for dx in 0..area.width {
-                    buf[(area.x + dx, sep_y)].set_symbol("─").set_style(style);
-                }
-                used += 1;
-            }
+            // The bar draws its own titled top border, which is the divider.
             area = Rect {
                 x: area.x,
-                y: area.y + used,
+                y: area.y,
                 width: area.width,
-                height: area.height.saturating_sub(used),
+                height: area.height.saturating_sub(bar_h),
             };
         }
 

@@ -120,15 +120,17 @@ impl Terminal {
             return vec![];
         }
 
-        // When the find bar is docked at the top, the grid starts below it
-        // (bar rows + separator). A click in that region is routed to the bar
-        // (toggles / Prev / Next); grid rows below are offset so they map to
-        // the correct PTY cell.
-        let bar_offset = self.find_bar.as_ref().map(|b| b.height() + 1).unwrap_or(0);
+        // The find bar is docked at the bottom (its own titled border is the
+        // divider). A click in that region is routed to the bar (toggles /
+        // Prev / Next); the grid above keeps its own coordinates.
+        let bar_offset = self.find_bar.as_ref().map(|b| b.height()).unwrap_or(0);
         if bar_offset > 0 {
-            let bar_top = panel_area.y + 1;
-            let bar_bottom = bar_top + bar_offset; // exclusive (includes separator)
-            if mouse.row >= bar_top && mouse.row < bar_bottom {
+            // `panel_area` includes the border; the inner bottom row is at
+            // `panel_area.y + panel_area.height - 2`. The bar plus its
+            // separator occupy the last `bar_offset` inner rows.
+            let inner_bottom = panel_area.y + panel_area.height.saturating_sub(1); // border row
+            let bar_top = inner_bottom.saturating_sub(bar_offset);
+            if mouse.row >= bar_top && mouse.row < inner_bottom {
                 if let Some(mut bar) = self.find_bar.take() {
                     let action = bar.handle_mouse(mouse);
                     self.find_bar = Some(bar);
@@ -141,8 +143,13 @@ impl Terminal {
         // Calculate inner area (without border); the grid starts below the bar.
         let inner_x_min = panel_area.x + 1;
         let inner_x_max = panel_area.x + panel_area.width.saturating_sub(2);
-        let inner_y_min = panel_area.y + 1 + bar_offset;
-        let inner_y_max = panel_area.y + panel_area.height.saturating_sub(2);
+        // The bar sits at the bottom, so the grid keeps the top and loses its
+        // last `bar_offset` inner rows.
+        let inner_y_min = panel_area.y + 1;
+        let inner_y_max = panel_area
+            .y
+            .saturating_add(panel_area.height.saturating_sub(2))
+            .saturating_sub(bar_offset);
         // A bar on a very short panel can leave no grid rows; avoid an inverted
         // clamp range below.
         if inner_y_min > inner_y_max {

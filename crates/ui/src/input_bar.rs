@@ -148,9 +148,14 @@ impl InputBar {
     /// row when there are controls.
     #[must_use]
     pub fn height(&self) -> u16 {
-        u16::from(self.border.is_some())
-            + self.labels.len() as u16
-            + u16::from(!self.controls.is_empty())
+        // Border row, one row per field, then the controls row — preceded by a
+        // separator row when the bar is bordered.
+        let controls_rows = if self.controls.is_empty() {
+            0
+        } else {
+            1 + u16::from(self.border.is_some())
+        };
+        u16::from(self.border.is_some()) + self.labels.len() as u16 + controls_rows
     }
 
     // === Values ===
@@ -309,7 +314,13 @@ impl InputBar {
         for (i, area) in self.field_areas.clone().into_iter().enumerate() {
             if hit(area, col, row) {
                 self.focus = i;
-                let label_w = str_display_width(&self.labels[i]) as u16;
+                // Match the rendered prefix: "› " for an empty (prompt) label.
+                let prefix = if self.labels[i].is_empty() {
+                    "› "
+                } else {
+                    &self.labels[i]
+                };
+                let label_w = str_display_width(prefix) as u16;
                 let start_x = area.x + label_w;
                 if col >= start_x {
                     let pos = screen_x_to_char_pos(self.inputs[i].text(), (col - start_x) as usize);
@@ -378,6 +389,14 @@ impl InputBar {
         }
 
         if !self.controls.is_empty() {
+            if self.border.is_some() {
+                // A separator between the fields and the controls row.
+                let style = Style::default().fg(colors.border);
+                for dx in 0..area.width {
+                    buf[(area.x + dx, y)].set_symbol("─").set_style(style);
+                }
+                y += 1;
+            }
             let row = Rect {
                 x: area.x,
                 y,
@@ -519,8 +538,11 @@ fn render_labeled_input(buf: &mut Buffer, area: Rect, field: &LabeledInput, colo
         selection,
         focused,
     } = *field;
-    let label_w = str_display_width(label) as u16;
-    buf.set_string(area.x, area.y, label, Style::default().fg(colors.fg));
+    // An empty label renders the bar's prompt marker instead, so a
+    // single-field bar reads like the agent input (its name is in the border).
+    let prompt = if label.is_empty() { "› " } else { label };
+    let label_w = str_display_width(prompt) as u16;
+    buf.set_string(area.x, area.y, prompt, Style::default().fg(colors.fg));
     let x0 = area.x + label_w;
     let width = area.width.saturating_sub(label_w);
     if width == 0 {
@@ -643,7 +665,15 @@ mod tests {
     fn height_counts_border_fields_and_controls() {
         assert_eq!(bar().height(), 3); // 2 fields + control row
         assert_eq!(InputBar::new(vec!["x".into()]).height(), 1);
-        assert_eq!(bar().with_border("l", "r").height(), 4);
+        // border + 2 fields + internal separator + control row
+        assert_eq!(bar().with_border("l", "r").height(), 5);
+        // border + 1 field, no controls, no separator
+        assert_eq!(
+            InputBar::new(vec![String::new()])
+                .with_border("Find", "")
+                .height(),
+            2
+        );
     }
 
     #[test]

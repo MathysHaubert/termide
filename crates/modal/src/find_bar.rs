@@ -157,8 +157,22 @@ impl FindBar {
     /// Create a bar from a config. The first field is focused by default.
     pub fn new(config: FindBarConfig) -> Self {
         let FindBarConfig { fields, buttons } = config;
-        let labels = fields.iter().map(|f| f.label().to_string()).collect();
-        let mut inner = InputBar::new(labels);
+        // The bar's name goes in the top border. A single-field bar drops its
+        // inline label for a "› " prompt, since the border already names it;
+        // a multi-field bar keeps per-field labels to tell them apart.
+        let title = if fields.contains(&FindField::Replace) {
+            "Replace"
+        } else if fields.contains(&FindField::Mask) {
+            "Search"
+        } else {
+            "Find"
+        };
+        let labels: Vec<String> = if fields.len() == 1 {
+            vec![String::new()]
+        } else {
+            fields.iter().map(|f| f.label().to_string()).collect()
+        };
+        let mut inner = InputBar::new(labels).with_border(format!(" {title} "), String::new());
         for btn in &buttons {
             inner = inner.with_control(btn.control());
         }
@@ -396,17 +410,20 @@ mod tests {
 
     #[test]
     fn height_is_fields_plus_button_row() {
-        assert_eq!(content_bar().height(), 4);
+        // border + 3 fields + internal separator + controls row
+        assert_eq!(content_bar().height(), 6);
         let find_only = FindBar::new(FindBarConfig {
             fields: vec![FindField::Find],
             buttons: vec![Btn::Case, Btn::Regex, Btn::Prev, Btn::Next],
         });
-        assert_eq!(find_only.height(), 2);
+        // border + 1 field + separator + controls row
+        assert_eq!(find_only.height(), 4);
         let name_only = FindBar::new(FindBarConfig {
             fields: vec![FindField::Find],
             buttons: vec![],
         });
-        assert_eq!(name_only.height(), 1);
+        // border + 1 field
+        assert_eq!(name_only.height(), 2);
     }
 
     #[test]

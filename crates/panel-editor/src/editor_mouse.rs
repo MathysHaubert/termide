@@ -131,13 +131,14 @@ impl Editor {
             height: panel_area.height.saturating_sub(2),
         };
 
-        // The inline find bar (when open) is docked at the top with a
-        // separator row, pushing the buffer content down by that many rows.
-        let bar_offset = self.find_bar.as_ref().map(|b| b.height() + 1).unwrap_or(0);
+        // The inline find bar (when open) is docked at the bottom (its own
+        // titled border is the divider), shrinking the buffer content by that
+        // many rows; the content starts at the top, so no vertical offset.
+        let bar_offset = self.find_bar.as_ref().map(|b| b.height()).unwrap_or(0);
 
         let line_number_width = rendering::line_number_width(self.buffer.line_count()) as u16;
         let content_x = inner.x + line_number_width;
-        let content_y = inner.y + bar_offset;
+        let content_y = inner.y;
         let content_width = inner.width.saturating_sub(line_number_width);
         let content_height = inner.height.saturating_sub(bar_offset);
 

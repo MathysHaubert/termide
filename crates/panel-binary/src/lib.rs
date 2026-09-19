@@ -281,33 +281,25 @@ impl Panel for BinaryPanel {
         }
         self.focused = ctx.is_focused;
 
-        // Find bar docked at the TOP with a separator below, matching the
-        // editor / file manager.
+        // Find bar docked at the BOTTOM with a separator above (where every
+        // input in termide lives).
         let mut hex_area = area;
         if let (Some(bar), Some(theme)) = (self.find_bar.as_mut(), self.theme_full.as_ref()) {
             let bar_h = bar.height().min(area.height);
             let bar_area = Rect {
                 x: area.x,
-                y: area.y,
+                y: area.y + area.height - bar_h,
                 width: area.width,
                 height: bar_h,
             };
             bar.render(bar_area, buf, theme, true);
 
-            let mut used = bar_h;
-            let sep_y = area.y + bar_h;
-            if sep_y < area.y + area.height {
-                let style = Style::default().fg(self.theme.disabled);
-                for dx in 0..area.width {
-                    buf[(area.x + dx, sep_y)].set_symbol("─").set_style(style);
-                }
-                used += 1;
-            }
+            // The bar draws its own titled top border, which is the divider.
             hex_area = Rect {
                 x: area.x,
-                y: area.y + used,
+                y: area.y,
                 width: area.width,
-                height: area.height.saturating_sub(used),
+                height: area.height.saturating_sub(bar_h),
             };
         }
         self.last_area = hex_area;
