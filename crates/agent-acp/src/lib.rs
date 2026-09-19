@@ -1002,15 +1002,20 @@ mod tests {
             },
             1,
         );
-        runtime.prompt(UserMessage::text("hello")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut events = Vec::new();
-        while !events.iter().any(|e| matches!(e, AgentEvent::AgentEnd)) {
-            events.extend(runtime.drain());
-            assert!(Instant::now() < deadline, "{events:?}");
-            std::thread::sleep(Duration::from_millis(5));
+        // The handshake fails as soon as the agent's closed stdout is read.
+        // Racing that, the first prompt is either accepted (and the failure
+        // arrives as an error event) or already refused because the runtime
+        // has stopped; both report the dead handshake on the first prompt.
+        if runtime.prompt(UserMessage::text("hello")).is_ok() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut events = Vec::new();
+            while !events.iter().any(|e| matches!(e, AgentEvent::AgentEnd)) {
+                events.extend(runtime.drain());
+                assert!(Instant::now() < deadline, "{events:?}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(events.iter().any(|e| matches!(e, AgentEvent::MessageEnd(Message::Assistant(a)) if a.stop_reason == StopReason::Error && a.error_message.is_some())));
         }
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::MessageEnd(Message::Assistant(a)) if a.stop_reason == StopReason::Error && a.error_message.is_some())));
         assert_eq!(
             runtime.prompt(UserMessage::text("again")),
             Err(PromptError::Stopped)
