@@ -361,6 +361,16 @@ impl Translation for RuntimeTranslation {
         agent_prompts,
         agent_no_prompts,
         agent_undo,
+        agent_thinking,
+        settings_tab_agent,
+        settings_agent_provider,
+        settings_agent_base_url,
+        settings_agent_model,
+        settings_agent_api_key_env,
+        settings_agent_context_window,
+        settings_agent_max_tokens,
+        settings_agent_reasoning,
+        settings_agent_autofold,
         tools_open,
         tools_open_prompt,
         options_help,
@@ -848,6 +858,17 @@ impl Translation for RuntimeTranslation {
 
     fn git_init_success(&self, path: &str) -> String {
         self.get_string("git_init_success").replace("{path}", path)
+    }
+    fn agent_thought_chars(&self, count: usize) -> String {
+        self.format("agent_thought_chars", &[("count", &count.to_string())])
+    }
+
+    fn agent_more_lines_above(&self, count: usize) -> String {
+        self.format("agent_more_lines_above", &[("count", &count.to_string())])
+    }
+
+    fn agent_more_lines(&self, count: usize) -> String {
+        self.format("agent_more_lines", &[("count", &count.to_string())])
     }
 
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {

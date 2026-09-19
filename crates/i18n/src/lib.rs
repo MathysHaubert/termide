@@ -438,6 +438,25 @@ pub trait Translation: Send + Sync {
     fn agent_no_prompts(&self) -> &str;
     /// Agent panel: undo the last request (its files and messages).
     fn agent_undo(&self) -> &str;
+    /// Agent transcript: the folded-thinking header (the reasoning block).
+    fn agent_thinking(&self) -> &str;
+    /// Agent transcript: one-line summary of a folded thinking block.
+    fn agent_thought_chars(&self, count: usize) -> String;
+    /// Agent transcript: hidden lines above a folded tool's tail preview.
+    fn agent_more_lines_above(&self, count: usize) -> String;
+    /// Agent transcript: hidden lines below a folded message/output preview.
+    fn agent_more_lines(&self, count: usize) -> String;
+    /// Settings modal: the Agent tab label.
+    fn settings_tab_agent(&self) -> &str;
+    /// Settings modal: Agent tab field labels.
+    fn settings_agent_provider(&self) -> &str;
+    fn settings_agent_base_url(&self) -> &str;
+    fn settings_agent_model(&self) -> &str;
+    fn settings_agent_api_key_env(&self) -> &str;
+    fn settings_agent_context_window(&self) -> &str;
+    fn settings_agent_max_tokens(&self) -> &str;
+    fn settings_agent_reasoning(&self) -> &str;
+    fn settings_agent_autofold(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 
