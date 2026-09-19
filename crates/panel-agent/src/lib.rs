@@ -264,6 +264,9 @@ pub struct AgentPanel {
     draft: String,
     /// The `/command` completion list, while the input is a lone `/word`.
     completion: Option<CompletionList>,
+    /// When the open completion is an `@`-file mention, the span it replaces;
+    /// `None` for a `/`-command completion, which replaces the whole input.
+    completion_span: Option<MentionSpan>,
     /// First visible transcript line.
     top: usize,
     /// Keep the view pinned to the newest line while true.
@@ -375,6 +378,7 @@ impl AgentPanel {
             history_pos: None,
             draft: String::new(),
             completion: None,
+            completion_span: None,
             top: 0,
             follow: true,
             busy: false,
@@ -1286,14 +1290,50 @@ impl AgentPanel {
 
     /// Recompute the `/command` popup after the input changed: it shows
     /// while the input is a single `/word` with no space yet.
+    /// The `@`-file mention under the cursor: the span from the `@` to the
+    /// cursor and the text typed after it. `@` counts only at the start of a
+    /// word (line start or after whitespace), and the mention ends at the
+    /// first space, so it is one path.
+    fn mention_at_cursor(&self) -> Option<(MentionSpan, String)> {
+        let cursor = self.input.cursor();
+        let chars: Vec<char> = self.input.lines().get(cursor.row)?.chars().collect();
+        if cursor.col > chars.len() {
+            return None;
+        }
+        let mut i = cursor.col;
+        while i > 0 {
+            let c = chars[i - 1];
+            if c == '@' {
+                let starts_word = i == 1 || chars[i - 2].is_whitespace();
+                if !starts_word {
+                    return None;
+                }
+                let prefix: String = chars[i..cursor.col].iter().collect();
+                return Some((
+                    MentionSpan {
+                        row: cursor.row,
+                        start: i - 1,
+                        end: cursor.col,
+                    },
+                    prefix,
+                ));
+            }
+            if c.is_whitespace() {
+                return None;
+            }
+            i -= 1;
+        }
+        None
+    }
+
     fn refresh_completion(&mut self) {
+        self.completion_span = None;
         let text = self.input.text();
         let word = text
             .strip_prefix('/')
             .filter(|rest| self.input.line_count() <= 1 && !rest.contains(char::is_whitespace));
         let Some(prefix) = word else {
-            self.completion = None;
-            return;
+            return self.refresh_file_completion();
         };
         let mut items: Vec<CompletionItem> = self
             .catalog
@@ -1356,16 +1396,62 @@ impl AgentPanel {
         }
     }
 
-    /// Put the highlighted command into the input, ready for arguments.
+    /// The `@`-file popup: files and directories under the panel's directory
+    /// matching the text after `@`, so a path is a few keystrokes and a
+    /// selection. A directory ends with `/` and reopens the popup for its
+    /// contents; a file inserts the path and a space. Reuses the same
+    /// completion widget as `/`.
+    fn refresh_file_completion(&mut self) {
+        let Some((span, prefix)) = self.mention_at_cursor() else {
+            self.completion = None;
+            return;
+        };
+        let items = file_completions(&self.cwd, &prefix);
+        if items.is_empty() {
+            self.completion = None;
+            return;
+        }
+        self.completion_span = Some(span);
+        match &mut self.completion {
+            Some(list) => list.set_items(items),
+            None => self.completion = Some(CompletionList::new(items)),
+        }
+    }
+
+    /// Put the highlighted completion into the input. A `/`-command replaces
+    /// the whole input; an `@`-file mention replaces just its span.
     fn accept_completion(&mut self) -> bool {
         let Some(list) = self.completion.take() else {
             return false;
         };
-        let Some(item) = list.selected_item() else {
+        let Some(item) = list.selected_item().cloned() else {
             return false;
         };
-        let text = format!("/{} ", item.value);
-        self.set_input(&text);
+        match self.completion_span.take() {
+            None => {
+                let text = format!("/{} ", item.value);
+                self.set_input(&text);
+            }
+            Some(span) => {
+                let is_dir = item.value.ends_with('/');
+                // Delete the `@`+prefix typed so far.
+                self.input.set_cursor(span.row, span.end);
+                for _ in span.start..span.end {
+                    self.input.backspace();
+                }
+                if is_dir {
+                    // Keep the `@` so the popup reopens for the directory's
+                    // contents and the user can drill in.
+                    self.input.insert('@');
+                    self.input.insert_str(&item.value);
+                    self.refresh_completion();
+                } else {
+                    // A chosen file becomes a plain path the agent can read.
+                    self.input.insert_str(&item.value);
+                    self.input.insert(' ');
+                }
+            }
+        }
         true
     }
 
@@ -1778,6 +1864,80 @@ fn checkpoint_store(
         dir,
         session.id(),
     ))))
+}
+
+/// The span an `@`-file mention occupies on one input line, from the `@`
+/// (`start`) to the cursor (`end`), in character columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MentionSpan {
+    row: usize,
+    start: usize,
+    end: usize,
+}
+
+/// Files and directories under `root` matching `prefix` (the text after `@`),
+/// as completion items: a relative path each, directories ending in `/`. A
+/// shallow, budgeted walk that skips version-control and build noise, so it
+/// stays cheap on every keystroke even in a large tree.
+fn file_completions(root: &std::path::Path, prefix: &str) -> Vec<CompletionItem> {
+    const MAX_RESULTS: usize = 50;
+    const MAX_VISITED: usize = 4000;
+    /// Directory names never worth offering.
+    const SKIP: [&str; 4] = [".git", "target", "node_modules", ".termide"];
+
+    let needle = prefix.to_ascii_lowercase();
+    let wants_hidden = prefix.starts_with('.');
+    let mut out: Vec<(bool, String)> = Vec::new(); // (name_starts_with, path)
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if visited >= MAX_VISITED {
+                break;
+            }
+            visited += 1;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if SKIP.contains(&name.as_str()) {
+                continue;
+            }
+            if name.starts_with('.') && !wants_hidden {
+                continue;
+            }
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let mut rel = relative.to_string_lossy().replace('\\', "/");
+            if is_dir {
+                rel.push('/');
+                if stack.len() < MAX_VISITED {
+                    stack.push(path.clone());
+                }
+            }
+            let hay = rel.to_ascii_lowercase();
+            let name_match = name.to_ascii_lowercase().starts_with(&needle);
+            if needle.is_empty() || name_match || hay.contains(&needle) {
+                out.push((name_match, rel));
+            }
+        }
+        if visited >= MAX_VISITED {
+            break;
+        }
+    }
+    // Name-prefix matches first, then shortest paths, then alphabetical.
+    out.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.len().cmp(&b.1.len()))
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    out.truncate(MAX_RESULTS);
+    out.into_iter()
+        .map(|(_, path)| CompletionItem::new(path.clone()).with_label(path))
+        .collect()
 }
 
 /// Picker prefix: `●` on the current entry, blank otherwise.
@@ -2284,7 +2444,8 @@ impl Panel for AgentPanel {
                 // Enter on the command already typed in full sends it; on a
                 // partial one, or on Tab, it completes, like a shell.
                 let typed = self.input.text();
-                let exact = key.code == KeyCode::Enter
+                let exact = self.completion_span.is_none()
+                    && key.code == KeyCode::Enter
                     && self
                         .completion
                         .as_ref()
@@ -3542,6 +3703,59 @@ mod tests {
         );
         assert!(!panel.switch_agent("missing"));
     }
+    #[test]
+    fn file_completions_list_paths_and_at_mentions_insert_them() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git/HEAD"), "ref").unwrap();
+
+        // The walker skips .git and offers files and directories.
+        let all = file_completions(dir.path(), "");
+        let values: Vec<&str> = all.iter().map(|i| i.value.as_str()).collect();
+        assert!(values.contains(&"README.md"), "{values:?}");
+        assert!(values.contains(&"src/"), "{values:?}");
+        assert!(values.contains(&"src/main.rs"), "{values:?}");
+        assert!(!values.iter().any(|v| v.contains(".git")), "{values:?}");
+        // A prefix filters, name matches rank first.
+        let main = file_completions(dir.path(), "main");
+        assert_eq!(main.first().map(|i| i.value.as_str()), Some("src/main.rs"));
+
+        // Typing @ opens the file popup; selecting a file replaces the token.
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            cwd: dir.path().to_path_buf(),
+            ..setup(vec![])
+        });
+        type_text(&mut panel, "look at @READ");
+        assert!(panel.completion.is_some(), "no @ completion popup");
+        assert!(panel.completion_span.is_some());
+        assert!(panel
+            .completion
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .any(|i| i.value == "README.md"));
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(panel.input.text(), "look at README.md ");
+        assert!(panel.completion.is_none());
+
+        // A directory keeps the popup open for its contents.
+        type_text(&mut panel, "@src");
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(panel.input.text(), "look at README.md @src/");
+        assert!(panel.completion.is_some(), "dir did not reopen the popup");
+        assert!(panel
+            .completion
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .any(|i| i.value == "src/main.rs"));
+    }
+
     #[test]
     fn slash_commands_expand_prompt_templates() {
         let mut expanding = panel(vec![reply("done")]);

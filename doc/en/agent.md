@@ -64,7 +64,7 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
-| `Tab` | Complete the highlighted `/command` while the list is open |
+| `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
@@ -82,6 +82,13 @@ and agent are buttons, and the same entries sit in the `[≡]` menu.
 Typing `/` opens a list of the matching prompt templates above the input;
 `↑`/`↓` move in it, `Tab` or `Enter` complete the highlighted one, and `Enter`
 on a name typed in full sends it.
+
+Typing `@` opens the same list with the files and directories under the
+panel's directory instead, so a path is a few keystrokes: `@ma` finds
+`src/main.rs`. `Tab` or `Enter` inserts the highlighted one; a directory ends
+in `/` and reopens the list for its contents, so you can drill in. The agent
+reads the file you name; `@` is only quick path entry, nothing is attached
+behind your back.
 
 **Model** asks the endpoint for the models it serves and lists them, the
 current one marked `●`; the last entry lets you type an id instead, which is

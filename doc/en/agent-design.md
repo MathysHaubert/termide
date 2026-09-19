@@ -443,7 +443,13 @@ timeout, checking the shared `CancelToken` so an aborted run never hangs on
 an unanswered prompt. The `/command` completion is the sibling widget,
 `CompletionList`: a list owning its selection and keys, anchored above any
 input, so the editor or the terminal can complete paths or symbols with the
-same piece later.
+same piece later. It also drives `@file` mentions in the same input: a second
+trigger that lists files under the panel's directory (a budgeted walk that
+skips `.git`, `target` and the like) and replaces the `@token` with the path,
+a directory keeping the `@` so the list reopens for its contents. `@` is only
+quick path entry — the agent still reads the named file with its tool, so
+nothing enters the context unseen; Claude Code and Gemini attach the file's
+contents on `@`, which is heavier and less transparent.
 
 The title is the session's name when it has one, else the first prompt,
 else the working directory, so stacked agent panels stay apart; renaming goes
