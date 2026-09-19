@@ -47,8 +47,9 @@ globally to previous/next panel group and therefore aren't forwarded.
 
 ## Text Search
 
-Press `Ctrl+F` to open an inline find bar docked at the top of the panel (the
-same UX as the editor and file manager), with a separator below it. The search
+Press `Ctrl+F` to open an inline find bar docked at the bottom of the panel (the
+same UX as the editor and file manager), with a titled top border (`─ Search ─`)
+that separates it from the grid above. The search
 works across the entire scrollback buffer and the visible screen:
 
 - **Live preview**: matches are highlighted as you type; the bar shows a match

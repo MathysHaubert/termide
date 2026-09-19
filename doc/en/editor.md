@@ -64,8 +64,9 @@ refused, and you choose between `Ctrl+Shift+R` to take the disk version
 
 ### Inline Search Bar (Ctrl+F)
 
-Press `Ctrl+F` to open a find bar **docked at the top of the editor** (like the
-file manager), with a separator line below it; the buffer stays visible and
+Press `Ctrl+F` to open a find bar **docked at the bottom of the editor** (like
+the file manager), with a titled top border (`─ Find ─` / `─ Replace ─`) that
+separates it from the buffer above; the buffer stays visible and
 matches highlight as you type. `Tab` switches focus between the bar and the
 buffer zone: in the buffer zone the cursor moves and scrolls normally while the
 bar stays open; `Tab` returns to the bar.

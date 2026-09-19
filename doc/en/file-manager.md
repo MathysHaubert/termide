@@ -61,8 +61,9 @@ In tree view, selecting a directory with `Insert` cascades the selection to all 
 | `Ctrl+Shift+H`    | Search & replace in file contents          |
 | `/`              | In-tree incremental search (filter as you type) |
 
-These searches use an **inline bar docked at the top of the panel** (not a
-floating modal), with a separator line above the results. The bar and the
+These searches use an **inline bar docked at the bottom of the panel** (not a
+floating modal), with a titled top border (`─ Find ─`) dividing it from the
+results above. The bar and the
 results are two **zones**: `Tab` switches between them (like the git-status
 panel). In the bar zone, arrow keys move between the fields and toggles. In the
 results zone the cursor lands on the **entry rows** (files/folders, or file
