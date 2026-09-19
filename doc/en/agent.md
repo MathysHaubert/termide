@@ -24,11 +24,16 @@ context_window = 32000
 max_tokens = 4096
 reasoning = false            # send reasoning_effort to models that support it
 api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
+autofold = true              # fold each block to a preview by default
 ```
 
-The API key is read from the environment variable named by `api_key_env`, so
-the configuration file never holds a secret. Local servers usually need no key
-at all; leave the variable unset.
+Every one of these lives under an **Agent** section in the settings modal too
+(the gear, or the command palette), so you can change the provider, model,
+context window and the rest without editing the file. The API key is read from
+the environment variable named by `api_key_env`, so the configuration file
+never holds a secret. Local servers usually need no key at all; leave the
+variable unset. `autofold = false` shows every block expanded instead of
+folded to a preview.
 
 For a hosted OpenAI-compatible endpoint, keep `provider = "openai"` and point
 `base_url` and `api_key_env` at it, for example OpenAI itself

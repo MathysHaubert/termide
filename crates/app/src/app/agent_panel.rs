@@ -479,6 +479,7 @@ fn agent_setup(
         compaction: settings.compaction,
         compaction_prompts,
         plan_prompt,
+        autofold: settings.autofold,
         persist_rule: Some(persist_rule),
         session_dir,
         session,

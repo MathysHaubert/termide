@@ -181,6 +181,40 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
             label: t.settings_vfs_connection_timeout(),
             field_type: FieldType::Number,
         }],
+        SettingsTab::Agent => vec![
+            FieldDescriptor {
+                label: t.settings_agent_provider(),
+                field_type: FieldType::Enum,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_base_url(),
+                field_type: FieldType::OptionalText,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_model(),
+                field_type: FieldType::OptionalText,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_api_key_env(),
+                field_type: FieldType::OptionalText,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_context_window(),
+                field_type: FieldType::Number,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_max_tokens(),
+                field_type: FieldType::Number,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_reasoning(),
+                field_type: FieldType::Bool,
+            },
+            FieldDescriptor {
+                label: t.settings_agent_autofold(),
+                field_type: FieldType::Bool,
+            },
+        ],
         SettingsTab::Keybindings => vec![],
     }
 }
@@ -251,7 +285,27 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             0 => config.vfs.connection_timeout_secs.to_string(),
             _ => String::new(),
         },
+        SettingsTab::Agent => match index {
+            0 => config.agent.provider.clone(),
+            1 => empty_or(&config.agent.base_url),
+            2 => empty_or(&config.agent.model),
+            3 => empty_or(&config.agent.api_key_env),
+            4 => config.agent.context_window.to_string(),
+            5 => config.agent.max_tokens.to_string(),
+            6 => bool_str(config.agent.reasoning),
+            7 => bool_str(config.agent.autofold),
+            _ => String::new(),
+        },
         SettingsTab::Keybindings => String::new(),
+    }
+}
+
+/// A string field's value, or the `(unset)` placeholder when it is empty.
+fn empty_or(value: &str) -> String {
+    if value.is_empty() {
+        "(unset)".to_string()
+    } else {
+        value.to_string()
     }
 }
 
@@ -294,6 +348,11 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
                     !config.file_manager.dir_size_in_wide_view;
             }
         }
+        SettingsTab::Agent => match index {
+            6 => config.agent.reasoning = !config.agent.reasoning,
+            7 => config.agent.autofold = !config.agent.autofold,
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -347,6 +406,13 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
                 .collect();
             (values.clone(), values, config.logging.min_level.clone())
         }
+        (SettingsTab::Agent, 0) => {
+            let values: Vec<String> = ["openai", "anthropic"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            (values.clone(), values, config.agent.provider.clone())
+        }
         _ => return None,
     };
 
@@ -371,6 +437,7 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
             }
         }
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
+        (SettingsTab::Agent, 0) => config.agent.provider = value.to_string(),
         _ => {}
     }
 }
@@ -411,6 +478,14 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
                     "info" => "warn".to_string(),
                     "warn" => "error".to_string(),
                     _ => "debug".to_string(),
+                };
+            }
+        }
+        SettingsTab::Agent => {
+            if index == 0 {
+                config.agent.provider = match config.agent.provider.as_str() {
+                    "openai" => "anthropic".to_string(),
+                    _ => "openai".to_string(),
                 };
             }
         }
@@ -455,6 +530,14 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
                     "info" => "debug".to_string(),
                     "warn" => "info".to_string(),
                     _ => "warn".to_string(),
+                };
+            }
+        }
+        SettingsTab::Agent => {
+            if index == 0 {
+                config.agent.provider = match config.agent.provider.as_str() {
+                    "openai" => "anthropic".to_string(),
+                    _ => "openai".to_string(),
                 };
             }
         }

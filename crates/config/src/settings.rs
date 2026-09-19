@@ -127,6 +127,11 @@ pub struct AgentSettings {
     /// Context compaction policy.
     #[serde(default)]
     pub compaction: termide_agent_core::CompactionPolicy,
+
+    /// Fold each block in the transcript to a preview by default (the
+    /// answer still shows in full); off shows everything expanded.
+    #[serde(default = "agent_defaults::autofold")]
+    pub autofold: bool,
 }
 
 impl Default for AgentSettings {
@@ -141,6 +146,7 @@ impl Default for AgentSettings {
             reasoning: false,
             permissions: termide_agent_core::PermissionRules::default(),
             compaction: termide_agent_core::CompactionPolicy::default(),
+            autofold: agent_defaults::autofold(),
         }
     }
 }
@@ -512,6 +518,9 @@ mod agent_defaults {
     }
     pub fn max_tokens() -> u64 {
         4_096
+    }
+    pub fn autofold() -> bool {
+        true
     }
 }
 

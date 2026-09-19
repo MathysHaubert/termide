@@ -54,9 +54,11 @@ struct Cached {
     lines: Vec<Line<'static>>,
 }
 
-#[derive(Default)]
 pub struct Transcript {
     items: Vec<Item>,
+    /// Whether new blocks fold to a preview by default. Off shows everything
+    /// expanded, the pre-fold behaviour, for users who want it.
+    autofold: bool,
     /// Whether each item hides its detail (thinking / full output / the rest
     /// of a long message). Parallel to `items`. The assistant's answer always
     /// shows; collapsing only folds its thinking away.
@@ -69,7 +71,26 @@ pub struct Transcript {
     flat_dirty: bool,
 }
 
+impl Default for Transcript {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            autofold: true,
+            collapsed: Vec::new(),
+            cache: Vec::new(),
+            flat: Vec::new(),
+            line_item: Vec::new(),
+            flat_dirty: false,
+        }
+    }
+}
+
 impl Transcript {
+    /// Set whether new blocks fold by default (before any is pushed).
+    pub fn set_autofold(&mut self, autofold: bool) {
+        self.autofold = autofold;
+    }
+
     #[must_use]
     pub fn items(&self) -> &[Item] {
         &self.items
@@ -78,7 +99,8 @@ impl Transcript {
     pub fn push(&mut self, item: Item) {
         // Everything folds by default except a notice (already one line);
         // an item's primary content still shows, only its detail is hidden.
-        let collapsed = !matches!(item, Item::Notice { .. });
+        // With autofold off nothing folds.
+        let collapsed = self.autofold && !matches!(item, Item::Notice { .. });
         self.items.push(item);
         self.collapsed.push(collapsed);
         self.cache.push(None);
@@ -262,6 +284,7 @@ fn render_item(
     colors: &ThemeColors,
     is_light: bool,
 ) -> Vec<Line<'static>> {
+    let t = termide_i18n::t();
     let dim = Style::default().fg(colors.disabled);
     match item {
         Item::User { text } => {
@@ -292,7 +315,7 @@ fn render_item(
             let mut lines = builder.finish().lines;
             if collapsed && total > USER_PREVIEW_LINES {
                 lines.push(Line::styled(
-                    format!("  … {} more lines", total - USER_PREVIEW_LINES),
+                    format!("  {}", t.agent_more_lines(total - USER_PREVIEW_LINES)),
                     dim,
                 ));
             }
@@ -310,11 +333,11 @@ fn render_item(
             if think_chars > 0 {
                 if collapsed {
                     lines.push(Line::styled(
-                        format!("▸ thought for {think_chars} characters"),
+                        format!("▸ {}", t.agent_thought_chars(think_chars)),
                         dim,
                     ));
                 } else {
-                    lines.push(Line::styled("▾ thinking", dim));
+                    lines.push(Line::styled(format!("▾ {}", t.agent_thinking()), dim));
                     for line in thinking.lines() {
                         lines.push(Line::styled(format!("  {line}"), dim));
                     }
@@ -372,7 +395,10 @@ fn render_item(
                 // and errors are.
                 let start = all.len().saturating_sub(TOOL_PREVIEW_LINES);
                 if start > 0 {
-                    lines.push(Line::styled(format!("  … {start} more lines above"), dim));
+                    lines.push(Line::styled(
+                        format!("  {}", t.agent_more_lines_above(start)),
+                        dim,
+                    ));
                 }
                 for line in &all[start..] {
                     lines.push(Line::styled(format!("  {line}"), dim));
@@ -383,7 +409,10 @@ fn render_item(
                 }
                 if all.len() > EXPANDED_OUTPUT_LINES {
                     lines.push(Line::styled(
-                        format!("  … {} more lines", all.len() - EXPANDED_OUTPUT_LINES),
+                        format!(
+                            "  {}",
+                            t.agent_more_lines(all.len() - EXPANDED_OUTPUT_LINES)
+                        ),
                         dim,
                     ));
                 }
@@ -524,6 +553,19 @@ mod tests {
             .all(|l| l.chars().count() <= 14));
         assert!(narrow.iter().any(|l| l.contains("Looking at")));
         assert_eq!(transcript.items().len(), 3);
+    }
+
+    #[test]
+    fn autofold_off_leaves_every_block_expanded() {
+        let mut transcript = Transcript::default();
+        transcript.set_autofold(false);
+        transcript.push(Item::User { text: "hi".into() });
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "ls" })),
+            result: Some(ToolResultMessage::text(&call("bash", json!({})), "a\nb")),
+            live: None,
+        });
+        assert!(transcript.any_expanded());
     }
 
     #[test]

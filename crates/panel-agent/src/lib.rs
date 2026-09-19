@@ -150,6 +150,8 @@ pub struct AgentPanelSetup {
     pub session_dir: Option<PathBuf>,
     /// Session to start in; `None` creates one in `session_dir`.
     pub session: Option<Session>,
+    /// Fold each block to a preview by default (the answer always shows).
+    pub autofold: bool,
 }
 
 /// Records an "allow always" rule outside the panel (in the project config).
@@ -250,6 +252,8 @@ pub struct AgentPanel {
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
     plan_prompt: PlanPrompt,
+    /// Fold blocks to a preview by default; passed to each transcript.
+    autofold: bool,
     /// The worker still has the prompt of the other plan-ness: a mode
     /// switch during a run could not update it, `AgentEnd` retries.
     prompt_stale: bool,
@@ -341,6 +345,7 @@ impl AgentPanel {
             setup.hooks.as_ref(),
             backend.as_ref(),
             checkpoints.clone(),
+            setup.autofold,
             session.as_ref(),
         );
         Self {
@@ -376,6 +381,7 @@ impl AgentPanel {
             compaction: setup.compaction,
             compaction_prompts: setup.compaction_prompts,
             plan_prompt: setup.plan_prompt,
+            autofold: setup.autofold,
             prompt_stale: false,
             persist_rule: setup.persist_rule,
             transcript,
@@ -455,6 +461,7 @@ impl AgentPanel {
             self.hooks.as_ref(),
             self.backend.as_ref(),
             self.checkpoints.clone(),
+            self.autofold,
             session.as_ref(),
         );
         // Dropping the old runtime cancels it and asks its worker to stop.
@@ -2114,6 +2121,7 @@ fn spawn_runtime(
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
     checkpoints: Option<Arc<Mutex<CheckpointStore>>>,
+    autofold: bool,
     session: Option<&Session>,
 ) -> Spawned {
     let cancel = CancelToken::new();
@@ -2131,6 +2139,7 @@ fn spawn_runtime(
     }
 
     let mut transcript = Transcript::default();
+    transcript.set_autofold(autofold);
     let messages = session
         .map(|s| s.context_messages_with(compaction_prompts))
         .unwrap_or_default();
@@ -3103,6 +3112,7 @@ mod tests {
             persist_rule: None,
             session_dir: None,
             session: None,
+            autofold: true,
         }
     }
 

@@ -50,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file the agent changed. Command output
   is cleaned for the model — escapes, progress redraws and repeated build
   lines stripped or collapsed to save tokens — while the raw log is kept on
-  disk. Works with any OpenAI-compatible endpoint, so a local server
+  disk. Every agent setting, including whether blocks fold by default, has an
+  **Agent** section in the settings modal, and the transcript's labels follow
+  TermIDE's language. Works with any OpenAI-compatible endpoint, so a local server
   (llama.cpp, Ollama, vLLM, omlx) needs no account and no key; the API key for
   hosted models is read from an environment variable named in the config,
   never stored in it. The panel works in the directory of the panel that had

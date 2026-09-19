@@ -266,6 +266,21 @@ impl SettingsModal {
             }
             SettingsTab::Logging => vec![Field(0), Field(1)],
             SettingsTab::Vfs => vec![Field(0)],
+            SettingsTab::Agent => vec![
+                Header("Endpoint"),
+                Field(0), // provider
+                Field(1), // base_url
+                Field(3), // api_key_env
+                Spacer,
+                Header("Model"),
+                Field(2), // model
+                Field(4), // context_window
+                Field(5), // max_tokens
+                Field(6), // reasoning
+                Spacer,
+                Header("Transcript"),
+                Field(7), // autofold
+            ],
             SettingsTab::Keybindings => Vec::new(),
         }
     }
@@ -415,6 +430,11 @@ impl SettingsModal {
                     self.config.vfs.connection_timeout_secs = val;
                 }
             }
+            SettingsTab::Agent => match index {
+                4 => self.config.agent.context_window = val,
+                5 => self.config.agent.max_tokens = val,
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -439,6 +459,12 @@ impl SettingsModal {
                     }
                 }
             }
+            SettingsTab::Agent => match index {
+                1 => self.config.agent.base_url = text.to_string(),
+                2 => self.config.agent.model = text.to_string(),
+                3 => self.config.agent.api_key_env = text.to_string(),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -464,6 +490,7 @@ mod content_row_tests {
             SettingsTab::Lsp,
             SettingsTab::Logging,
             SettingsTab::Vfs,
+            SettingsTab::Agent,
         ];
 
         for tab in tabs {
