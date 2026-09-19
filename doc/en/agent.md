@@ -20,7 +20,7 @@ configured model the panel refuses to open and says so.
 provider = "openai"          # "openai" (the default) or "anthropic"
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
-context_window = 32000
+# context_window = 32000     # fallback only; the provider's window wins when reported
 max_tokens = 4096
 reasoning = false            # send reasoning_effort to models that support it
 api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
@@ -46,7 +46,9 @@ built in; set it only for a gateway) and point `api_key_env` at your
 
 ## Using the panel
 
-The session fills the panel, the input box sits at the bottom. Like a new
+The session fills the panel, the input box sits at the bottom, under a titled
+border that carries the agent's name (`─ default ─`) so parallel agent panels
+are easy to tell apart. Like a new
 terminal, the agent works in the directory of the panel that had focus when
 you opened it (a file manager's directory, an editor's file), or in the project
 root. The panel title is your first request, so several agent panels stay
@@ -118,10 +120,15 @@ current one marked `●`; the last entry lets you type an id instead, which is
 also what you get when the endpoint cannot list its models. The switch takes
 effect on your next request and stays with the session: it is written to the
 session log, so reopening that session brings its model back, and a new
-session starts on whatever model the panel is on. When the endpoint reports
-a model's context window (vLLM and omlx do), the panel adopts it; otherwise
-the window and the token limit stay as configured. Switching waits for the
+session starts on whatever model the panel is on. Switching waits for the
 current task, like switching sessions.
+
+**Context window.** When the endpoint reports a model's window (vLLM and omlx
+report `max_model_len`), the panel always adopts it — at startup and on every
+model switch — so `Context:` matches what the server actually allows. The
+configured `context_window` is only a **fallback**, used when the endpoint
+reports no window; left unset it shows `(auto)` in the settings modal and the
+built-in default stands in until (or unless) the provider is known.
 
 **Mode** offers the three permission modes described below. `Shift+Tab` cycles
 through them without the picker. A change applies at the agent's next tool

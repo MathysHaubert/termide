@@ -46,6 +46,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `─ Replace ─` — that doubles as the divider from the content above. `Tab`
   still moves focus between the bar and the panel body.
 
+  The agent's prompt box gets the same border, which brightens while the input
+  is focused.
+
+- **The agent panel title carries the agent's name.** A panel running a custom
+  agent shows its name (capitalized) in place of the word `Agent` — `Reviewer:
+  fix the flaky test` instead of `Agent: …` — so parallel panels running
+  different agents are easy to tell apart.
+
+- **The agent context window auto-detects from the provider.** When the
+  endpoint reports a model's window (vLLM and omlx report `max_model_len`), the
+  panel always adopts it at startup and on every model switch, so the
+  `Context:` chip matches what the server actually allows instead of a fixed
+  default. The configured `[agent] context_window` is only a **fallback**, used
+  when the endpoint reports no window (`(auto)` in the settings modal leaves it
+  unset). Re-selecting the current model in the picker now also refreshes its
+  window.
+
 ### Added
 
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you

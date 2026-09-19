@@ -476,7 +476,7 @@ impl InputBar {
         let focus = self.focus();
         let mut y = area.y;
         if let Some(border) = &self.border {
-            render_border(area, y, buf, colors, &border.left, &border.right);
+            render_border(area, y, buf, colors, active, &border.left, &border.right);
             y += 1;
         }
 
@@ -652,10 +652,16 @@ fn render_border(
     y: u16,
     buf: &mut Buffer,
     colors: &ThemeColors,
+    active: bool,
     left: &str,
     right: &str,
 ) {
-    let style = Style::default().fg(colors.border);
+    let border_color = if active {
+        colors.border_focused
+    } else {
+        colors.border
+    };
+    let style = Style::default().fg(border_color);
     for dx in 0..area.width {
         buf[(area.x + dx, y)].set_symbol("─").set_style(style);
     }

@@ -239,6 +239,11 @@ pub struct AgentPanel {
     model_choices: Vec<ModelInfo>,
     /// Background `list_models` call, polled from `tick()`.
     model_fetch: Option<Receiver<Result<Vec<ModelInfo>, String>>>,
+    /// A silent `list_models` call started at construction to adopt the active
+    /// model's real context window; polled and cleared in `tick()`. The
+    /// configured window is only a fallback until this resolves (or when the
+    /// provider reports none).
+    context_probe: Option<Receiver<Result<Vec<ModelInfo>, String>>>,
     /// Events produced by a command handler, delivered on the next tick.
     pending_events: Vec<PanelEvent>,
 
@@ -350,6 +355,10 @@ impl AgentPanel {
             setup.autofold,
             session.as_ref(),
         );
+        // Learn the context window from the provider in the background and
+        // adopt the active model's real `max_model_len`; the configured window
+        // is only a fallback (an external agent has no such endpoint).
+        let context_probe = (!external).then(|| spawn_model_list(Arc::clone(&setup.provider)));
         Self {
             runtime,
             external,
@@ -373,6 +382,7 @@ impl AgentPanel {
             mode,
             model_choices: Vec::new(),
             model_fetch: None,
+            context_probe,
             pending_events: Vec::new(),
             hooks: setup.hooks,
             backend,
@@ -389,7 +399,8 @@ impl AgentPanel {
             transcript,
             input: InputBar::new(vec![])
                 .with_multiline_field("")
-                .with_placeholder("Ask the agent…"),
+                .with_placeholder("Ask the agent…")
+                .with_border(String::new(), String::new()),
             history_pos: None,
             draft: String::new(),
             completion: None,
@@ -873,12 +884,7 @@ impl AgentPanel {
         if self.model_fetch.is_some() {
             return vec![];
         }
-        let provider = Arc::clone(&self.provider);
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(provider.list_models());
-        });
-        self.model_fetch = Some(rx);
+        self.model_fetch = Some(spawn_model_list(Arc::clone(&self.provider)));
         vec![PanelEvent::SetStatusMessage {
             message: termide_i18n::t().agent_models_loading().to_string(),
             is_error: false,
@@ -1248,12 +1254,16 @@ impl AgentPanel {
         if id.is_empty() {
             return false;
         }
-        if id == self.model.id {
+        let new_window = context_window.unwrap_or(self.model.context_window);
+        let id_changed = id != self.model.id;
+        // Re-selecting the same model still adopts a newly-known context window
+        // (a provider's `max_model_len`); nothing to do only when both match.
+        if !id_changed && new_window == self.model.context_window {
             return true;
         }
         let model = ModelSpec {
             id: id.to_string(),
-            context_window: context_window.unwrap_or(self.model.context_window),
+            context_window: new_window,
             ..self.model.clone()
         };
         let worker_model = model.clone();
@@ -1277,8 +1287,31 @@ impl AgentPanel {
                 log::warn!("agent session write failed: {error}");
             }
         }
-        self.notice(format!("model: {id}"), NoticeKind::Info);
+        // A silent window adoption (same id) leaves no notice.
+        if id_changed {
+            self.notice(format!("model: {id}"), NoticeKind::Info);
+        }
         true
+    }
+
+    /// Adopt the active model's real context window from a `list_models`
+    /// result, when it is known and differs. Returns whether it changed.
+    fn adopt_context_window(&mut self, models: &[ModelInfo]) -> bool {
+        if self.is_busy() {
+            return false;
+        }
+        let Some(window) = models
+            .iter()
+            .find(|m| m.id == self.model.id)
+            .and_then(|m| m.context_window)
+        else {
+            return false;
+        };
+        if window == self.model.context_window {
+            return false;
+        }
+        let id = self.model.id.clone();
+        self.switch_model(&id, Some(window))
     }
 
     /// Earlier requests of this session, oldest first, repeats collapsed.
@@ -1826,12 +1859,35 @@ impl AgentPanel {
 
     fn render_input(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         let colors = self.colors;
+        // The bar's top border is the divider from the content above and
+        // brightens while the input is focused; the agent's name lives in the
+        // panel title, not here.
         self.input.render(area, buf, &colors, focused);
     }
 }
 
 /// Longest prompt shown in the panel title before it is cut.
 const MAX_TITLE_CHARS: usize = 60;
+
+/// Start a background `list_models` call, returning the receiver to poll from
+/// `tick()`. Used both by the model picker and the silent context-window probe.
+fn spawn_model_list(provider: Arc<dyn Provider>) -> Receiver<Result<Vec<ModelInfo>, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(provider.list_models());
+    });
+    rx
+}
+
+/// Upper-case the first character of `name`, leaving the rest as written
+/// (so `reviewer` → `Reviewer`, `web-dev` → `Web-dev`).
+fn capitalize(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
 
 /// First line of `text`, collapsed to one line and cut with an ellipsis.
 fn truncate_title(text: &str) -> String {
@@ -2215,11 +2271,18 @@ impl Panel for AgentPanel {
     }
 
     /// `Agent: <name>` for a named conversation, else `Agent: <first
-    /// prompt>`, else `Agent: <working directory>`. The renderer shortens
-    /// further from the left when the panel is narrow, so only a long name or
-    /// prompt is cut here.
+    /// prompt>`, else `Agent: <working directory>`. The `Agent` label is
+    /// replaced by a custom agent's own name (capitalized), so parallel panels
+    /// running different agents are told apart. The renderer shortens further
+    /// from the left when the panel is narrow, so only a long name or prompt is
+    /// cut here.
     fn title(&self) -> String {
         let t = termide_i18n::t();
+        let label = if self.agent == DEFAULT_AGENT {
+            t.panel_agent().to_string()
+        } else {
+            capitalize(&self.agent)
+        };
         let named = self
             .session
             .as_ref()
@@ -2233,7 +2296,7 @@ impl Panel for AgentPanel {
                 })
             })
             .unwrap_or_else(|| self.cwd.to_string_lossy().into_owned());
-        format!("{}: {subject}", t.panel_agent())
+        format!("{label}: {subject}")
     }
 
     fn context_menu_items(&self) -> Vec<(String, &'static str)> {
@@ -2345,17 +2408,22 @@ impl Panel for AgentPanel {
         buf.set_style(area, Style::default().fg(self.colors.fg).bg(self.colors.bg));
 
         let input_rows = self.input_rows(area.height);
-        // The agent's question sits between the separator and the input;
-        // when the panel is too short for the card, the keys still answer.
+        // The input bar carries its own titled top border, which divides it
+        // from the content above, so the box is one row taller than its text.
+        let bar_rows = input_rows + 1;
+        // The agent's question sits above the input; when a card is present a
+        // plain separator divides it from the transcript (the bar's own border
+        // divides the card from the input). When the panel is too short for the
+        // card the keys still answer.
         let form_rows = self
             .pending
             .as_ref()
             .map_or(0, |pending| pending.form().height())
-            .min(area.height.saturating_sub(input_rows + 2));
-        let has_separator = area.height > input_rows + form_rows + 1;
+            .min(area.height.saturating_sub(bar_rows + 1));
+        let has_separator = form_rows > 0 && area.height > bar_rows + form_rows;
         let transcript_height = area
             .height
-            .saturating_sub(input_rows + form_rows)
+            .saturating_sub(bar_rows + form_rows)
             .saturating_sub(u16::from(has_separator));
         self.transcript_area = Rect {
             x: area.x,
@@ -2365,9 +2433,9 @@ impl Panel for AgentPanel {
         };
         self.input_area = Rect {
             x: area.x,
-            y: area.y + area.height - input_rows,
+            y: area.y + area.height - bar_rows,
             width: area.width,
-            height: input_rows,
+            height: bar_rows,
         };
         let form_area = Rect {
             x: area.x,
@@ -2454,9 +2522,9 @@ impl Panel for AgentPanel {
                     .render(form_area, buf, &colors, ctx.is_focused);
             }
         }
-        if ctx.is_focused && has_separator {
+        if ctx.is_focused && transcript_height > 0 {
             // The completion list overlays the bottom of the transcript,
-            // right above the separator.
+            // right above the input bar.
             let above = Rect {
                 x: area.x,
                 y: area.y,
@@ -2729,6 +2797,18 @@ impl Panel for AgentPanel {
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.model_fetch = None;
                 events.push(self.model_picker(Err("the request was dropped".to_string())));
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
+        }
+        // The silent context-window probe: adopt the active model's real
+        // window when it arrives, and stay quiet on failure.
+        match self.context_probe.as_ref().map(Receiver::try_recv) {
+            Some(Ok(Ok(models))) => {
+                self.context_probe = None;
+                changed |= self.adopt_context_window(&models);
+            }
+            Some(Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected)) => {
+                self.context_probe = None;
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
@@ -3233,6 +3313,46 @@ mod tests {
         let title = wordy.title();
         assert!(title.ends_with('…'), "{title}");
         assert_eq!(title.chars().count(), "Agent: ".len() + MAX_TITLE_CHARS);
+    }
+
+    #[test]
+    fn the_context_window_is_learned_from_the_provider() {
+        let mut panel = panel(vec![reply("ok")]);
+        // The configured window is only a fallback until the provider is known.
+        assert_eq!(panel.model.context_window, 1000);
+        // The provider reports the active model's real window; the panel always
+        // adopts it, overriding the fallback.
+        let models = vec![ModelInfo {
+            id: panel.model.id.clone(),
+            context_window: Some(48_000),
+        }];
+        assert!(panel.adopt_context_window(&models));
+        assert_eq!(panel.model.context_window, 48_000);
+        // A second identical report is a no-op.
+        assert!(!panel.adopt_context_window(&models));
+    }
+
+    #[test]
+    fn a_model_without_a_reported_window_keeps_the_fallback() {
+        // When the provider reports no window for the active model, the
+        // configured fallback stays.
+        let mut panel = panel(vec![reply("ok")]);
+        let models = vec![ModelInfo {
+            id: panel.model.id.clone(),
+            context_window: None,
+        }];
+        assert!(!panel.adopt_context_window(&models));
+        assert_eq!(panel.model.context_window, 1000);
+    }
+
+    #[test]
+    fn a_custom_agent_names_the_title() {
+        let mut panel = panel(vec![reply("ok")]);
+        // The default agent shows the localized "Agent" label.
+        assert_eq!(panel.title(), "Agent: /tmp");
+        // A custom agent replaces the label with its own capitalized name.
+        assert!(panel.switch_agent("review"));
+        assert_eq!(panel.title(), "Review: /tmp");
     }
 
     #[test]
