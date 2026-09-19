@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint reports a model's window (vLLM and omlx report `max_model_len`), the
   panel always adopts it at startup and on every model switch, so the
   `Context:` chip matches what the server actually allows instead of a fixed
-  default. The configured `[agent] context_window` is only a **fallback**, used
+  default. The configured `[ai] context_window` is only a **fallback**, used
   when the endpoint reports no window (`(auto)` in the settings modal leaves it
   unset). Re-selecting the current model in the picker now also refreshes its
   window.
@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is cleaned for the model — escapes, progress redraws and repeated build
   lines stripped or collapsed to save tokens — while the raw log is kept on
   disk. Every agent setting, including whether blocks fold by default, has an
-  **Agent** section in the settings modal, and the transcript's labels follow
+  **AI** section in the settings modal, and the transcript's labels follow
   TermIDE's language. Works with any OpenAI-compatible endpoint, so a local server
   (llama.cpp, Ollama, vLLM, omlx) needs no account and no key; the API key for
   hosted models is read from an environment variable named in the config,

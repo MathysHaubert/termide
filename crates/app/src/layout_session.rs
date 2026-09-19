@@ -38,7 +38,7 @@ fn fullscreen_preset(n: usize, focused: usize, area_height: u16) -> Vec<u16> {
     }
     heights
 }
-use termide_config::AgentSettings;
+use termide_config::AiSettings;
 use termide_panel_editor::{Editor, EditorConfig};
 use termide_panel_file_manager::FileManager;
 use termide_panel_image::ImagePanel;
@@ -62,7 +62,7 @@ pub trait LayoutManagerSession {
         term_height: u16,
         term_width: u16,
         editor_config: EditorConfig,
-        agent_settings: AgentSettings,
+        agent_settings: AiSettings,
     ) -> Result<LayoutManager>;
 }
 
@@ -102,7 +102,7 @@ impl LayoutManagerSession for LayoutManager {
         term_height: u16,
         term_width: u16,
         editor_config: EditorConfig,
-        agent_settings: AgentSettings,
+        agent_settings: AiSettings,
     ) -> Result<LayoutManager> {
         let mut layout = LayoutManager::new();
 
@@ -231,7 +231,7 @@ fn construct_panel(
     term_height: u16,
     term_width: u16,
     editor_config: EditorConfig,
-    agent_settings: &AgentSettings,
+    agent_settings: &AiSettings,
 ) -> Option<Box<dyn Panel + Send>> {
     match session_panel {
         PanelState::FileManager { path_or_url } => {

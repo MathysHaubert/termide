@@ -77,19 +77,19 @@ pub struct Config {
     #[serde(default)]
     pub highlight: HighlightSettings,
 
-    /// Coding agent panel settings
+    /// AI settings (model access and the coding agent panel).
     #[serde(default)]
-    pub agent: AgentSettings,
+    pub ai: AiSettings,
 }
 
-/// Coding agent settings: which model to talk to and what it may do.
+/// AI settings: which model to talk to and what it may do.
 ///
 /// The provider is any OpenAI-compatible endpoint, which covers local
 /// servers (llama.cpp, Ollama, vLLM, omlx) and most gateways. The API key is
 /// read from `api_key_env` rather than stored here, so the config file never
 /// holds a secret.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentSettings {
+pub struct AiSettings {
     /// Wire protocol: `openai` (the default, for omlx, OpenAI, OpenRouter and
     /// most gateways) or `anthropic` (the Messages API).
     #[serde(default = "agent_defaults::provider")]
@@ -137,7 +137,7 @@ pub struct AgentSettings {
     pub autofold: bool,
 }
 
-impl AgentSettings {
+impl AiSettings {
     /// The context window to start with: the configured cap when set, else the
     /// fallback used until the provider's real `max_model_len` is known.
     #[must_use]
@@ -147,7 +147,7 @@ impl AgentSettings {
     }
 }
 
-impl Default for AgentSettings {
+impl Default for AiSettings {
     fn default() -> Self {
         Self {
             provider: agent_defaults::provider(),
@@ -761,7 +761,7 @@ impl From<LegacyConfig> for Config {
             },
             vfs: VfsSettings::default(),
             highlight: HighlightSettings::default(),
-            agent: AgentSettings::default(),
+            ai: AiSettings::default(),
         }
     }
 }

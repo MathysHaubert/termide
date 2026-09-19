@@ -386,7 +386,7 @@ fn main() -> Result<()> {
             _ => termide_app::HeadlessOutput::Text,
         };
         let code = termide_app::run_agent_headless(
-            &config.agent,
+            &config.ai,
             &cwd,
             &project_root,
             cli.agent.as_deref(),

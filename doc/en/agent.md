@@ -16,7 +16,7 @@ and most hosted gateways, OpenAI and OpenRouter among them. Without a
 configured model the panel refuses to open and says so.
 
 ```toml
-[agent]
+[ai]
 provider = "openai"          # "openai" (the default) or "anthropic"
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
@@ -27,7 +27,7 @@ api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 autofold = true              # fold each block to a preview by default
 ```
 
-Every one of these lives under an **Agent** section in the settings modal too
+Every one of these lives under an **AI** section in the settings modal too
 (the gear, or the command palette), so you can change the provider, model,
 context window and the rest without editing the file. The API key is read from
 the environment variable named by `api_key_env`, so the configuration file
@@ -134,7 +134,7 @@ built-in default stands in until (or unless) the provider is known.
 through them without the picker. A change applies at the agent's next tool
 call, so you can loosen the mode while a long task is running instead of
 answering the same prompt again and again. Neither switch touches the
-configuration file; the panel starts from `[agent]` again the next time.
+configuration file; the panel starts from `[ai]` again the next time.
 
 ### Undoing a request
 

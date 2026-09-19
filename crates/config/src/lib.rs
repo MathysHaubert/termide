@@ -26,7 +26,7 @@ pub use keybindings::{
     ViewerKeybindings,
 };
 pub use settings::{
-    AgentSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
+    AiSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
     GeneralSettings, GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings,
     IconMode, LegacyConfig, LinkOpen, LoggingSettings, LspServerSettings, LspSettings,
     TerminalSettings, VfsSettings, ViewerSettings,

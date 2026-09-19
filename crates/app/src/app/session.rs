@@ -67,7 +67,7 @@ impl App {
             term_height,
             term_width,
             self.state.editor_config(),
-            self.state.config.agent.clone(),
+            self.state.config.ai.clone(),
         )?;
 
         // Adapt panel widths to current terminal size

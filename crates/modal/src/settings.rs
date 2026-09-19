@@ -41,7 +41,7 @@ pub enum SettingsTab {
     Lsp,
     Logging,
     Vfs,
-    Agent,
+    Ai,
     Keybindings,
 }
 
@@ -54,7 +54,7 @@ const TOP_LEVEL_TABS: [SettingsTab; 8] = [
     SettingsTab::Lsp,
     SettingsTab::Logging,
     SettingsTab::Vfs,
-    SettingsTab::Agent,
+    SettingsTab::Ai,
 ];
 
 /// Sidebar width in columns.
@@ -71,7 +71,7 @@ impl SettingsTab {
             SettingsTab::Lsp => t.settings_tab_lsp().to_string(),
             SettingsTab::Logging => t.settings_tab_logging().to_string(),
             SettingsTab::Vfs => t.settings_tab_vfs().to_string(),
-            SettingsTab::Agent => t.settings_tab_agent().to_string(),
+            SettingsTab::Ai => t.settings_tab_agent().to_string(),
             SettingsTab::Keybindings => t.settings_tab_keybindings().to_string(),
         }
     }

@@ -266,7 +266,7 @@ impl SettingsModal {
             }
             SettingsTab::Logging => vec![Field(0), Field(1)],
             SettingsTab::Vfs => vec![Field(0)],
-            SettingsTab::Agent => vec![
+            SettingsTab::Ai => vec![
                 Header("Endpoint"),
                 Field(0), // provider
                 Field(1), // base_url
@@ -441,9 +441,9 @@ impl SettingsModal {
                     self.config.vfs.connection_timeout_secs = val;
                 }
             }
-            SettingsTab::Agent => {
+            SettingsTab::Ai => {
                 if index == 5 {
-                    self.config.agent.max_tokens = val;
+                    self.config.ai.max_tokens = val;
                 }
             }
             _ => {}
@@ -452,8 +452,8 @@ impl SettingsModal {
 
     /// Apply an optional-number field (`None` means "(auto)").
     fn apply_optional_number(&mut self, tab: SettingsTab, index: usize, val: Option<u64>) {
-        if tab == SettingsTab::Agent && index == 4 {
-            self.config.agent.context_window = val;
+        if tab == SettingsTab::Ai && index == 4 {
+            self.config.ai.context_window = val;
         }
     }
 
@@ -477,10 +477,10 @@ impl SettingsModal {
                     }
                 }
             }
-            SettingsTab::Agent => match index {
-                1 => self.config.agent.base_url = text.to_string(),
-                2 => self.config.agent.model = text.to_string(),
-                3 => self.config.agent.api_key_env = text.to_string(),
+            SettingsTab::Ai => match index {
+                1 => self.config.ai.base_url = text.to_string(),
+                2 => self.config.ai.model = text.to_string(),
+                3 => self.config.ai.api_key_env = text.to_string(),
                 _ => {}
             },
             _ => {}
@@ -508,7 +508,7 @@ mod content_row_tests {
             SettingsTab::Lsp,
             SettingsTab::Logging,
             SettingsTab::Vfs,
-            SettingsTab::Agent,
+            SettingsTab::Ai,
         ];
 
         for tab in tabs {

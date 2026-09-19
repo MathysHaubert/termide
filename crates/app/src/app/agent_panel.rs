@@ -18,7 +18,7 @@ use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool, SubagentRun, TaskTool};
-use termide_config::AgentSettings;
+use termide_config::AiSettings;
 use termide_panel_agent::{
     AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, BackendFactory,
     HooksFactory,
@@ -33,7 +33,7 @@ impl App {
     pub(in crate::app) fn handle_open_agent(&mut self) -> Result<()> {
         self.close_help_panels();
 
-        let settings = self.state.config.agent.clone();
+        let settings = self.state.config.ai.clone();
         if settings.model.trim().is_empty() {
             let t = termide_i18n::t();
             self.show_error_modal(t.agent_not_configured().to_string());
@@ -67,7 +67,7 @@ impl App {
 /// fresh session in the same project, an agent definition that has gone
 /// missing falls back to the default one.
 pub(crate) fn restore_agent_panel(
-    settings: &AgentSettings,
+    settings: &AiSettings,
     cwd: PathBuf,
     session: Option<PathBuf>,
     agent: Option<String>,
@@ -394,7 +394,7 @@ impl Subagents {
 /// `agent`: the provider, the model, the tools, the system prompt and where
 /// the session logs live.
 fn agent_setup(
-    settings: &AgentSettings,
+    settings: &AiSettings,
     cwd: PathBuf,
     project_root: &Path,
     agent: &str,
@@ -505,7 +505,7 @@ pub enum HeadlessOutput {
 }
 
 pub fn run_agent_headless(
-    settings: &AgentSettings,
+    settings: &AiSettings,
     cwd: &Path,
     project_root: &Path,
     agent_name: Option<&str>,
@@ -734,7 +734,7 @@ fn stop_label(reason: StopReason) -> &'static str {
 /// The provider named by `settings.provider`: the Anthropic Messages API, or
 /// the OpenAI-compatible endpoint for everything else. An unknown name falls
 /// back to OpenAI-compatible with a warning.
-fn build_provider(settings: &AgentSettings, api_key: Option<String>) -> Arc<dyn Provider> {
+fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Arc<dyn Provider> {
     match settings.provider.trim().to_ascii_lowercase().as_str() {
         "anthropic" => {
             // The default base URL points at a local OpenAI server, which is
@@ -766,7 +766,7 @@ fn build_provider(settings: &AgentSettings, api_key: Option<String>) -> Arc<dyn 
 /// The shipped default base URL, used to tell "left at default" from "set on
 /// purpose" when picking a provider.
 fn default_openai_base_url() -> String {
-    AgentSettings::default().base_url
+    AiSettings::default().base_url
 }
 
 /// Append an "allow always" rule to the project's `.termide/config.toml`.
@@ -825,7 +825,7 @@ mod tests {
     }
     #[test]
     fn restore_is_skipped_without_a_configured_model() {
-        let settings = AgentSettings::default();
+        let settings = AiSettings::default();
         assert!(settings.model.is_empty());
         assert!(restore_agent_panel(&settings, PathBuf::from("/tmp"), None, None).is_none());
     }

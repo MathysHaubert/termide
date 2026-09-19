@@ -184,7 +184,7 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
             label: t.settings_vfs_connection_timeout(),
             field_type: FieldType::Number,
         }],
-        SettingsTab::Agent => vec![
+        SettingsTab::Ai => vec![
             FieldDescriptor {
                 label: t.settings_agent_provider(),
                 field_type: FieldType::Enum,
@@ -288,18 +288,18 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             0 => config.vfs.connection_timeout_secs.to_string(),
             _ => String::new(),
         },
-        SettingsTab::Agent => match index {
-            0 => config.agent.provider.clone(),
-            1 => empty_or(&config.agent.base_url),
-            2 => empty_or(&config.agent.model),
-            3 => empty_or(&config.agent.api_key_env),
+        SettingsTab::Ai => match index {
+            0 => config.ai.provider.clone(),
+            1 => empty_or(&config.ai.base_url),
+            2 => empty_or(&config.ai.model),
+            3 => empty_or(&config.ai.api_key_env),
             4 => config
-                .agent
+                .ai
                 .context_window
                 .map_or_else(|| "(auto)".to_string(), |n| n.to_string()),
-            5 => config.agent.max_tokens.to_string(),
-            6 => bool_str(config.agent.reasoning),
-            7 => bool_str(config.agent.autofold),
+            5 => config.ai.max_tokens.to_string(),
+            6 => bool_str(config.ai.reasoning),
+            7 => bool_str(config.ai.autofold),
             _ => String::new(),
         },
         SettingsTab::Keybindings => String::new(),
@@ -354,9 +354,9 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
                     !config.file_manager.dir_size_in_wide_view;
             }
         }
-        SettingsTab::Agent => match index {
-            6 => config.agent.reasoning = !config.agent.reasoning,
-            7 => config.agent.autofold = !config.agent.autofold,
+        SettingsTab::Ai => match index {
+            6 => config.ai.reasoning = !config.ai.reasoning,
+            7 => config.ai.autofold = !config.ai.autofold,
             _ => {}
         },
         _ => {}
@@ -412,12 +412,12 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
                 .collect();
             (values.clone(), values, config.logging.min_level.clone())
         }
-        (SettingsTab::Agent, 0) => {
+        (SettingsTab::Ai, 0) => {
             let values: Vec<String> = ["openai", "anthropic"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            (values.clone(), values, config.agent.provider.clone())
+            (values.clone(), values, config.ai.provider.clone())
         }
         _ => return None,
     };
@@ -443,7 +443,7 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
             }
         }
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
-        (SettingsTab::Agent, 0) => config.agent.provider = value.to_string(),
+        (SettingsTab::Ai, 0) => config.ai.provider = value.to_string(),
         _ => {}
     }
 }
@@ -487,9 +487,9 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
                 };
             }
         }
-        SettingsTab::Agent => {
+        SettingsTab::Ai => {
             if index == 0 {
-                config.agent.provider = match config.agent.provider.as_str() {
+                config.ai.provider = match config.ai.provider.as_str() {
                     "openai" => "anthropic".to_string(),
                     _ => "openai".to_string(),
                 };
@@ -539,9 +539,9 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
                 };
             }
         }
-        SettingsTab::Agent => {
+        SettingsTab::Ai => {
             if index == 0 {
-                config.agent.provider = match config.agent.provider.as_str() {
+                config.ai.provider = match config.ai.provider.as_str() {
                     "openai" => "anthropic".to_string(),
                     _ => "openai".to_string(),
                 };
