@@ -61,6 +61,8 @@ const MODEL_ACTION: &str = "agent_model";
 const MODEL_INPUT_ACTION: &str = "agent_model_input";
 /// Status chip and context-menu action that opens the permission-mode picker.
 const MODE_ACTION: &str = "agent_mode";
+/// Status chip that toggles whether the model is asked to reason.
+const REASONING_ACTION: &str = "agent_reasoning";
 /// Context-menu action that opens the assembled system prompt in a viewer.
 const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
 /// Status chip and context-menu action that opens the agent picker.
@@ -133,6 +135,9 @@ pub struct AgentPanelSetup {
     /// An external agent to drive instead of the built-in loop.
     pub backend: Option<BackendFactory>,
     pub provider: Arc<dyn Provider>,
+    /// The provider's wire-protocol type (e.g. `openai_compatible`), recorded
+    /// in the session log so a resume can rebuild the right provider.
+    pub provider_kind: String,
     pub model: ModelSpec,
     pub tools: ToolRegistry,
     pub rules: PermissionRules,
@@ -215,6 +220,8 @@ pub struct AgentPanel {
     /// for `/undo`; shared with the hook that records them.
     checkpoints: Option<Arc<Mutex<CheckpointStore>>>,
     session: Option<Session>,
+    /// The provider's wire-protocol type, recorded on model changes.
+    provider_kind: String,
     session_dir: Option<PathBuf>,
     /// Sessions offered by the last picker, in the order they were shown.
     session_choices: Vec<SessionSummary>,
@@ -306,7 +313,7 @@ impl AgentPanel {
             start_session(
                 setup.session_dir.as_deref(),
                 &setup.cwd,
-                setup.provider.name(),
+                &setup.provider_kind,
                 &setup.model,
                 &setup.agent,
             )
@@ -387,6 +394,7 @@ impl AgentPanel {
             hooks: setup.hooks,
             backend,
             provider: setup.provider,
+            provider_kind: setup.provider_kind,
             tools,
             rules: setup.rules,
             system_prompt,
@@ -431,7 +439,7 @@ impl AgentPanel {
             start_session(
                 self.session_dir.as_deref(),
                 &self.cwd,
-                self.provider.name(),
+                &self.provider_kind,
                 &self.model,
                 &self.agent,
             )
@@ -1225,7 +1233,7 @@ impl AgentPanel {
         if model.id != self.model.id {
             if let Some(session) = &mut self.session {
                 if let Err(error) = session.append_model_change(
-                    self.provider.name(),
+                    self.provider_kind.as_str(),
                     &model.id,
                     Some(model.context_window),
                 ) {
@@ -1287,7 +1295,7 @@ impl AgentPanel {
         self.model = model;
         if let Some(session) = &mut self.session {
             if let Err(error) = session.append_model_change(
-                self.provider.name(),
+                self.provider_kind.as_str(),
                 id,
                 Some(self.model.context_window),
             ) {
@@ -1319,6 +1327,44 @@ impl AgentPanel {
         }
         let id = self.model.id.clone();
         self.switch_model(&id, Some(window))
+    }
+
+    /// Toggle whether the model is asked to reason (extended thinking /
+    /// `reasoning_effort`). Applies to the next request and is remembered in
+    /// the session log so a resume comes back with the same choice.
+    fn toggle_reasoning(&mut self) -> bool {
+        if self.external {
+            return false;
+        }
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return false;
+        }
+        let reasoning = !self.model.reasoning;
+        let mut model = self.model.clone();
+        model.reasoning = reasoning;
+        let worker_model = model.clone();
+        if let Err(error) = self
+            .runtime
+            .update(Box::new(move |agent| agent.set_model(worker_model)))
+        {
+            self.notice(
+                format!("cannot change reasoning: {error}"),
+                NoticeKind::Warn,
+            );
+            return false;
+        }
+        self.model = model;
+        if let Some(session) = &mut self.session {
+            if let Err(error) = session.append_reasoning_change(reasoning) {
+                log::warn!("agent session write failed: {error}");
+            }
+        }
+        self.notice(
+            format!("reasoning: {}", if reasoning { "on" } else { "off" }),
+            NoticeKind::Info,
+        );
+        true
     }
 
     /// Earlier requests of this session, oldest first, repeats collapsed.
@@ -2129,14 +2175,20 @@ fn session_agent(
 /// on, when it recorded them: a resumed conversation continues on its own
 /// model.
 fn session_model(configured: &ModelSpec, session: Option<&Session>) -> ModelSpec {
-    match session.and_then(Session::current_model) {
+    let mut model = match session.and_then(Session::current_model) {
         Some(recorded) if !recorded.id.is_empty() => ModelSpec {
             id: recorded.id,
             context_window: recorded.context_window.unwrap_or(configured.context_window),
             ..configured.clone()
         },
         _ => configured.clone(),
+    };
+    // A reasoning choice made in this session (the status-bar toggle) outlives
+    // a resume, overriding the configured default.
+    if let Some(reasoning) = session.and_then(Session::current_reasoning) {
+        model.reasoning = reasoning;
     }
+    model
 }
 
 /// What [`spawn_runtime`] hands back.
@@ -2402,6 +2454,10 @@ impl Panel for AgentPanel {
             }
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
+            REASONING_ACTION => {
+                self.toggle_reasoning();
+                vec![PanelEvent::NeedsRedraw]
+            }
             SHOW_PROMPT_ACTION => match self.write_system_prompt() {
                 Ok(path) => vec![PanelEvent::ViewFile(path)],
                 Err(error) => {
@@ -2930,6 +2986,18 @@ impl Panel for AgentPanel {
                     SegmentKind::Label,
                 ));
             }
+            // A clickable reasoning toggle: bright when on, dim when off.
+            segments.push(sep());
+            let reasoning_kind = if self.model.reasoning {
+                SegmentKind::Active
+            } else {
+                SegmentKind::Inactive
+            };
+            segments.push(StatusSegment::clickable(
+                "reasoning",
+                reasoning_kind,
+                REASONING_ACTION,
+            ));
             segments.push(sep());
         }
         segments.extend([
@@ -3167,6 +3235,7 @@ mod tests {
             hooks: None,
             backend: None,
             provider,
+            provider_kind: "openai_compatible".into(),
             model: ModelSpec {
                 provider: "scripted".into(),
                 id: "m".into(),
@@ -3318,7 +3387,7 @@ mod tests {
             .collect();
         assert_eq!(
             chips,
-            " Mode: ask │ Model: m │ Agent: default │ Context: 12% of 1k"
+            " Mode: ask │ Model: m │ reasoning │ Agent: default │ Context: 12% of 1k"
         );
     }
 
@@ -3421,6 +3490,37 @@ mod tests {
         let fresh = panel.session.as_ref().unwrap().path().to_path_buf();
         assert!(fresh.exists());
         assert_ne!(empty, fresh);
+    }
+
+    #[test]
+    fn the_session_records_the_provider_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            provider_kind: "anthropic_compatible".into(),
+            ..setup(vec![reply("ok")])
+        });
+        let recorded = panel.session.as_ref().unwrap().current_model().unwrap();
+        assert_eq!(recorded.provider, "anthropic_compatible");
+    }
+
+    #[test]
+    fn reasoning_toggles_from_the_chip_and_persists_in_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        assert!(!panel.model.reasoning);
+        let path = panel.session.as_ref().unwrap().path().to_path_buf();
+
+        panel.handle_status_action(REASONING_ACTION);
+        assert!(panel.model.reasoning, "the chip turns reasoning on");
+
+        // The choice is written to the session, so a resume brings it back.
+        let reopened = Session::open(&path).unwrap();
+        assert_eq!(reopened.current_reasoning(), Some(true));
+        assert!(session_model(&panel.configured_model, Some(&reopened)).reasoning);
     }
 
     #[test]
@@ -3743,7 +3843,7 @@ mod tests {
         assert_eq!(
             Session::open(&first_path).unwrap().current_model(),
             Some(termide_agent_core::SessionModel {
-                provider: "scripted".into(),
+                provider: "openai_compatible".into(),
                 id: "m".into(),
                 context_window: Some(1000),
             })

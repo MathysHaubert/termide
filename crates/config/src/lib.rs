@@ -29,7 +29,7 @@ pub use settings::{
     AiSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
     GeneralSettings, GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings,
     IconMode, LegacyConfig, LinkOpen, LoggingSettings, LspServerSettings, LspSettings,
-    TerminalSettings, VfsSettings, ViewerSettings,
+    TerminalSettings, VfsSettings, ViewerSettings, DEFAULT_CONTEXT_WINDOW_FALLBACK,
 };
 pub use xdg::{get_config_dir, get_data_dir};
 

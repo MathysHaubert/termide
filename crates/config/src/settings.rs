@@ -22,6 +22,10 @@ use crate::keybindings::{
     ViewerKeybindings,
 };
 
+/// The context window used when `[ai] context_window_fallback` is unset and
+/// the provider does not report a model's window.
+pub const DEFAULT_CONTEXT_WINDOW_FALLBACK: u64 = 32_000;
+
 /// Application configuration with nested sections.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -90,13 +94,15 @@ pub struct Config {
 /// holds a secret.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiSettings {
-    /// Wire protocol: `openai` (the default, for omlx, OpenAI, OpenRouter and
-    /// most gateways) or `anthropic` (the Messages API).
+    /// Wire protocol: `openai_compatible` (the default, for omlx, OpenAI,
+    /// OpenRouter and most gateways) or `anthropic_compatible` (the Messages
+    /// API). The value is the protocol; `base_url` picks the actual endpoint.
     #[serde(default = "agent_defaults::provider")]
     pub provider: String,
 
     /// Base URL including the API prefix, e.g. `http://127.0.0.1:10000/v1`.
-    /// For `anthropic` it is left at the default unless a gateway is used.
+    /// For `anthropic_compatible` it is left at the default unless a gateway is
+    /// used.
     #[serde(default = "agent_defaults::base_url")]
     pub base_url: String,
 
@@ -108,20 +114,21 @@ pub struct AiSettings {
     #[serde(default = "agent_defaults::api_key_env")]
     pub api_key_env: String,
 
-    /// Context window in tokens; drives the compaction threshold. `None`
-    /// (unset) auto-detects it from the provider (a local server's
-    /// `max_model_len`), falling back to [`agent_defaults::context_window`]
-    /// until known; a set value is honored as a fixed cap.
+    /// Fallback context window in tokens, used only when the provider does not
+    /// report a model's window (a local server's `max_model_len`). Unset falls
+    /// back to [`agent_defaults::context_window`]. The provider's reported
+    /// window always wins.
     #[serde(default)]
-    pub context_window: Option<u64>,
+    pub context_window_fallback: Option<u64>,
 
-    /// Upper bound on tokens per response.
+    /// Upper bound on the model's output tokens per turn (one response).
     #[serde(default = "agent_defaults::max_tokens")]
-    pub max_tokens: u64,
+    pub max_tokens_per_turn: u64,
 
-    /// Send `reasoning_effort` to models that support it.
+    /// Prefer reasoning: request `reasoning_effort` / extended thinking from
+    /// models that support it (ignored by models that do not).
     #[serde(default)]
-    pub reasoning: bool,
+    pub prefer_reasoning: bool,
 
     /// Permission rules: a mode plus one `pattern = decision` table per tool.
     #[serde(default)]
@@ -142,8 +149,8 @@ impl AiSettings {
     /// fallback used until the provider's real `max_model_len` is known.
     #[must_use]
     pub fn effective_context_window(&self) -> u64 {
-        self.context_window
-            .unwrap_or_else(agent_defaults::context_window)
+        self.context_window_fallback
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW_FALLBACK)
     }
 }
 
@@ -154,9 +161,9 @@ impl Default for AiSettings {
             base_url: agent_defaults::base_url(),
             model: String::new(),
             api_key_env: agent_defaults::api_key_env(),
-            context_window: None,
-            max_tokens: agent_defaults::max_tokens(),
-            reasoning: false,
+            context_window_fallback: None,
+            max_tokens_per_turn: agent_defaults::max_tokens(),
+            prefer_reasoning: false,
             permissions: termide_agent_core::PermissionRules::default(),
             compaction: termide_agent_core::CompactionPolicy::default(),
             autofold: agent_defaults::autofold(),
@@ -518,16 +525,17 @@ fn default_theme_name() -> String {
 
 mod agent_defaults {
     pub fn provider() -> String {
-        "openai".to_string()
+        // Unset by default: the user picks a provider (and a model) before the
+        // AI panel will open, rather than silently defaulting to one.
+        String::new()
     }
     pub fn base_url() -> String {
         "http://127.0.0.1:10000/v1".to_string()
     }
     pub fn api_key_env() -> String {
-        "OPENAI_API_KEY".to_string()
-    }
-    pub fn context_window() -> u64 {
-        32_000
+        // No key by default: local servers need none, and the right variable
+        // depends on the provider, so the user names it when using a hosted one.
+        String::new()
     }
     pub fn max_tokens() -> u64 {
         4_096

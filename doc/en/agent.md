@@ -17,12 +17,12 @@ configured model the panel refuses to open and says so.
 
 ```toml
 [ai]
-provider = "openai"          # "openai" (the default) or "anthropic"
+provider = "openai_compatible"   # "openai_compatible" (default) or "anthropic_compatible"
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
-# context_window = 32000     # fallback only; the provider's window wins when reported
-max_tokens = 4096
-reasoning = false            # send reasoning_effort to models that support it
+# context_window_fallback = 32000   # used only when the server does not report a window
+max_tokens_per_turn = 4096
+prefer_reasoning = false            # send reasoning_effort to models that support it
 api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 autofold = true              # fold each block to a preview by default
 ```
@@ -35,13 +35,13 @@ never holds a secret. Local servers usually need no key at all; leave the
 variable unset. `autofold = false` shows every block expanded instead of
 folded to a preview.
 
-For a hosted OpenAI-compatible endpoint, keep `provider = "openai"` and point
+For a hosted OpenAI-compatible endpoint, keep `provider = "openai_compatible"` and point
 `base_url` and `api_key_env` at it, for example OpenAI itself
 (`https://api.openai.com/v1`, `OPENAI_API_KEY`) or OpenRouter
 (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). For an Anthropic
-subscription set `provider = "anthropic"`, drop `base_url` (the API root is
+subscription set `provider = "anthropic_compatible"`, drop `base_url` (the API root is
 built in; set it only for a gateway) and point `api_key_env` at your
-`ANTHROPIC_API_KEY`; `reasoning = true` then turns on extended thinking. The
+`ANTHROPIC_API_KEY`; `prefer_reasoning = true` then turns on extended thinking. The
 **Model** chip lists the endpoint's models for each.
 
 ## Using the panel
@@ -104,10 +104,13 @@ written to a file whose path the tool reports, and you still see the raw
 stream live in the panel.
 
 The status chips show the permission mode, the model with the endpoint it is
-served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), the agent, the context
-window with how much of it the last answer used (`Context: 12% of 32k`),
-whether the agent is working and how many messages are queued. Mode, model
-and agent are buttons, and the same entries sit in the `[≡]` menu.
+served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), a **reasoning** toggle (bright
+when on), the agent, the context window with how much of it the last answer used
+(`Context: 12% of 32k`), whether the agent is working and how many messages are
+queued. Mode, model, reasoning and agent are buttons, and the same entries sit
+in the `[≡]` menu. Clicking **reasoning** asks the model to reason (extended
+thinking / `reasoning_effort`) from the next request; the choice is remembered
+in the session, so a resume comes back with it.
 
 Typing `/` opens a list of the matching prompt templates above the input;
 `↑`/`↓` move in it, `Tab` or `Enter` complete the highlighted one, and `Enter`
@@ -124,14 +127,14 @@ behind your back.
 current one marked `●`; the last entry lets you type an id instead, which is
 also what you get when the endpoint cannot list its models. The switch takes
 effect on your next request and stays with the session: it is written to the
-session log, so reopening that session brings its model back, and a new
-session starts on whatever model the panel is on. Switching waits for the
-current task, like switching sessions.
+session log — with the provider it runs on — so reopening that session brings
+its model and provider back, and a new session starts on whatever model the
+panel is on. Switching waits for the current task, like switching sessions.
 
 **Context window.** When the endpoint reports a model's window (vLLM and omlx
 report `max_model_len`), the panel always adopts it — at startup and on every
 model switch — so `Context:` matches what the server actually allows. The
-configured `context_window` is only a **fallback**, used when the endpoint
+configured `context_window_fallback` is only a **fallback**, used when the endpoint
 reports no window; left unset it shows `(auto)` in the settings modal and the
 built-in default stands in until (or unless) the provider is known.
 

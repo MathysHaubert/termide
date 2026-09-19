@@ -68,6 +68,11 @@ pub enum EntryKind {
     AgentChange {
         agent: String,
     },
+    /// Whether the branch prefers reasoning from here, so a reopened session
+    /// comes back with the same choice (toggled live from the status bar).
+    ReasoningChange {
+        reasoning: bool,
+    },
     /// The user undid a request: the branch continues from this entry's
     /// parent, the undone messages stay in the file on a dead branch.
     Rewind,
@@ -399,7 +404,8 @@ impl Session {
                 EntryKind::ModelChange { .. }
                 | EntryKind::SessionName { .. }
                 | EntryKind::AgentChange { .. }
-                | EntryKind::Rewind => {}
+                | EntryKind::Rewind
+                | EntryKind::ReasoningChange { .. } => {}
                 EntryKind::Compaction {
                     summary, keep_last, ..
                 } => {
@@ -467,7 +473,8 @@ impl Session {
                 | EntryKind::Compaction { .. }
                 | EntryKind::SessionName { .. }
                 | EntryKind::AgentChange { .. }
-                | EntryKind::Rewind => None,
+                | EntryKind::Rewind
+                | EntryKind::ReasoningChange { .. } => None,
             })
     }
 
@@ -494,6 +501,22 @@ impl Session {
             .rev()
             .find_map(|entry| match &entry.kind {
                 EntryKind::AgentChange { agent } => Some(agent.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn append_reasoning_change(&mut self, reasoning: bool) -> std::io::Result<String> {
+        self.append(EntryKind::ReasoningChange { reasoning })
+    }
+
+    /// Reasoning preference recorded last on the current branch, if any.
+    #[must_use]
+    pub fn current_reasoning(&self) -> Option<bool> {
+        self.branch()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.kind {
+                EntryKind::ReasoningChange { reasoning } => Some(*reasoning),
                 _ => None,
             })
     }
@@ -558,7 +581,8 @@ impl From<&Session> for SessionSummary {
             | EntryKind::Compaction { .. }
             | EntryKind::SessionName { .. }
             | EntryKind::AgentChange { .. }
-            | EntryKind::Rewind => None,
+            | EntryKind::Rewind
+            | EntryKind::ReasoningChange { .. } => None,
         });
         let first_prompt = messages.clone().find_map(|m| match m {
             Message::User(user) => Some(user.plain_text()),

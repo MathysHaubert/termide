@@ -58,10 +58,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint reports a model's window (vLLM and omlx report `max_model_len`), the
   panel always adopts it at startup and on every model switch, so the
   `Context:` chip matches what the server actually allows instead of a fixed
-  default. The configured `[ai] context_window` is only a **fallback**, used
-  when the endpoint reports no window (`(auto)` in the settings modal leaves it
-  unset). Re-selecting the current model in the picker now also refreshes its
-  window.
+  default. The configured `[ai] context_window_fallback` is only a **fallback**,
+  used when the endpoint reports no window. Re-selecting the current model in
+  the picker now also refreshes its window.
+
+- **A reasoning toggle in the status bar.** A **reasoning** chip turns extended
+  thinking / `reasoning_effort` on or off from the next request; the choice is
+  remembered in the session, so a resume comes back with it. The default is the
+  `[ai] prefer_reasoning` setting.
+
+- **The AI settings are clearer.** The settings section (and the config table)
+  is now **AI**, not Agent (`[ai]`, matching the `ai/` config folder). The
+  provider is named by what it is — **OpenAI compatible** / **Anthropic
+  compatible** (`openai_compatible` / `anthropic_compatible`) — since the
+  endpoint is free-form. Keys read plainly: `context_window_fallback`,
+  `max_tokens_per_turn`, `prefer_reasoning`. Neither a provider nor a model is
+  set by default; opening the panel without them explains what to configure. A
+  session records the provider it runs on, so a resume rebuilds the right one.
 
 - **Unused agent sessions clean themselves up.** A session you never send
   anything to is discarded when you switch away from it or close the panel, so

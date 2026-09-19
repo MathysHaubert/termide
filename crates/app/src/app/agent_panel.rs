@@ -34,7 +34,7 @@ impl App {
         self.close_help_panels();
 
         let settings = self.state.config.ai.clone();
-        if settings.model.trim().is_empty() {
+        if settings.provider.trim().is_empty() || settings.model.trim().is_empty() {
             let t = termide_i18n::t();
             self.show_error_modal(t.agent_not_configured().to_string());
             return Ok(());
@@ -72,8 +72,8 @@ pub(crate) fn restore_agent_panel(
     session: Option<PathBuf>,
     agent: Option<String>,
 ) -> Option<AgentPanel> {
-    if settings.model.trim().is_empty() {
-        log::warn!("agent panel not restored: no agent.model configured");
+    if settings.provider.trim().is_empty() || settings.model.trim().is_empty() {
+        log::warn!("agent panel not restored: [ai] provider and model must be set");
         return None;
     }
     // Exclusive: if this session is already open in another restored panel,
@@ -405,7 +405,21 @@ fn agent_setup(
     } else {
         std::env::var(&settings.api_key_env).ok()
     };
-    let provider: Arc<dyn Provider> = build_provider(settings, api_key);
+    // A resumed session records the provider type it ran on; honor it over the
+    // current config so reopening a session rebuilds the right provider. An
+    // older session (or one recorded before this) has no usable type and falls
+    // back to the configured provider.
+    let provider_kind = session
+        .as_ref()
+        .and_then(Session::current_model)
+        .map(|m| m.provider)
+        .filter(|p| p == "openai_compatible" || p == "anthropic_compatible")
+        .unwrap_or_else(|| settings.provider.clone());
+    let provider_settings = AiSettings {
+        provider: provider_kind.clone(),
+        ..settings.clone()
+    };
+    let provider: Arc<dyn Provider> = build_provider(&provider_settings, api_key);
 
     let mut catalog = FsCatalog::new(&cwd, project_root);
     // The subagent runner shares the provider, the rules and the model
@@ -418,8 +432,8 @@ fn agent_setup(
         rules: settings.permissions.clone(),
         default_model: settings.model.clone(),
         context_window: settings.effective_context_window(),
-        max_tokens: settings.max_tokens,
-        reasoning: settings.reasoning,
+        max_tokens: settings.max_tokens_per_turn,
+        reasoning: settings.prefer_reasoning,
         compaction: settings.compaction,
     }));
     let compaction_prompts = catalog.dirs.compaction_prompts();
@@ -448,8 +462,8 @@ fn agent_setup(
         provider: "agent".to_string(),
         id: profile.model.unwrap_or_else(|| settings.model.clone()),
         context_window: settings.effective_context_window(),
-        max_tokens: settings.max_tokens,
-        reasoning: settings.reasoning,
+        max_tokens: settings.max_tokens_per_turn,
+        reasoning: settings.prefer_reasoning,
     };
     let mut rules = settings.permissions.clone();
     if let Some(mode) = profile.mode {
@@ -472,6 +486,7 @@ fn agent_setup(
         hooks,
         backend: profile.backend,
         provider,
+        provider_kind,
         model,
         tools: profile.tools,
         rules,
@@ -517,8 +532,8 @@ pub fn run_agent_headless(
     let quiet = output != HeadlessOutput::Text;
     let stream = output == HeadlessOutput::StreamJson;
 
-    if settings.model.trim().is_empty() {
-        eprintln!("termide: no agent model configured (set [agent].model)");
+    if settings.provider.trim().is_empty() || settings.model.trim().is_empty() {
+        eprintln!("termide: AI is not configured (set [ai] provider and model)");
         return 1;
     }
     let api_key = (!settings.api_key_env.is_empty())
@@ -564,8 +579,8 @@ pub fn run_agent_headless(
             .clone()
             .unwrap_or_else(|| settings.model.clone()),
         context_window: settings.effective_context_window(),
-        max_tokens: settings.max_tokens,
-        reasoning: settings.reasoning,
+        max_tokens: settings.max_tokens_per_turn,
+        reasoning: settings.prefer_reasoning,
     };
     let mut rules = settings.permissions.clone();
     if let Some(mode) = definition.spec.mode {
@@ -736,7 +751,7 @@ fn stop_label(reason: StopReason) -> &'static str {
 /// back to OpenAI-compatible with a warning.
 fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Arc<dyn Provider> {
     match settings.provider.trim().to_ascii_lowercase().as_str() {
-        "anthropic" => {
+        "anthropic_compatible" | "anthropic" => {
             // The default base URL points at a local OpenAI server, which is
             // not Anthropic's; use the API root unless the user set another.
             let mut anthropic = if settings.base_url == default_openai_base_url() {
@@ -748,14 +763,18 @@ fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Arc<dyn Pro
             Arc::new(anthropic)
         }
         other => {
-            if !other.is_empty() && other != "openai" && other != "openai-compatible" {
+            if !other.is_empty()
+                && other != "openai_compatible"
+                && other != "openai"
+                && other != "openai-compatible"
+            {
                 log::warn!("unknown agent provider {other:?}; using the OpenAI-compatible one");
             }
             Arc::new(
                 OpenAiCompatProvider::new("agent", settings.base_url.clone())
                     .with_api_key(api_key)
                     .with_compat(Compat {
-                        reasoning_effort: settings.reasoning,
+                        reasoning_effort: settings.prefer_reasoning,
                         ..Compat::default()
                     }),
             )

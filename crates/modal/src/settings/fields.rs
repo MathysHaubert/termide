@@ -21,8 +21,8 @@ pub(super) enum FieldType {
     Enum,
     /// Optional string — shows "(auto)" placeholder when None
     OptionalText,
-    /// Optional unsigned integer — shows "(auto)" when None; an empty or zero
-    /// entry clears it back to None.
+    /// Optional unsigned integer: an empty or zero entry clears it back to
+    /// None. The None display is chosen per field (e.g. a default value).
     OptionalNumber,
 }
 
@@ -289,16 +289,21 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             _ => String::new(),
         },
         SettingsTab::Ai => match index {
-            0 => config.ai.provider.clone(),
+            0 => provider_label(&config.ai.provider),
             1 => empty_or(&config.ai.base_url),
             2 => empty_or(&config.ai.model),
             3 => empty_or(&config.ai.api_key_env),
-            4 => config
-                .ai
-                .context_window
-                .map_or_else(|| "(auto)".to_string(), |n| n.to_string()),
-            5 => config.ai.max_tokens.to_string(),
-            6 => bool_str(config.ai.reasoning),
+            4 => config.ai.context_window_fallback.map_or_else(
+                || {
+                    format!(
+                        "(default {})",
+                        termide_config::DEFAULT_CONTEXT_WINDOW_FALLBACK
+                    )
+                },
+                |n| n.to_string(),
+            ),
+            5 => config.ai.max_tokens_per_turn.to_string(),
+            6 => bool_str(config.ai.prefer_reasoning),
             7 => bool_str(config.ai.autofold),
             _ => String::new(),
         },
@@ -312,6 +317,16 @@ fn empty_or(value: &str) -> String {
         "(unset)".to_string()
     } else {
         value.to_string()
+    }
+}
+
+/// Display label for a provider value: the wire protocol is stored, but the
+/// row shows that the endpoint is free-form (base_url picks the real server).
+fn provider_label(value: &str) -> String {
+    match value {
+        "anthropic_compatible" | "anthropic" => "Anthropic compatible".to_string(),
+        "openai_compatible" | "openai" => "OpenAI compatible".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -355,7 +370,7 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
             }
         }
         SettingsTab::Ai => match index {
-            6 => config.ai.reasoning = !config.ai.reasoning,
+            6 => config.ai.prefer_reasoning = !config.ai.prefer_reasoning,
             7 => config.ai.autofold = !config.ai.autofold,
             _ => {}
         },
@@ -413,11 +428,17 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
             (values.clone(), values, config.logging.min_level.clone())
         }
         (SettingsTab::Ai, 0) => {
-            let values: Vec<String> = ["openai", "anthropic"]
+            // The value is the wire protocol; the label says it is a free-form
+            // endpoint, not the vendor (base_url picks the actual server).
+            let values: Vec<String> = ["openai_compatible", "anthropic_compatible"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            (values.clone(), values, config.ai.provider.clone())
+            let labels: Vec<String> = ["OpenAI compatible", "Anthropic compatible"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            (values, labels, config.ai.provider.clone())
         }
         _ => return None,
     };
@@ -490,8 +511,8 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
         SettingsTab::Ai => {
             if index == 0 {
                 config.ai.provider = match config.ai.provider.as_str() {
-                    "openai" => "anthropic".to_string(),
-                    _ => "openai".to_string(),
+                    "anthropic_compatible" | "anthropic" => "openai_compatible".to_string(),
+                    _ => "anthropic_compatible".to_string(),
                 };
             }
         }
@@ -542,8 +563,8 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
         SettingsTab::Ai => {
             if index == 0 {
                 config.ai.provider = match config.ai.provider.as_str() {
-                    "openai" => "anthropic".to_string(),
-                    _ => "openai".to_string(),
+                    "anthropic_compatible" | "anthropic" => "openai_compatible".to_string(),
+                    _ => "anthropic_compatible".to_string(),
                 };
             }
         }

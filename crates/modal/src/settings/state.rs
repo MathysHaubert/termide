@@ -443,7 +443,7 @@ impl SettingsModal {
             }
             SettingsTab::Ai => {
                 if index == 5 {
-                    self.config.ai.max_tokens = val;
+                    self.config.ai.max_tokens_per_turn = val;
                 }
             }
             _ => {}
@@ -453,7 +453,7 @@ impl SettingsModal {
     /// Apply an optional-number field (`None` means "(auto)").
     fn apply_optional_number(&mut self, tab: SettingsTab, index: usize, val: Option<u64>) {
         if tab == SettingsTab::Ai && index == 4 {
-            self.config.ai.context_window = val;
+            self.config.ai.context_window_fallback = val;
         }
     }
 
