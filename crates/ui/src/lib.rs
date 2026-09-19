@@ -8,6 +8,7 @@ pub mod color_popup;
 pub mod completion_list;
 pub mod config;
 pub mod grapheme_utils;
+pub mod input_bar;
 pub mod path_utils;
 pub mod scrollbar;
 pub mod selection_style;
@@ -22,6 +23,7 @@ pub use click_tracker::{ClickTracker, IndexClickTracker, PositionClickTracker};
 pub use color_popup::{extract_hex_color_at_col, ColorPreview};
 pub use completion_list::{CompletionAction, CompletionItem, CompletionList};
 pub use grapheme_utils::{grapheme_display_width, render_text_cells, str_display_width};
+pub use input_bar::{Control, Focus, InputBar, InputBarAction};
 pub use path_utils::expand_tilde;
 pub use scrollbar::ScrollBar;
 pub use selection_style::{
