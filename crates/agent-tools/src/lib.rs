@@ -11,6 +11,7 @@
 
 mod args;
 mod bash;
+mod clean;
 mod edit;
 mod read;
 mod skill;
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use termide_agent_core::ToolRegistry;
 
 pub use bash::BashTool;
+pub use clean::{clean_output, Cleaned};
 pub use edit::EditTool;
 pub use read::ReadTool;
 pub use skill::SkillTool;

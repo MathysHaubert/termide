@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use termide_agent_core::{CancelToken, Tool, ToolCall, ToolContext, ToolResultMessage, ToolUpdate};
 
 use crate::args::{optional_u64, required_str};
+use crate::clean::clean_output;
 use crate::truncate::{head_tail, SHELL_MAX_BYTES};
 
 const DESCRIPTION: &str = "Run a bash command in the working directory and return its combined \
@@ -29,6 +30,9 @@ pub struct BashTool {
     pub max_output_bytes: usize,
     /// Where full logs of truncated output go; the system temp dir if `None`.
     pub log_dir: Option<PathBuf>,
+    /// Clean and compact output for the model (strip escapes, collapse noise)
+    /// before truncation. The user still sees the raw stream and full log.
+    pub clean: bool,
 }
 
 impl Default for BashTool {
@@ -38,6 +42,7 @@ impl Default for BashTool {
             max_timeout: Duration::from_secs(600),
             max_output_bytes: SHELL_MAX_BYTES,
             log_dir: None,
+            clean: true,
         }
     }
 }
@@ -102,6 +107,8 @@ struct Run {
     timed_out: bool,
     cancelled: bool,
     duration: Duration,
+    /// The command that ran, for the command-aware cleaning rules.
+    command: String,
 }
 
 impl BashTool {
@@ -178,16 +185,31 @@ impl BashTool {
             timed_out,
             cancelled,
             duration: started.elapsed(),
+            command: command.to_string(),
         })
     }
 
     fn render(&self, call: &ToolCall, run: Run) -> ToolResultMessage {
-        let text = String::from_utf8_lossy(&run.output).into_owned();
+        let raw = String::from_utf8_lossy(&run.output).into_owned();
+        // The model reads cleaned output; the user's live view and the full
+        // log on disk stay raw. `command` selects the command-aware rules.
+        let cleaned = if self.clean {
+            clean_output(&raw, &run.command)
+        } else {
+            crate::clean::Cleaned {
+                original_bytes: raw.len(),
+                cleaned_bytes: raw.len(),
+                text: raw.clone(),
+            }
+        };
+        let text = cleaned.text;
         let mut full_output_path = None;
         let mut body = match head_tail(&text, self.max_output_bytes) {
             None => text.clone(),
             Some(cut) => {
-                let path = self.save_log(call, &text);
+                // Save the raw output, not the cleaned text: the log is the
+                // full record for the user.
+                let path = self.save_log(call, &raw);
                 let marker = match &path {
                     Some(path) => format!(
                         "\n[... {} lines omitted; full output saved to {} ...]\n",
@@ -238,6 +260,8 @@ impl BashTool {
             "duration_ms": run.duration.as_millis() as u64,
             "truncated": full_output_path.is_some(),
             "full_output_path": full_output_path,
+            "raw_bytes": cleaned.original_bytes,
+            "cleaned_bytes": cleaned.cleaned_bytes,
         });
         let result = if is_error {
             ToolResultMessage::error(call, body)
@@ -372,6 +396,36 @@ mod tests {
 
     fn run(dir: &std::path::Path, args: Value) -> ToolResultMessage {
         run_with(&tool(dir), dir, args, &CancelToken::new()).0
+    }
+
+    #[test]
+    fn output_is_cleaned_for_the_model_but_the_raw_log_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        // Colour escapes plus a carriage-return progress redraw.
+        let result = run(
+            dir.path(),
+            json!({ "command": "printf '\\033[32mok\\033[0m\\nP 10%%\\rP 100%%\\n'" }),
+        );
+        assert!(!result.is_error);
+        assert_eq!(result.plain_text(), "ok\nP 100%\n");
+        // Cleaning stats are reported for the UI.
+        let details = result.details.unwrap();
+        assert!(
+            details["raw_bytes"].as_u64().unwrap() > details["cleaned_bytes"].as_u64().unwrap()
+        );
+
+        // Turning cleaning off passes the escapes through.
+        let raw_tool = BashTool {
+            clean: false,
+            ..tool(dir.path())
+        };
+        let (raw_result, _) = run_with(
+            &raw_tool,
+            dir.path(),
+            json!({ "command": "printf '\\033[32mok\\033[0m\\n'" }),
+            &CancelToken::new(),
+        );
+        assert!(raw_result.plain_text().contains("\u{1b}[32m"));
     }
 
     #[test]
