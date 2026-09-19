@@ -423,11 +423,35 @@ below. `Enter` sends, `Shift+Enter` adds a line, `Esc` aborts a run and then
 clears the input. A message typed while the agent works is queued as a
 steering message rather than starting a second run.
 
-Tool calls collapse to one line (`▸ bash ls -la ✓`) and expand on click or
-`Ctrl+O`, as in pi and Claude Code; the transcript renders through
-`crates/richtext` so answers get real Markdown with syntax-highlighted code.
-Lines are cached per item, so a streaming token re-renders one message rather
-than the whole history.
+The transcript is a stack of foldable blocks. The user asked for this shape
+against auto-spawning a terminal panel per command (dozens of subagent panels
+would flicker) and against a chat that scrolls away under noise: only the
+agent's answer is unfolded by default, and every other block shows a preview —
+a user message its first lines, a tool call its command plus the tail of its
+output, thinking a one-line summary. The answer of an assistant block always
+shows; folding it only hides its thinking, so the read never loses the point.
+A block unfolds on click, on `Space`/`Enter` when the chat cursor is on it,
+or all at once with `Ctrl+O`; `o` opens the selected block in its own
+read-only panel (`PanelEvent::ViewFile`, reusing a tool's saved raw log or a
+temporary file) for a full view without a panel per command. `Tab` moves focus between the input and the
+chat; in the chat `↑`/`↓` move the cursor (a tinted row) and other keys are
+swallowed so they do not type into the unfocused input. Fold state lives in
+the `Transcript` (`collapsed` parallel to `items`), not in the item, so the
+same key toggles any kind; the transcript renders through `crates/richtext`
+so answers get real Markdown with syntax-highlighted code, and lines are
+cached per item, so a streaming token re-renders one message rather than the
+whole history.
+
+Command output is cleaned for the model, not just truncated (`clean.rs` in
+`crates/agent-tools`): a real terminal makes tools emit colour, cursor moves
+and progress redraws that are pure noise in the context, so escapes are
+stripped, carriage-return redraws resolved to their final line, three-plus
+identical lines collapsed to `(×N)`, blank runs squeezed, and command-aware
+rules (a data table — cargo, pip, npm, go) fold a run of progress lines to a
+count. It is conservative — a warning or error line is never dropped — and
+runs before the head/tail truncation; the user's live view and the on-disk
+log stay raw. Modelled on rtk (`rtk-ai/rtk`), which proxies noisy CLIs to
+save tokens; the rule table is the extension point.
 
 Permission prompts are a card inside the panel (`ChoiceForm` in
 `crates/ui`), between the separator and the input, answered with the arrows,

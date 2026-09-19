@@ -42,9 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you
   describe a task and a language model carries it out in your project: it
-  reads files, edits them and runs shell commands, one collapsed line per tool
-  call that expands to the full output, and an open editor reloads a file the
-  agent changed. Works with any OpenAI-compatible endpoint, so a local server
+  reads files, edits them and runs shell commands. The conversation is a
+  stack of foldable blocks — the answer shown, everything else (a tool call
+  and its output, a long message, the agent's thinking) folded to a preview;
+  `Tab` moves into the chat where `↑`/`↓` pick a block, `Space`/`Enter` fold
+  it and `o` opens it in its own read-only panel, and an open editor reloads a
+  file the agent changed. Command output
+  is cleaned for the model — escapes, progress redraws and repeated build
+  lines stripped or collapsed to save tokens — while the raw log is kept on
+  disk. Works with any OpenAI-compatible endpoint, so a local server
   (llama.cpp, Ollama, vLLM, omlx) needs no account and no key; the API key for
   hosted models is read from an environment variable named in the config,
   never stored in it. The panel works in the directory of the panel that had

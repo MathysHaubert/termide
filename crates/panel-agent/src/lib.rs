@@ -19,8 +19,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_agent_core::{
-    civil_date, permission_channel, Agent, AgentEvent, Backend, BackendSetup, CancelToken,
-    ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
+    civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendSetup,
+    CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
     CompactionPrompts, Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
     PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard,
     PlanPrompt, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
@@ -267,6 +267,11 @@ pub struct AgentPanel {
     /// When the open completion is an `@`-file mention, the span it replaces;
     /// `None` for a `/`-command completion, which replaces the whole input.
     completion_span: Option<MentionSpan>,
+    /// Keyboard focus is in the chat, not the input: `Tab` toggles it, then
+    /// the arrows pick a block and Space/Enter fold it.
+    chat_focus: bool,
+    /// The block the chat focus is on, an index into the transcript items.
+    selected: usize,
     /// First visible transcript line.
     top: usize,
     /// Keep the view pinned to the newest line while true.
@@ -379,6 +384,8 @@ impl AgentPanel {
             draft: String::new(),
             completion: None,
             completion_span: None,
+            chat_focus: false,
+            selected: 0,
             top: 0,
             follow: true,
             busy: false,
@@ -620,7 +627,7 @@ impl AgentPanel {
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => self.transcript.push(Item::Assistant {
                 text: String::new(),
-                thinking_chars: 0,
+                thinking: String::new(),
                 streaming: true,
                 error: None,
             }),
@@ -630,7 +637,7 @@ impl AgentPanel {
             }
             AgentEvent::MessageUpdate(StreamEvent::ThinkingDelta(delta)) => {
                 self.transcript.with_streaming_assistant(|_, thinking| {
-                    *thinking += delta.chars().count();
+                    thinking.push_str(&delta);
                 });
             }
             AgentEvent::MessageUpdate(StreamEvent::Retry {
@@ -669,7 +676,6 @@ impl AgentPanel {
                 call,
                 result: None,
                 live: None,
-                expanded: false,
             }),
             AgentEvent::ToolExecutionUpdate {
                 tool_call_id,
@@ -1290,6 +1296,65 @@ impl AgentPanel {
 
     /// Recompute the `/command` popup after the input changed: it shows
     /// while the input is a single `/word` with no space yet.
+    /// Open the selected block's full output as a read-only panel, for a
+    /// bigger view than the inline preview. A tool with a saved raw log opens
+    /// that file; anything else is written to a temporary file first. Focus
+    /// stays in the chat.
+    fn open_selected_in_panel(&mut self) -> Vec<PanelEvent> {
+        let Some(item) = self.transcript.items().get(self.selected) else {
+            return vec![];
+        };
+        let (content, name) = match item {
+            Item::Tool { call, result, live } => {
+                if let Some(path) = result.as_ref().and_then(full_log_path) {
+                    if path.exists() {
+                        return vec![PanelEvent::ViewFile(path)];
+                    }
+                }
+                let body = result
+                    .as_ref()
+                    .map(ToolResultMessage::plain_text)
+                    .or_else(|| live.clone())
+                    .unwrap_or_default();
+                (body, format!("{}-output.txt", call.name))
+            }
+            Item::Assistant { text, thinking, .. } => {
+                let mut content = String::new();
+                if !thinking.trim().is_empty() {
+                    content.push_str("# Thinking\n\n");
+                    content.push_str(thinking);
+                    content.push_str("\n\n# Answer\n\n");
+                }
+                content.push_str(text);
+                (content, "agent-answer.md".to_string())
+            }
+            Item::User { text } => (text.clone(), "message.txt".to_string()),
+            Item::Notice { .. } => return vec![PanelEvent::NeedsRedraw],
+        };
+        if content.trim().is_empty() {
+            self.notice("nothing to open yet", NoticeKind::Info);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let safe: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let path = std::env::temp_dir().join(format!("termide-agent-{}-{safe}", now_millis()));
+        match std::fs::write(&path, content) {
+            Ok(()) => vec![PanelEvent::ViewFile(path), PanelEvent::NeedsRedraw],
+            Err(error) => {
+                self.notice(format!("cannot open the block: {error}"), NoticeKind::Error);
+                vec![PanelEvent::NeedsRedraw]
+            }
+        }
+    }
+
     /// The `@`-file mention under the cursor: the span from the `@` to the
     /// cursor and the text typed after it. `@` counts only at the start of a
     /// word (line start or after whitespace), and the mention ends at the
@@ -1866,6 +1931,16 @@ fn checkpoint_store(
     ))))
 }
 
+/// The path a tool result saved its full raw log to, if it did.
+fn full_log_path(result: &ToolResultMessage) -> Option<std::path::PathBuf> {
+    result
+        .details
+        .as_ref()?
+        .get("full_output_path")?
+        .as_str()
+        .map(std::path::PathBuf::from)
+}
+
 /// The span an `@`-file mention occupies on one input line, from the `@`
 /// (`start`) to the cursor (`end`), in character columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2142,12 +2217,11 @@ fn push_history(transcript: &mut Transcript, message: &Message) {
                     call: call.clone(),
                     result: None,
                     live: None,
-                    expanded: false,
                 });
             }
             transcript.push(Item::Assistant {
                 text: assistant.plain_text(),
-                thinking_chars: 0,
+                thinking: String::new(),
                 streaming: false,
                 error: assistant.error_message.clone(),
             });
@@ -2342,12 +2416,39 @@ impl Panel for AgentPanel {
         } else {
             self.top = self.top.min(max_top);
         }
+        // Keep the chat selection valid, on screen, and note the flat-line
+        // range to tint — computed now, before `lines` borrows the transcript.
+        let item_count = self.transcript.items().len();
+        let mut selected_range: Option<(usize, usize)> = None;
+        if self.chat_focus && item_count > 0 {
+            self.selected = self.selected.min(item_count - 1);
+            if let Some(first) = self.transcript.first_line_of(self.selected) {
+                let height = transcript_height as usize;
+                if first < self.top {
+                    self.top = first;
+                } else if height > 0 && first >= self.top + height {
+                    self.top = first + 1 - height;
+                }
+                let mut last = first;
+                while self.transcript.item_at_line(last + 1) == Some(self.selected) {
+                    last += 1;
+                }
+                selected_range = Some((first, last));
+            }
+        }
         let lines = self.transcript.lines(text_width, &colors, is_light);
+        let selected_bg = Style::default().bg(colors.selection_bg);
         for row in 0..transcript_height as usize {
             let Some(line) = lines.get(self.top + row) else {
                 break;
             };
             buf.set_line(area.x, area.y + row as u16, line, text_width);
+            // Tint the whole row of the block the chat cursor is on.
+            if selected_range.is_some_and(|(f, l)| self.top + row >= f && self.top + row <= l) {
+                for dx in 0..text_width {
+                    buf[(area.x + dx, area.y + row as u16)].set_style(selected_bg);
+                }
+            }
         }
         self.scrollbars.vertical = ScrollBar::render_tracked(
             buf,
@@ -2373,7 +2474,7 @@ impl Panel for AgentPanel {
             }
         }
         let input_area = self.input_area;
-        self.render_input(input_area, buf, ctx.is_focused);
+        self.render_input(input_area, buf, ctx.is_focused && !self.chat_focus);
         if form_rows >= 3 {
             if let Some(pending) = &mut self.pending {
                 pending
@@ -2458,6 +2559,60 @@ impl Panel for AgentPanel {
                 return vec![PanelEvent::NeedsRedraw];
             }
             CompletionAction::NotHandled => {}
+        }
+
+        // Chat focus: the arrows walk the blocks, Space/Enter fold the one
+        // under the cursor, Tab or Esc hands focus back to the input.
+        if self.chat_focus {
+            let count = self.transcript.items().len();
+            match key.code {
+                KeyCode::Tab | KeyCode::Esc => {
+                    self.chat_focus = false;
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::Up if !ctrl => {
+                    self.selected = self.selected.saturating_sub(1);
+                    self.follow = false;
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::Down if !ctrl => {
+                    if self.selected + 1 < count {
+                        self.selected += 1;
+                    }
+                    self.follow = false;
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    self.transcript.toggle_expanded(self.selected);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::Char('o') if !ctrl => {
+                    return self.open_selected_in_panel();
+                }
+                KeyCode::Char('o') if ctrl => {
+                    let expand = !self.transcript.any_expanded();
+                    self.transcript.set_all_expanded(expand);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::PageUp => {
+                    self.scroll_by(-page);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::PageDown => {
+                    self.scroll_by(page);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                // Everything else is swallowed so it does not type into the
+                // (unfocused) input.
+                _ => return vec![],
+            }
+        }
+        // From the input, Tab moves focus into the chat when there is one.
+        if key.code == KeyCode::Tab && !self.transcript.items().is_empty() {
+            self.chat_focus = true;
+            self.follow = false;
+            self.selected = self.transcript.items().len() - 1;
+            return vec![PanelEvent::NeedsRedraw];
         }
 
         match key.code {
@@ -3703,6 +3858,59 @@ mod tests {
         );
         assert!(!panel.switch_agent("missing"));
     }
+    #[test]
+    fn o_opens_the_selected_block_in_a_read_only_panel() {
+        let mut panel = AgentPanel::new(setup(vec![reply("the answer here")]));
+        type_text(&mut panel, "do it");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE)); // chat focus, last block (assistant)
+        let events = panel.handle_key(chord(KeyCode::Char('o'), KeyModifiers::NONE));
+        let path = events.iter().find_map(|e| match e {
+            PanelEvent::ViewFile(path) => Some(path.clone()),
+            _ => None,
+        });
+        let path = path.expect("o should open a ViewFile panel");
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("the answer here"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tab_moves_focus_to_the_chat_and_arrows_fold_blocks() {
+        let mut panel = AgentPanel::new(setup(vec![reply("the answer")]));
+        type_text(&mut panel, "do it");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        // A user block and an assistant block exist.
+        assert!(panel.transcript().items().len() >= 2);
+        assert!(!panel.chat_focus);
+
+        // Tab moves focus to the chat, on the last block.
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(panel.chat_focus);
+        assert_eq!(panel.selected, panel.transcript().items().len() - 1);
+
+        // Up walks to the user block; a printable key does not type.
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.selected, panel.transcript().items().len() - 2);
+        panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(panel.input.text().is_empty());
+
+        // Everything starts folded; Space expands the selected block, again
+        // folds it. Tab returns focus to the input.
+        assert!(!panel.transcript().any_expanded());
+        panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(panel.transcript().any_expanded());
+        panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(!panel.transcript().any_expanded());
+        panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(!panel.chat_focus);
+        type_text(&mut panel, "hi");
+        assert_eq!(panel.input.text(), "hi");
+    }
+
     #[test]
     fn file_completions_list_paths_and_at_mentions_insert_them() {
         let dir = tempfile::tempdir().unwrap();

@@ -60,7 +60,8 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Enter` | Send. While the agent works, the text is queued for the next turn instead |
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
-| `Ctrl+O` | Expand or collapse every tool call |
+| `Ctrl+O` | Expand or collapse every block |
+| `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `o` opens it in its own panel |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
@@ -68,10 +69,27 @@ current task: stop it with `Esc` first if the agent is still working.
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
-Each tool call is one line: the tool, what it acted on, and whether it
-succeeded. Click it or press `Ctrl+O` to see the full output. The panel
+The conversation is a stack of foldable blocks. The agent's answer is shown
+in full; everything else is folded to a preview — a user message to its first
+lines, a tool call to its command and the last few lines of output, the
+agent's thinking to a one-line summary. A tool call shows the tool, what it
+acted on and whether it succeeded, with its live output underneath as it
+runs.
+
+Unfold a block to see all of it: click it, or press `Tab` to move into the
+chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on; `Ctrl+O`
+unfolds everything at once, and `o` opens the selected block in its own
+read-only panel for a bigger view (a command with a saved full log opens that
+file). `Tab` again returns to the input. The panel
 follows the newest output until you scroll up, and resumes following when you
 scroll back to the bottom.
+
+What the agent runs is captured cleanly for the model: colour and cursor
+escapes, progress-bar redraws, spinner frames and long runs of near-identical
+build lines are stripped or collapsed before the output enters the context,
+so a noisy command costs far fewer tokens. The full, untouched log is still
+written to a file whose path the tool reports, and you still see the raw
+stream live in the panel.
 
 The status chips show the permission mode, the model with the endpoint it is
 served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), the agent, the context

@@ -12,6 +12,10 @@ use termide_richtext::Builder;
 
 /// Lines of tool output shown when a call is expanded.
 const EXPANDED_OUTPUT_LINES: usize = 60;
+/// Tail lines of a collapsed tool's output shown under its command line.
+const TOOL_PREVIEW_LINES: usize = 5;
+/// Lines of a collapsed user message shown before it is cut off.
+const USER_PREVIEW_LINES: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
@@ -27,7 +31,8 @@ pub enum Item {
     },
     Assistant {
         text: String,
-        thinking_chars: usize,
+        /// The reasoning text, shown in full only when the item is expanded.
+        thinking: String,
         streaming: bool,
         error: Option<String>,
     },
@@ -36,7 +41,6 @@ pub enum Item {
         result: Option<ToolResultMessage>,
         /// Accumulated output while the tool is still running.
         live: Option<String>,
-        expanded: bool,
     },
     Notice {
         text: String,
@@ -53,6 +57,10 @@ struct Cached {
 #[derive(Default)]
 pub struct Transcript {
     items: Vec<Item>,
+    /// Whether each item hides its detail (thinking / full output / the rest
+    /// of a long message). Parallel to `items`. The assistant's answer always
+    /// shows; collapsing only folds its thinking away.
+    collapsed: Vec<bool>,
     cache: Vec<Option<Cached>>,
     /// Flattened lines of every item, rebuilt when any cache entry changed.
     flat: Vec<Line<'static>>,
@@ -68,13 +76,18 @@ impl Transcript {
     }
 
     pub fn push(&mut self, item: Item) {
+        // Everything folds by default except a notice (already one line);
+        // an item's primary content still shows, only its detail is hidden.
+        let collapsed = !matches!(item, Item::Notice { .. });
         self.items.push(item);
+        self.collapsed.push(collapsed);
         self.cache.push(None);
         self.flat_dirty = true;
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
+        self.collapsed.clear();
         self.cache.clear();
         self.flat.clear();
         self.line_item.clear();
@@ -89,19 +102,19 @@ impl Transcript {
     }
 
     /// The streaming assistant message, if the last item is one.
-    pub fn with_streaming_assistant(&mut self, f: impl FnOnce(&mut String, &mut usize)) -> bool {
+    pub fn with_streaming_assistant(&mut self, f: impl FnOnce(&mut String, &mut String)) -> bool {
         let index = self.items.len().checked_sub(1);
         let Some(index) = index else {
             return false;
         };
         if let Item::Assistant {
             text,
-            thinking_chars,
+            thinking,
             streaming: true,
             ..
         } = &mut self.items[index]
         {
-            f(text, thinking_chars);
+            f(text, thinking);
             self.invalidate(index);
             return true;
         }
@@ -130,7 +143,7 @@ impl Transcript {
         }
         self.push(Item::Assistant {
             text,
-            thinking_chars: 0,
+            thinking: String::new(),
             streaming: false,
             error,
         });
@@ -149,37 +162,51 @@ impl Transcript {
         true
     }
 
+    /// Flip whether item `index` shows its detail. Notices have none.
     pub fn toggle_expanded(&mut self, index: usize) -> bool {
-        let Some(Item::Tool { expanded, .. }) = self.items.get_mut(index) else {
+        if matches!(self.items.get(index), None | Some(Item::Notice { .. })) {
+            return false;
+        }
+        let Some(slot) = self.collapsed.get_mut(index) else {
             return false;
         };
-        *expanded = !*expanded;
+        *slot = !*slot;
         self.invalidate(index);
         true
     }
 
+    /// Expand (`value` true) or collapse every foldable item at once.
     pub fn set_all_expanded(&mut self, value: bool) {
         for index in 0..self.items.len() {
-            if let Item::Tool { expanded, .. } = &mut self.items[index] {
-                if *expanded != value {
-                    *expanded = value;
-                    self.invalidate(index);
-                }
+            if matches!(self.items[index], Item::Notice { .. }) {
+                continue;
+            }
+            if self.collapsed[index] == value {
+                self.collapsed[index] = !value;
+                self.invalidate(index);
             }
         }
     }
 
+    /// Whether any foldable item is currently expanded.
     #[must_use]
     pub fn any_expanded(&self) -> bool {
         self.items
             .iter()
-            .any(|item| matches!(item, Item::Tool { expanded: true, .. }))
+            .enumerate()
+            .any(|(index, item)| !matches!(item, Item::Notice { .. }) && !self.collapsed[index])
     }
 
     /// Item index shown on flattened line `line`.
     #[must_use]
     pub fn item_at_line(&self, line: usize) -> Option<usize> {
         self.line_item.get(line).copied()
+    }
+
+    /// The first flattened line of item `index`, for scrolling it into view.
+    #[must_use]
+    pub fn first_line_of(&self, index: usize) -> Option<usize> {
+        self.line_item.iter().position(|&i| i == index)
     }
 
     /// Lay out every item at `width` (re-rendering only what changed) and
@@ -192,7 +219,13 @@ impl Transcript {
                 None => true,
             };
             if stale {
-                let lines = render_item(&self.items[index], width, colors, is_light);
+                let lines = render_item(
+                    &self.items[index],
+                    self.collapsed[index],
+                    width,
+                    colors,
+                    is_light,
+                );
                 self.cache[index] = Some(Cached {
                     width,
                     is_light,
@@ -224,12 +257,27 @@ impl Transcript {
 
 fn render_item(
     item: &Item,
+    collapsed: bool,
     width: u16,
     colors: &ThemeColors,
     is_light: bool,
 ) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(colors.disabled);
     match item {
         Item::User { text } => {
+            let trimmed = text.trim();
+            let total = trimmed.lines().count();
+            // A long paste folds to its first lines; the model still gets the
+            // whole thing, this is only the transcript.
+            let shown: String = if collapsed && total > USER_PREVIEW_LINES {
+                trimmed
+                    .lines()
+                    .take(USER_PREVIEW_LINES)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                trimmed.to_string()
+            };
             let mut builder = Builder::new(width, colors, is_light);
             builder.styled(
                 "› ",
@@ -238,26 +286,41 @@ fn render_item(
                     .add_modifier(Modifier::BOLD),
             );
             builder.push_style(Style::default().add_modifier(Modifier::BOLD));
-            builder.text(text.trim());
+            builder.text(&shown);
             builder.pop_style();
             builder.end_paragraph();
-            builder.blank();
-            builder.finish().lines
+            let mut lines = builder.finish().lines;
+            if collapsed && total > USER_PREVIEW_LINES {
+                lines.push(Line::styled(
+                    format!("  … {} more lines", total - USER_PREVIEW_LINES),
+                    dim,
+                ));
+            }
+            lines.push(Line::default());
+            lines
         }
         Item::Assistant {
             text,
-            thinking_chars,
+            thinking,
             streaming,
             error,
         } => {
             let mut lines = Vec::new();
-            let dim = Style::default().fg(colors.disabled);
-            if *thinking_chars > 0 {
-                lines.push(Line::styled(
-                    format!("· thought for {thinking_chars} characters"),
-                    dim,
-                ));
+            let think_chars = thinking.chars().count();
+            if think_chars > 0 {
+                if collapsed {
+                    lines.push(Line::styled(
+                        format!("▸ thought for {think_chars} characters"),
+                        dim,
+                    ));
+                } else {
+                    lines.push(Line::styled("▾ thinking", dim));
+                    for line in thinking.lines() {
+                        lines.push(Line::styled(format!("  {line}"), dim));
+                    }
+                }
             }
+            // The answer itself always shows in full.
             if text.trim().is_empty() {
                 if *streaming {
                     lines.push(Line::styled("…", dim));
@@ -276,14 +339,9 @@ fn render_item(
             }
             lines
         }
-        Item::Tool {
-            call,
-            result,
-            live,
-            expanded,
-        } => {
+        Item::Tool { call, result, live } => {
             let mut lines = Vec::new();
-            let glyph = if *expanded { "▾ " } else { "▸ " };
+            let glyph = if collapsed { "▸ " } else { "▾ " };
             let (status, status_style) = match (result, live) {
                 (Some(result), _) if result.is_error => ("✗", Style::default().fg(colors.error)),
                 (Some(_), _) => ("✓", Style::default().fg(colors.success)),
@@ -303,20 +361,29 @@ fn render_item(
                 Span::raw(" "),
                 Span::styled(status, status_style),
             ]));
-            if *expanded {
-                let body = match (result, live) {
-                    (Some(result), _) => result.plain_text(),
-                    (None, Some(live)) => live.clone(),
-                    (None, None) => String::new(),
-                };
-                let dim = Style::default().fg(colors.disabled);
-                let total = body.lines().count();
-                for line in body.lines().take(EXPANDED_OUTPUT_LINES) {
+            let body = match (result, live) {
+                (Some(result), _) => result.plain_text(),
+                (None, Some(live)) => live.clone(),
+                (None, None) => String::new(),
+            };
+            let all: Vec<&str> = body.lines().collect();
+            if collapsed {
+                // The command line plus the tail: the end is where the result
+                // and errors are.
+                let start = all.len().saturating_sub(TOOL_PREVIEW_LINES);
+                if start > 0 {
+                    lines.push(Line::styled(format!("  … {start} more lines above"), dim));
+                }
+                for line in &all[start..] {
                     lines.push(Line::styled(format!("  {line}"), dim));
                 }
-                if total > EXPANDED_OUTPUT_LINES {
+            } else {
+                for line in all.iter().take(EXPANDED_OUTPUT_LINES) {
+                    lines.push(Line::styled(format!("  {line}"), dim));
+                }
+                if all.len() > EXPANDED_OUTPUT_LINES {
                     lines.push(Line::styled(
-                        format!("  … {} more lines", total - EXPANDED_OUTPUT_LINES),
+                        format!("  … {} more lines", all.len() - EXPANDED_OUTPUT_LINES),
                         dim,
                     ));
                 }
@@ -393,23 +460,23 @@ mod tests {
         });
         transcript.push(Item::Assistant {
             text: String::new(),
-            thinking_chars: 0,
+            thinking: String::new(),
             streaming: true,
             error: None,
         });
         assert!(transcript.with_streaming_assistant(|text, thinking| {
             text.push_str("Looking at `main.rs` now.");
-            *thinking += 12;
+            thinking.push_str("mulling this");
         }));
         transcript.push(Item::Tool {
             call: call("read", json!({ "path": "main.rs" })),
             result: None,
             live: None,
-            expanded: false,
         });
 
         let lines = text_of(transcript.lines(40, &colors, false));
         assert_eq!(lines[0], "› Fix the bug");
+        // Thinking folds to a one-line summary by default; the answer shows.
         assert!(lines
             .iter()
             .any(|l| l.contains("thought for 12 characters")));
@@ -419,22 +486,33 @@ mod tests {
         assert_eq!(transcript.item_at_line(0), Some(0));
         assert_eq!(transcript.item_at_line(lines.len() - 1), Some(2));
 
-        // Finishing the tool and expanding shows the output; collapsing hides it.
+        // A multi-line result: collapsed shows the command line plus the tail,
+        // expanded shows all of it.
+        let body = (1..=8)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(transcript.with_tool("c1", |item| {
             if let Item::Tool { result, .. } = item {
-                *result = Some(ToolResultMessage::text(
-                    &call("read", json!({})),
-                    "     1\tfn main() {}",
-                ));
+                *result = Some(ToolResultMessage::text(&call("read", json!({})), &body));
             }
         }));
         let lines = text_of(transcript.lines(40, &colors, false));
         assert!(lines.iter().any(|l| l.starts_with("▸ read main.rs ✓")));
-        assert!(!lines.iter().any(|l| l.contains("fn main")));
+        assert!(lines.iter().any(|l| l.contains("… 3 more lines above")));
+        assert!(lines.iter().any(|l| l.contains("line 8")));
+        assert!(!lines
+            .iter()
+            .any(|l| l.contains("line 1") && !l.contains("line 1 ")));
         assert!(transcript.toggle_expanded(2));
         let lines = text_of(transcript.lines(40, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("fn main() {}")));
+        assert!(lines.iter().any(|l| l.contains("line 1")));
+        assert!(lines.iter().any(|l| l.contains("line 8")));
         assert!(transcript.any_expanded());
+        // Expanding the assistant shows the full thinking text.
+        assert!(transcript.toggle_expanded(1));
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("mulling this")));
 
         // A different width re-wraps the prose without losing items. Tool
         // summary lines are one-liners clipped at draw time, so only the
@@ -454,7 +532,7 @@ mod tests {
         let mut transcript = Transcript::default();
         transcript.push(Item::Assistant {
             text: String::new(),
-            thinking_chars: 0,
+            thinking: String::new(),
             streaming: true,
             error: None,
         });
@@ -470,7 +548,6 @@ mod tests {
                 "[exit code 1]",
             )),
             live: None,
-            expanded: false,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
