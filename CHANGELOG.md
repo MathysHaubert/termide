@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A buffer with unsaved work behaves as before: it keeps them, shows the
   marker and refuses to save over the newer file.
 
+- **One input bar under every panel.** The find/replace bar and the agent's
+  prompt box are now the same widget, so they type, scroll, place the cursor
+  and take focus the same way. The find/replace bar moves to the **bottom** of
+  the editor, file manager, terminal, markdown, binary and HTML panels (it used
+  to sit at the top) and gains a titled top border — `─ Find ─`, `─ Search ─`
+  or `─ Replace ─` — that doubles as the divider from the content above. `Tab`
+  still moves focus between the bar and the panel body.
+
 ### Added
 
 - **Built-in coding agent.** A new panel (`Alt+A`, Windows → Agent) where you

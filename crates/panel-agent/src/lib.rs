@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendSetup,
     CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
@@ -35,7 +35,7 @@ use termide_core::{
 use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
 use termide_ui::{
-    ChoiceAction, ChoiceForm, CompletionAction, CompletionItem, CompletionList, ScrollBar,
+    ChoiceAction, ChoiceForm, CompletionAction, CompletionItem, CompletionList, InputBar, ScrollBar,
 };
 
 pub use transcript::{Item, NoticeKind, Transcript};
@@ -260,7 +260,9 @@ pub struct AgentPanel {
     persist_rule: Option<PersistFn>,
 
     transcript: Transcript,
-    input: TextArea,
+    /// The prompt box: one multi-line [`InputBar`] field, no border or
+    /// controls — the panel draws its own separator above it.
+    input: InputBar,
     /// Which earlier request the input shows while browsing history with
     /// the arrow keys; `None` while typing.
     history_pos: Option<usize>,
@@ -385,7 +387,9 @@ impl AgentPanel {
             prompt_stale: false,
             persist_rule: setup.persist_rule,
             transcript,
-            input: TextArea::new(),
+            input: InputBar::new(vec![])
+                .with_multiline_field("")
+                .with_placeholder("Ask the agent…"),
             history_pos: None,
             draft: String::new(),
             completion: None,
@@ -478,7 +482,7 @@ impl AgentPanel {
         self.mode = mode;
         self.model_choices.clear();
         self.model_fetch = None;
-        self.input = TextArea::new();
+        self.clear_input();
         self.history_pos = None;
         self.draft.clear();
         self.completion = None;
@@ -510,7 +514,26 @@ impl AgentPanel {
 
     #[must_use]
     pub fn input_text(&self) -> String {
-        self.input.text()
+        self.input_area().text()
+    }
+
+    /// The prompt box's text area. The input bar holds exactly one multi-line
+    /// field, so both accessors always resolve.
+    fn input_area(&self) -> &TextArea {
+        self.input
+            .multiline(0)
+            .expect("agent input is a multiline field")
+    }
+
+    fn input_area_mut(&mut self) -> &mut TextArea {
+        self.input
+            .multiline_mut(0)
+            .expect("agent input is a multiline field")
+    }
+
+    /// Clear the prompt box.
+    fn clear_input(&mut self) {
+        self.input.set_field_text(0, "");
     }
 
     #[must_use]
@@ -521,7 +544,7 @@ impl AgentPanel {
     /// Send the input box: a new run when idle, a steering message while
     /// the agent works.
     pub fn submit(&mut self) -> Vec<PanelEvent> {
-        let text = self.input.text().trim().to_string();
+        let text = self.input_area().text().trim().to_string();
         if text.is_empty() {
             return vec![];
         }
@@ -530,14 +553,14 @@ impl AgentPanel {
         self.draft.clear();
         let text = match slash_command(&text) {
             Some((UNDO_COMMAND, _)) => {
-                self.input = TextArea::new();
+                self.clear_input();
                 return self.ask_undo();
             }
             Some((COMPACT_COMMAND, focus)) => {
                 // Built in: summarise the older part of the session now.
                 let focus = (!focus.is_empty()).then(|| focus.to_string());
                 match self.runtime.compact(focus) {
-                    Ok(()) => self.input = TextArea::new(),
+                    Ok(()) => self.clear_input(),
                     Err(PromptError::Busy) => {
                         self.notice("finish or stop the current task first", NoticeKind::Warn)
                     }
@@ -554,7 +577,7 @@ impl AgentPanel {
                 {
                     // A command script: its output becomes the request, once
                     // it has run (and, for a project's script, been allowed).
-                    self.input = TextArea::new();
+                    self.clear_input();
                     self.run_command(script, args.to_string());
                     return vec![PanelEvent::NeedsRedraw];
                 } else {
@@ -570,7 +593,7 @@ impl AgentPanel {
             }
             None => text,
         };
-        self.input = TextArea::new();
+        self.clear_input();
         self.send(text)
     }
 
@@ -1277,7 +1300,7 @@ impl AgentPanel {
         let history = self.history();
         let next = match (self.history_pos, older) {
             (None, true) if !history.is_empty() => {
-                self.draft = self.input.text();
+                self.draft = self.input_area().text();
                 Some(history.len() - 1)
             }
             (None, _) => return false,
@@ -1296,9 +1319,10 @@ impl AgentPanel {
 
     /// Replace the input with `text`, cursor at its end.
     fn set_input(&mut self, text: &str) {
-        self.input = TextArea::with_text(text);
-        while self.input.move_down() {}
-        self.input.move_end();
+        self.input.set_field_text(0, text);
+        let area = self.input_area_mut();
+        while area.move_down() {}
+        area.move_end();
     }
 
     /// Recompute the `/command` popup after the input changed: it shows
@@ -1367,8 +1391,8 @@ impl AgentPanel {
     /// word (line start or after whitespace), and the mention ends at the
     /// first space, so it is one path.
     fn mention_at_cursor(&self) -> Option<(MentionSpan, String)> {
-        let cursor = self.input.cursor();
-        let chars: Vec<char> = self.input.lines().get(cursor.row)?.chars().collect();
+        let cursor = self.input_area().cursor();
+        let chars: Vec<char> = self.input_area().lines().get(cursor.row)?.chars().collect();
         if cursor.col > chars.len() {
             return None;
         }
@@ -1400,10 +1424,10 @@ impl AgentPanel {
 
     fn refresh_completion(&mut self) {
         self.completion_span = None;
-        let text = self.input.text();
-        let word = text
-            .strip_prefix('/')
-            .filter(|rest| self.input.line_count() <= 1 && !rest.contains(char::is_whitespace));
+        let text = self.input_area().text();
+        let word = text.strip_prefix('/').filter(|rest| {
+            self.input_area().line_count() <= 1 && !rest.contains(char::is_whitespace)
+        });
         let Some(prefix) = word else {
             return self.refresh_file_completion();
         };
@@ -1507,20 +1531,20 @@ impl AgentPanel {
             Some(span) => {
                 let is_dir = item.value.ends_with('/');
                 // Delete the `@`+prefix typed so far.
-                self.input.set_cursor(span.row, span.end);
+                self.input_area_mut().set_cursor(span.row, span.end);
                 for _ in span.start..span.end {
-                    self.input.backspace();
+                    self.input_area_mut().backspace();
                 }
                 if is_dir {
                     // Keep the `@` so the popup reopens for the directory's
                     // contents and the user can drill in.
-                    self.input.insert('@');
-                    self.input.insert_str(&item.value);
+                    self.input_area_mut().insert('@');
+                    self.input_area_mut().insert_str(&item.value);
                     self.refresh_completion();
                 } else {
                     // A chosen file becomes a plain path the agent can read.
-                    self.input.insert_str(&item.value);
-                    self.input.insert(' ');
+                    self.input_area_mut().insert_str(&item.value);
+                    self.input_area_mut().insert(' ');
                 }
             }
         }
@@ -1795,58 +1819,14 @@ impl AgentPanel {
     }
 
     fn input_rows(&self, available: u16) -> u16 {
-        let rows = self.input.line_count().max(1) as u16;
+        let rows = self.input_area().line_count().max(1) as u16;
         rows.min(MAX_INPUT_ROWS)
             .min(available.saturating_sub(2).max(1))
     }
 
     fn render_input(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        if area.height == 0 || area.width == 0 {
-            return;
-        }
-        let prompt_style = Style::default()
-            .fg(self.colors.info)
-            .add_modifier(Modifier::BOLD);
-        let text_style = Style::default().fg(self.colors.fg);
-        self.input.ensure_cursor_visible(area.height as usize);
-        let offset = self.input.scroll_offset();
-        let lines = self.input.lines();
-        let text_x = area.x + 2;
-        let text_width = area.width.saturating_sub(2);
-        for row in 0..area.height as usize {
-            let y = area.y + row as u16;
-            let prefix = if row + offset == 0 { "› " } else { "  " };
-            buf.set_string(area.x, y, prefix, prompt_style);
-            if let Some(line) = lines.get(row + offset) {
-                buf.set_stringn(text_x, y, line, text_width as usize, text_style);
-            }
-        }
-        if lines.len() <= 1 && lines.first().is_none_or(String::is_empty) && !focused {
-            buf.set_stringn(
-                text_x,
-                area.y,
-                "Ask the agent…",
-                text_width as usize,
-                Style::default().fg(self.colors.disabled),
-            );
-        }
-        if focused {
-            let cursor = self.input.cursor();
-            if cursor.row >= offset && cursor.row - offset < area.height as usize {
-                let line = lines.get(cursor.row).map(String::as_str).unwrap_or("");
-                let col: usize = line
-                    .chars()
-                    .take(cursor.col)
-                    .map(unicode_display_width)
-                    .sum();
-                if (col as u16) < text_width {
-                    let x = text_x + col as u16;
-                    let y = area.y + (cursor.row - offset) as u16;
-                    buf[(x, y)]
-                        .set_style(Style::default().fg(self.colors.bg).bg(self.colors.cursor));
-                }
-            }
-        }
+        let colors = self.colors;
+        self.input.render(area, buf, &colors, focused);
     }
 }
 
@@ -1861,23 +1841,6 @@ fn truncate_title(text: &str) -> String {
     }
     let cut: String = single_line.chars().take(MAX_TITLE_CHARS - 1).collect();
     format!("{}…", cut.trim_end())
-}
-
-fn unicode_display_width(c: char) -> usize {
-    // Wide East Asian and emoji ranges take two cells; everything else one.
-    // Good enough for cursor placement in a prompt box.
-    match c as u32 {
-        0x1100..=0x115F
-        | 0x2E80..=0xA4CF
-        | 0xAC00..=0xD7A3
-        | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE4F
-        | 0xFF00..=0xFF60
-        | 0xFFE0..=0xFFE6
-        | 0x1F300..=0x1FAFF
-        | 0x20000..=0x3FFFD => 2,
-        _ => 1,
-    }
 }
 
 /// The file a successful `edit` or `write` changed, from the result details,
@@ -2553,7 +2516,7 @@ impl Panel for AgentPanel {
             CompletionAction::Accept => {
                 // Enter on the command already typed in full sends it; on a
                 // partial one, or on Tab, it completes, like a shell.
-                let typed = self.input.text();
+                let typed = self.input_area().text();
                 let exact = self.completion_span.is_none()
                     && key.code == KeyCode::Enter
                     && self
@@ -2628,19 +2591,19 @@ impl Panel for AgentPanel {
             KeyCode::Esc => {
                 if self.is_busy() {
                     self.abort();
-                } else if !self.input.is_empty() {
-                    self.input = TextArea::new();
+                } else if !self.input_area().is_empty() {
+                    self.clear_input();
                     self.after_edit();
                 } else {
                     return vec![];
                 }
             }
             KeyCode::Enter if shift || alt => {
-                self.input.insert_newline();
+                self.input_area_mut().insert_newline();
                 self.after_edit();
             }
             KeyCode::Char('j') if ctrl => {
-                self.input.insert_newline();
+                self.input_area_mut().insert_newline();
                 self.after_edit();
             }
             KeyCode::Enter => return self.submit(),
@@ -2664,33 +2627,33 @@ impl Panel for AgentPanel {
             KeyCode::Up => {
                 // Past the first line, the arrow walks back through what was
                 // asked before, as in a shell.
-                if !self.input.move_up() && !self.recall(true) {
+                if !self.input_area_mut().move_up() && !self.recall(true) {
                     return vec![];
                 }
             }
             KeyCode::Down => {
-                if !self.input.move_down() && !self.recall(false) {
+                if !self.input_area_mut().move_down() && !self.recall(false) {
                     return vec![];
                 }
             }
             KeyCode::Left => {
-                self.input.move_left();
+                self.input_area_mut().move_left();
             }
             KeyCode::Right => {
-                self.input.move_right();
+                self.input_area_mut().move_right();
             }
-            KeyCode::Home => self.input.move_home(),
-            KeyCode::End => self.input.move_end(),
+            KeyCode::Home => self.input_area_mut().move_home(),
+            KeyCode::End => self.input_area_mut().move_end(),
             KeyCode::Backspace => {
-                self.input.backspace();
+                self.input_area_mut().backspace();
                 self.after_edit();
             }
             KeyCode::Delete => {
-                self.input.delete();
+                self.input_area_mut().delete();
                 self.after_edit();
             }
             KeyCode::Char(c) if !ctrl && !alt => {
-                self.input.insert(c);
+                self.input_area_mut().insert(c);
                 self.after_edit();
             }
             _ => return vec![],
@@ -2702,7 +2665,7 @@ impl Panel for AgentPanel {
         self.pending.is_some()
             || self.completion.is_some()
             || self.is_busy()
-            || !self.input.is_empty()
+            || !self.input_area().is_empty()
     }
 
     fn handle_scroll(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
@@ -2778,7 +2741,7 @@ impl Panel for AgentPanel {
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {
         match cmd {
             PanelCommand::PasteText { text } => {
-                self.input.insert_str(&text);
+                self.input_area_mut().insert_str(&text);
                 self.after_edit();
                 CommandResult::NeedsRedraw(true)
             }
@@ -3906,7 +3869,7 @@ mod tests {
         panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(panel.selected, panel.transcript().items().len() - 2);
         panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(panel.input.text().is_empty());
+        assert!(panel.input_text().is_empty());
 
         // Everything starts folded; Space expands the selected block, again
         // folds it. Tab returns focus to the input.
@@ -3918,7 +3881,7 @@ mod tests {
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
         assert!(!panel.chat_focus);
         type_text(&mut panel, "hi");
-        assert_eq!(panel.input.text(), "hi");
+        assert_eq!(panel.input_text(), "hi");
     }
 
     #[test]
@@ -3957,13 +3920,13 @@ mod tests {
             .iter()
             .any(|i| i.value == "README.md"));
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(panel.input.text(), "look at README.md ");
+        assert_eq!(panel.input_text(), "look at README.md ");
         assert!(panel.completion.is_none());
 
         // A directory keeps the popup open for its contents.
         type_text(&mut panel, "@src");
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(panel.input.text(), "look at README.md @src/");
+        assert_eq!(panel.input_text(), "look at README.md @src/");
         assert!(panel.completion.is_some(), "dir did not reopen the popup");
         assert!(panel
             .completion

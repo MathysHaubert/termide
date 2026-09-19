@@ -21,7 +21,7 @@ use ratatui::style::{Modifier, Style};
 use termide_core::ThemeColors;
 
 use crate::grapheme_utils::str_display_width;
-use crate::TextInput;
+use crate::{TextArea, TextInput};
 
 /// A control on the bar's bottom row: a push button or a toggle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +31,31 @@ pub enum Control {
     /// A checkbox-style toggle. Activation flips `on` and still reports
     /// [`InputBarAction::Activated`], so the host can react to the new state.
     Toggle { label: String, on: bool },
+}
+
+/// One field's editor: a single-line input, or a multi-line text area (for a
+/// prompt box). The host reads and drives a multi-line field through
+/// [`InputBar::multiline`] / [`InputBar::multiline_mut`].
+enum FieldInput {
+    Line(TextInput),
+    Multi(TextArea),
+}
+
+impl FieldInput {
+    fn text(&self) -> String {
+        match self {
+            FieldInput::Line(input) => input.text().to_string(),
+            FieldInput::Multi(area) => area.text(),
+        }
+    }
+
+    /// Visual rows the field needs: one for a line, its line count for an area.
+    fn rows(&self) -> u16 {
+        match self {
+            FieldInput::Line(_) => 1,
+            FieldInput::Multi(area) => (area.line_count().max(1)) as u16,
+        }
+    }
 }
 
 /// The left and right text embedded in the bar's top border.
@@ -65,7 +90,7 @@ pub enum Focus {
 /// and [`InputBar::handle_mouse`].
 pub struct InputBar {
     labels: Vec<String>,
-    inputs: Vec<TextInput>,
+    fields: Vec<FieldInput>,
     controls: Vec<Control>,
     /// Index into the focus ring (fields then controls).
     focus: usize,
@@ -73,7 +98,10 @@ pub struct InputBar {
     status: Option<String>,
     /// The top border and its slots, or `None` for a borderless bar.
     border: Option<BorderSlots>,
-    /// Rendered field rows, parallel to `labels`, for mouse hit-testing.
+    /// Placeholder shown in an empty multi-line field while the bar is idle.
+    placeholder: Option<String>,
+    /// Rendered field areas, parallel to `fields`, for mouse hit-testing; a
+    /// multi-line field's area spans all of its rows.
     field_areas: Vec<Rect>,
     /// Rendered control areas: (area, index into `controls`).
     control_areas: Vec<(Rect, usize)>,
@@ -84,14 +112,18 @@ impl InputBar {
     /// Include any trailing space in a label, e.g. `"Find: "`.
     #[must_use]
     pub fn new(labels: Vec<String>) -> Self {
-        let inputs = labels.iter().map(|_| TextInput::new()).collect();
+        let fields = labels
+            .iter()
+            .map(|_| FieldInput::Line(TextInput::new()))
+            .collect();
         Self {
             labels,
-            inputs,
+            fields,
             controls: Vec::new(),
             focus: 0,
             status: None,
             border: None,
+            placeholder: None,
             field_areas: Vec::new(),
             control_areas: Vec::new(),
         }
@@ -104,6 +136,15 @@ impl InputBar {
         self
     }
 
+    /// Append a multi-line field (a prompt box) with `label`. Drive it through
+    /// [`InputBar::multiline_mut`].
+    #[must_use]
+    pub fn with_multiline_field(mut self, label: impl Into<String>) -> Self {
+        self.labels.push(label.into());
+        self.fields.push(FieldInput::Multi(TextArea::new()));
+        self
+    }
+
     /// Give the bar a top border with a left and a right slot.
     #[must_use]
     pub fn with_border(mut self, left: impl Into<String>, right: impl Into<String>) -> Self {
@@ -112,6 +153,17 @@ impl InputBar {
             right: right.into(),
         });
         self
+    }
+
+    /// Placeholder shown in an empty multi-line field while the bar is idle.
+    #[must_use]
+    pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    pub fn set_placeholder(&mut self, placeholder: Option<String>) {
+        self.placeholder = placeholder;
     }
 
     // === Structure ===
@@ -148,26 +200,59 @@ impl InputBar {
     /// row when there are controls.
     #[must_use]
     pub fn height(&self) -> u16 {
-        // Border row, one row per field, then the controls row — preceded by a
-        // separator row when the bar is bordered.
+        // Border row, each field's rows (a multi-line field takes several),
+        // then the controls row — preceded by a separator row when bordered.
+        let fields_rows: u16 = self.fields.iter().map(FieldInput::rows).sum();
         let controls_rows = if self.controls.is_empty() {
             0
         } else {
             1 + u16::from(self.border.is_some())
         };
-        u16::from(self.border.is_some()) + self.labels.len() as u16 + controls_rows
+        u16::from(self.border.is_some()) + fields_rows + controls_rows
     }
 
     // === Values ===
 
+    /// A single-line field's text. A multi-line field returns `""`; read it
+    /// with [`InputBar::field_value`] or [`InputBar::multiline`] instead.
     #[must_use]
     pub fn field_text(&self, index: usize) -> &str {
-        self.inputs.get(index).map_or("", TextInput::text)
+        match self.fields.get(index) {
+            Some(FieldInput::Line(input)) => input.text(),
+            _ => "",
+        }
+    }
+
+    /// The text of any field (single- or multi-line).
+    #[must_use]
+    pub fn field_value(&self, index: usize) -> String {
+        self.fields
+            .get(index)
+            .map(FieldInput::text)
+            .unwrap_or_default()
+    }
+
+    /// A multi-line field's text area, for the host to render/drive directly.
+    #[must_use]
+    pub fn multiline(&self, index: usize) -> Option<&TextArea> {
+        match self.fields.get(index) {
+            Some(FieldInput::Multi(area)) => Some(area),
+            _ => None,
+        }
+    }
+
+    pub fn multiline_mut(&mut self, index: usize) -> Option<&mut TextArea> {
+        match self.fields.get_mut(index) {
+            Some(FieldInput::Multi(area)) => Some(area),
+            _ => None,
+        }
     }
 
     pub fn set_field_text(&mut self, index: usize, text: impl Into<String>) {
-        if let Some(input) = self.inputs.get_mut(index) {
-            *input = TextInput::with_default(text.into());
+        match self.fields.get_mut(index) {
+            Some(FieldInput::Line(input)) => *input = TextInput::with_default(text.into()),
+            Some(FieldInput::Multi(area)) => *area = TextArea::with_text(&text.into()),
+            None => {}
         }
     }
 
@@ -263,15 +348,29 @@ impl InputBar {
                 None
             }
             KeyCode::Enter => Some(InputBarAction::Submit(index)),
-            _ => {
-                let input = &mut self.inputs[index];
-                let before = input.text().to_string();
-                if edit_text_input(input, key) && input.text() != before {
-                    Some(InputBarAction::Edited(index))
-                } else {
-                    None
+            _ => match &mut self.fields[index] {
+                FieldInput::Line(input) => {
+                    let before = input.text().to_string();
+                    if edit_text_input(input, key) && input.text() != before {
+                        Some(InputBarAction::Edited(index))
+                    } else {
+                        None
+                    }
                 }
-            }
+                // A multi-line field is normally driven by the host through
+                // `multiline_mut`; handle plain typing here for completeness.
+                FieldInput::Multi(area) => match key.code {
+                    KeyCode::Char(c) => {
+                        area.insert(c);
+                        Some(InputBarAction::Edited(index))
+                    }
+                    KeyCode::Backspace => {
+                        area.backspace();
+                        Some(InputBarAction::Edited(index))
+                    }
+                    _ => None,
+                },
+            },
         }
     }
 
@@ -312,7 +411,7 @@ impl InputBar {
         }
         let (col, row) = (mouse.column, mouse.row);
         for (i, area) in self.field_areas.clone().into_iter().enumerate() {
-            if hit(area, col, row) {
+            if hit_area(area, col, row) {
                 self.focus = i;
                 // Match the rendered prefix: "› " for an empty (prompt) label.
                 let prefix = if self.labels[i].is_empty() {
@@ -322,9 +421,25 @@ impl InputBar {
                 };
                 let label_w = str_display_width(prefix) as u16;
                 let start_x = area.x + label_w;
-                if col >= start_x {
-                    let pos = screen_x_to_char_pos(self.inputs[i].text(), (col - start_x) as usize);
-                    self.inputs[i].set_cursor_with_selection_start(pos);
+                match &mut self.fields[i] {
+                    FieldInput::Line(input) => {
+                        if col >= start_x {
+                            let pos = screen_x_to_char_pos(input.text(), (col - start_x) as usize);
+                            input.set_cursor_with_selection_start(pos);
+                        }
+                    }
+                    FieldInput::Multi(ta) => {
+                        // Place the cursor at the clicked row/column, best-effort.
+                        let clicked_row = ta.scroll_offset() + (row - area.y) as usize;
+                        let target_row = clicked_row.min(ta.line_count().saturating_sub(1));
+                        let line = ta.lines().get(target_row).cloned().unwrap_or_default();
+                        let target_col = if col >= start_x {
+                            screen_x_to_char_pos(&line, (col - start_x) as usize)
+                        } else {
+                            0
+                        };
+                        ta.set_cursor(target_row, target_col);
+                    }
                 }
                 return None;
             }
@@ -344,7 +459,7 @@ impl InputBar {
     /// (after [`InputBar::render`] recorded their areas).
     #[must_use]
     pub fn click_hits(&self, col: u16, row: u16) -> bool {
-        self.field_areas.iter().any(|a| hit(*a, col, row))
+        self.field_areas.iter().any(|a| hit_area(*a, col, row))
             || self.control_areas.iter().any(|(a, _)| hit(*a, col, row))
     }
 
@@ -365,27 +480,68 @@ impl InputBar {
             y += 1;
         }
 
-        for i in 0..self.labels.len() {
-            let row = Rect {
+        // Rows available to the fields, after the border and whatever the
+        // controls row (with its own separator, when bordered) will need.
+        let reserved = if self.controls.is_empty() {
+            0
+        } else {
+            1 + u16::from(self.border.is_some())
+        };
+        let mut budget = area
+            .height
+            .saturating_sub(y - area.y)
+            .saturating_sub(reserved);
+
+        let placeholder = self.placeholder.clone();
+        for i in 0..self.fields.len() {
+            if budget == 0 {
+                break;
+            }
+            // A multi-line field takes what it needs but no more than is left,
+            // scrolling within that; a single-line field takes one row.
+            let rows = self.fields[i].rows().min(budget);
+            let field_area = Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: rows,
             };
-            self.field_areas.push(row);
-            render_labeled_input(
-                buf,
-                row,
-                &LabeledInput {
-                    label: &self.labels[i],
-                    text: self.inputs[i].text(),
-                    cursor: self.inputs[i].cursor_pos(),
-                    selection: self.inputs[i].selection_range(),
-                    focused: active && focus == Focus::Field(i),
-                },
-                colors,
-            );
-            y += 1;
+            self.field_areas.push(field_area);
+            budget -= rows;
+            let focused = active && focus == Focus::Field(i);
+            let label = self.labels[i].clone();
+            match &mut self.fields[i] {
+                FieldInput::Line(input) => {
+                    let row = Rect {
+                        height: 1,
+                        ..field_area
+                    };
+                    render_labeled_input(
+                        buf,
+                        row,
+                        &LabeledInput {
+                            label: &label,
+                            text: input.text(),
+                            cursor: input.cursor_pos(),
+                            selection: input.selection_range(),
+                            focused,
+                        },
+                        colors,
+                    );
+                }
+                FieldInput::Multi(ta) => {
+                    render_multiline(
+                        buf,
+                        field_area,
+                        &label,
+                        placeholder.as_deref(),
+                        ta,
+                        focused,
+                        colors,
+                    );
+                }
+            }
+            y += rows;
         }
 
         if !self.controls.is_empty() {
@@ -595,6 +751,72 @@ fn render_labeled_input(buf: &mut Buffer, area: Rect, field: &LabeledInput, colo
     }
 }
 
+/// Render a multi-line field (a prompt box): the prompt marker (or label) on
+/// the first row, an equal-width indent on continuations, the text scrolled to
+/// keep the cursor visible, an idle placeholder, and the cursor when focused.
+#[allow(clippy::too_many_arguments)]
+fn render_multiline(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    placeholder: Option<&str>,
+    ta: &mut TextArea,
+    focused: bool,
+    colors: &ThemeColors,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let prompt = if label.is_empty() { "› " } else { label };
+    let label_w = str_display_width(prompt) as u16;
+    let indent: String = " ".repeat(label_w as usize);
+    let text_x = area.x + label_w;
+    let text_width = area.width.saturating_sub(label_w);
+    if text_width == 0 {
+        return;
+    }
+
+    ta.ensure_cursor_visible(area.height as usize);
+    let offset = ta.scroll_offset();
+    let prompt_style = Style::default().fg(colors.fg);
+    let text_style = Style::default().fg(colors.fg);
+    let lines = ta.lines();
+    for r in 0..area.height as usize {
+        let y = area.y + r as u16;
+        let prefix = if r == 0 { prompt } else { indent.as_str() };
+        buf.set_string(area.x, y, prefix, prompt_style);
+        if let Some(line) = lines.get(r + offset) {
+            buf.set_stringn(text_x, y, line, text_width as usize, text_style);
+        }
+    }
+
+    let empty = lines.len() <= 1 && lines.first().is_none_or(String::is_empty);
+    if empty && !focused {
+        if let Some(ph) = placeholder {
+            buf.set_stringn(
+                text_x,
+                area.y,
+                ph,
+                text_width as usize,
+                Style::default().fg(colors.disabled),
+            );
+        }
+    }
+
+    if focused {
+        let cursor = ta.cursor();
+        if cursor.row >= offset && cursor.row - offset < area.height as usize {
+            let line = lines.get(cursor.row).map(String::as_str).unwrap_or("");
+            let col: usize = line.chars().take(cursor.col).map(char_width).sum();
+            if (col as u16) < text_width {
+                let x = text_x + col as u16;
+                let y = area.y + (cursor.row - offset) as u16;
+                buf[(x, y)].set_style(Style::default().fg(colors.bg).bg(colors.fg));
+            }
+        }
+    }
+}
+
 fn char_width(c: char) -> usize {
     str_display_width(&c.to_string()).max(1)
 }
@@ -639,6 +861,11 @@ fn edit_text_input(input: &mut TextInput, key: KeyEvent) -> bool {
 
 fn hit(area: Rect, col: u16, row: u16) -> bool {
     col >= area.x && col < area.x + area.width && row == area.y
+}
+
+/// Like [`hit`], but matches any row within a multi-row area.
+fn hit_area(area: Rect, col: u16, row: u16) -> bool {
+    col >= area.x && col < area.x + area.width && row >= area.y && row < area.y + area.height
 }
 
 #[cfg(test)]
@@ -763,6 +990,59 @@ mod tests {
         b.set_field_text(1, "thread");
         assert_eq!(b.field_text(0), "needle");
         assert_eq!(b.field_text(1), "thread");
+    }
+
+    #[test]
+    fn a_multiline_field_grows_the_bar_height() {
+        // One prompt field, no border: one row while empty.
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        assert_eq!(b.field_count(), 1);
+        assert_eq!(b.height(), 1);
+        // Two extra lines make it three rows tall.
+        let area = b.multiline_mut(0).unwrap();
+        area.insert_str("a\nb\nc");
+        assert_eq!(b.height(), 3);
+    }
+
+    #[test]
+    fn typing_into_a_multiline_field_reports_and_reads_back() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        assert_eq!(
+            b.handle_key(key(KeyCode::Char('h'))),
+            Some(InputBarAction::Edited(0))
+        );
+        assert_eq!(b.field_value(0), "h");
+        // Enter submits a field rather than inserting a newline; the host wires
+        // newline insertion through `multiline_mut`.
+        assert_eq!(
+            b.handle_key(key(KeyCode::Enter)),
+            Some(InputBarAction::Submit(0))
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_multiline_field_row_focuses_and_places_the_cursor() {
+        let mut b = InputBar::new(vec![])
+            .with_multiline_field("")
+            .with_control(Control::Button {
+                label: "Send".into(),
+            });
+        b.multiline_mut(0).unwrap().insert_str("one\ntwo");
+        let area = Rect::new(0, 0, 40, b.height());
+        let mut buf = Buffer::filled(area, ratatui::buffer::Cell::default());
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        // Click on the second wrapped row, inside "two" after the "› " prefix.
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(b.handle_mouse(click), None);
+        assert_eq!(b.focused_field(), Some(0));
+        let cursor = b.multiline(0).unwrap().cursor();
+        assert_eq!(cursor.row, 1);
+        assert_eq!(cursor.col, 2);
     }
 
     #[test]
