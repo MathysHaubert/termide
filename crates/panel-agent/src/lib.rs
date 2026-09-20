@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendSetup,
     CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
@@ -754,6 +755,36 @@ impl AgentPanel {
             Some(activity) => activity.enter(phase),
             None => self.activity = Some(Activity::new(phase)),
         }
+    }
+
+    /// The live footer for the transcript: an animated spinner and the current
+    /// phase with its ticking elapsed time (and a live token estimate while
+    /// generating). `None` when idle; the spinner animates on the panel's
+    /// ~10 fps redraw while busy.
+    fn live_footer_line(&self) -> Option<Line<'static>> {
+        const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let activity = self.activity.as_ref()?;
+        let elapsed = activity.since.elapsed();
+        let frame = (elapsed.as_millis() / 80) as usize % SPINNER.len();
+        let secs = elapsed.as_secs_f32();
+        let rest = if activity.phase == Phase::Generating {
+            format!(
+                " {} · {secs:.1}s · {} tok",
+                activity.phase.label(),
+                activity.est_tokens()
+            )
+        } else {
+            format!(" {} · {secs:.1}s", activity.phase.label())
+        };
+        Some(Line::from(vec![
+            Span::styled(
+                SPINNER[frame].to_string(),
+                Style::default()
+                    .fg(self.colors.info)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(rest, Style::default().fg(self.colors.disabled)),
+        ]))
     }
 
     /// The live phase text for the status bar: the phase, its ticking elapsed
@@ -2663,6 +2694,10 @@ impl Panel for AgentPanel {
         let text_width = area.width.saturating_sub(1).max(1);
         let colors = self.colors;
         let is_light = self.is_light;
+        // The live footer (spinner + ticking phase) sits after the last block
+        // while the agent works, and animates on the panel's ~10 fps redraw.
+        let footer = self.live_footer_line();
+        self.transcript.set_live_footer(footer);
         let total = self.transcript.lines(text_width, &colors, is_light).len();
         let max_top = total.saturating_sub(transcript_height as usize);
         if self.follow {

@@ -62,11 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used when the endpoint reports no window. Re-selecting the current model in
   the picker now also refreshes its window.
 
-- **Live activity in the agent status bar.** While the agent works, a ticking
-  indicator names the phase and how long it has taken — `prefill 0.6s`,
-  `generating 3.1s · 88 tok/s`, `tool 5.1s`, `compacting 2.0s`. The context
-  window shows as a fill bar with its percentage (`ctx ▰▱▱▱▱▱▱▱ 12%`), and the
-  session's token totals ride alongside (`↑` input / `↓` output).
+- **Live activity for the agent.** While the agent works, an animated spinner
+  under the last block in the chat names the current phase with its ticking
+  time (`⠹ generating · 3.1s · 512 tok`), and a matching indicator in the
+  status bar names the phase and speed (`generating 3.1s · 88 tok/s`, also
+  `prefill` / `tool` / `compacting`). The status bar shows the context window as
+  a fill bar with its percentage (`ctx ▰▱▱▱▱▱▱▱ 12%`) and the session's token
+  totals (`↑` input / `↓` output).
 
 - **A reasoning toggle in the status bar.** A **reasoning** chip turns extended
   thinking / `reasoning_effort` on or off from the next request; the choice is

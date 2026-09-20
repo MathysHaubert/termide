@@ -69,6 +69,9 @@ pub struct Transcript {
     /// Item index per flattened line, for click-to-expand.
     line_item: Vec<usize>,
     flat_dirty: bool,
+    /// A live footer appended after the last item while the agent works (the
+    /// animated spinner + ticking phase); `None` when idle.
+    live_footer: Option<Line<'static>>,
 }
 
 impl Default for Transcript {
@@ -81,6 +84,7 @@ impl Default for Transcript {
             flat: Vec::new(),
             line_item: Vec::new(),
             flat_dirty: false,
+            live_footer: None,
         }
     }
 }
@@ -121,6 +125,17 @@ impl Transcript {
             *slot = None;
         }
         self.flat_dirty = true;
+    }
+
+    /// Set the live footer shown after the last block while the agent works
+    /// (the animated spinner and the ticking phase). `None` removes it.
+    pub fn set_live_footer(&mut self, footer: Option<Line<'static>>) {
+        // The footer ticks every frame, so a rebuild of the flat line list is
+        // needed whenever it is present or is being cleared.
+        if footer.is_some() || self.live_footer.is_some() {
+            self.flat_dirty = true;
+        }
+        self.live_footer = footer;
     }
 
     /// The streaming assistant message, if the last item is one.
@@ -265,6 +280,10 @@ impl Transcript {
                     self.line_item
                         .extend(std::iter::repeat_n(index, cached.lines.len()));
                 }
+            }
+            if let Some(footer) = &self.live_footer {
+                self.flat.push(footer.clone());
+                self.line_item.push(self.items.len().saturating_sub(1));
             }
             self.flat_dirty = false;
         }
@@ -478,6 +497,25 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    #[test]
+    fn the_live_footer_appears_after_the_last_line_and_clears() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User { text: "hi".into() });
+        let base = transcript.lines(40, &colors, false).len();
+
+        transcript.set_live_footer(Some(Line::from("⠙ generating · 1.2s")));
+        let with = transcript.lines(40, &colors, false);
+        assert_eq!(with.len(), base + 1);
+        assert_eq!(
+            text_of(with).last().map(String::as_str),
+            Some("⠙ generating · 1.2s")
+        );
+
+        transcript.set_live_footer(None);
+        assert_eq!(transcript.lines(40, &colors, false).len(), base);
     }
 
     #[test]

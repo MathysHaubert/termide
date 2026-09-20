@@ -86,7 +86,8 @@ in full; everything else is folded to a preview — a user message to its first
 lines, a tool call to its command and the last few lines of output, the
 agent's thinking to a one-line summary. A tool call shows the tool, what it
 acted on and whether it succeeded, with its live output underneath as it
-runs.
+runs. While the agent works, an animated spinner under the last block names
+the current phase with its ticking time (`⠹ generating · 3.1s · 512 tok`).
 
 Unfold a block to see all of it: click it, or press `Tab` to move into the
 chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on; `Ctrl+O`
