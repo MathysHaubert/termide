@@ -2213,6 +2213,38 @@ impl AgentPanel {
         self.follow = self.top >= max_top;
     }
 
+    /// Bring the selected block into view after the selection moves. Scrolling
+    /// is otherwise free, so this runs only from block navigation, not on every
+    /// frame — a block scrolled off screen stays off until the selection moves.
+    /// Uses the geometry of the last render (viewport height, flat-line layout).
+    fn scroll_selected_into_view(&mut self) {
+        let height = self.viewport_height();
+        if height == 0 {
+            return;
+        }
+        let Some(first) = self.transcript.first_line_of(self.selected) else {
+            return;
+        };
+        let mut last = first;
+        while self.transcript.item_at_line(last + 1) == Some(self.selected) {
+            last += 1;
+        }
+        if first < self.top {
+            // The block starts above the viewport: show it from its start.
+            self.top = first;
+        } else if last >= self.top + height {
+            // It ends below the viewport: reveal its end, or, when it is taller
+            // than the viewport, its start so it reads from the top.
+            self.top = if last - first < height {
+                last + 1 - height
+            } else {
+                first
+            };
+        }
+        self.top = self.top.min(self.max_top());
+        self.follow = self.top >= self.max_top();
+    }
+
     fn input_rows(&self, available: u16) -> u16 {
         let rows = self.input_area().line_count().max(1) as u16;
         rows.min(MAX_INPUT_ROWS)
@@ -2926,13 +2958,11 @@ impl Panel for AgentPanel {
         let mut selected_range: Option<(usize, usize)> = None;
         if self.chat_focus && item_count > 0 {
             self.selected = self.selected.min(item_count - 1);
+            // Scrolling stays free while a block is selected: the view is
+            // brought to a block only when the selection moves (see
+            // `scroll_selected_into_view`), not on every frame. Here we only
+            // note the block's flat-line range to tint.
             if let Some(first) = self.transcript.first_line_of(self.selected) {
-                let height = transcript_height as usize;
-                if first < self.top {
-                    self.top = first;
-                } else if height > 0 && first >= self.top + height {
-                    self.top = first + 1 - height;
-                }
                 let mut last = first;
                 while self.transcript.item_at_line(last + 1) == Some(self.selected) {
                     last += 1;
@@ -3081,6 +3111,7 @@ impl Panel for AgentPanel {
                 KeyCode::Up if !ctrl => {
                     self.selected = self.selected.saturating_sub(1);
                     self.follow = false;
+                    self.scroll_selected_into_view();
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::Down if !ctrl => {
@@ -3088,6 +3119,7 @@ impl Panel for AgentPanel {
                         self.selected += 1;
                     }
                     self.follow = false;
+                    self.scroll_selected_into_view();
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
@@ -4000,6 +4032,89 @@ mod tests {
         assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Tool));
         panel.apply(AgentEvent::AgentEnd);
         assert!(panel.activity.is_none());
+    }
+
+    #[test]
+    fn a_tall_focused_block_scrolls_to_its_end() {
+        // A reply taller than the viewport.
+        let long = (1..=40)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut panel = panel(vec![reply(&long)]);
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        // Render short so the answer cannot fit, then focus its block.
+        let _ = render_text(&mut panel, 40, 10);
+        panel.chat_focus = true;
+        panel.selected = panel.transcript().items().len() - 1;
+
+        // Scrolling to the bottom must reach it: the focus keeps the block in
+        // view without snapping the viewport back to the block's first line.
+        panel.scroll_by(1000);
+        let _ = render_text(&mut panel, 40, 10);
+        assert!(panel.max_top() > 0, "the block is taller than the viewport");
+        assert_eq!(
+            panel.top,
+            panel.max_top(),
+            "a tall focused block still scrolls to its end"
+        );
+    }
+
+    #[test]
+    fn a_selected_block_does_not_trap_scrolling() {
+        let long = (1..=40)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut panel = panel(vec![reply(&long)]);
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let _ = render_text(&mut panel, 40, 10);
+        // Select the first block (the user message at the very top).
+        panel.chat_focus = true;
+        panel.selected = 0;
+        let _ = render_text(&mut panel, 40, 10);
+
+        // The selection near the top does not stop scrolling to the bottom.
+        panel.scroll_by(1000);
+        let _ = render_text(&mut panel, 40, 10);
+        assert!(
+            panel.max_top() > 0,
+            "the content is taller than the viewport"
+        );
+        assert_eq!(panel.top, panel.max_top(), "scrolling down stays free");
+
+        // And scrolling back to the top is equally free.
+        panel.scroll_by(-1000);
+        let _ = render_text(&mut panel, 40, 10);
+        assert_eq!(panel.top, 0, "scrolling up stays free");
+    }
+
+    #[test]
+    fn arrow_navigation_brings_the_selected_block_into_view() {
+        let long = (1..=40)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut panel = panel(vec![reply(&long)]);
+        type_text(&mut panel, "go");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let _ = render_text(&mut panel, 40, 10);
+        // Scroll to the top and focus the chat on the first block.
+        panel.scroll_by(-1000);
+        panel.chat_focus = true;
+        panel.selected = 0;
+        let _ = render_text(&mut panel, 40, 10);
+        assert_eq!(panel.top, 0);
+
+        // Arrowing down to the tall answer scrolls it into view.
+        panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+        let _ = render_text(&mut panel, 40, 10);
+        assert!(panel.top > 0, "the answer below is scrolled into view");
     }
 
     #[test]
