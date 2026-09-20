@@ -90,10 +90,10 @@ you have named or sent even one message to is always kept.
 The conversation is a stack of blocks, each opened by an accent-coloured mark:
 `› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
 for a shell call, `# ` for the system prompt. The answer is shown in full;
-anything longer than five lines is folded to a preview — a user message and the
-system prompt to their first lines, a tool call to its command and the last few
-lines of output, the reasoning to a one-line summary. A folded preview ends with
-a `… N more lines` note. A block of five lines or fewer has nothing worth
+anything longer than five lines is folded to a preview — a user message, the
+system prompt and the reasoning to their first lines, a tool call to its command
+and the last few lines of output. A folded preview ends with a `… N more lines`
+note. A block of five lines or fewer has nothing worth
 hiding, so it is shown in full with no fold marker. Your
 message reads as plain text on a faint background; the reasoning, the system
 prompt and a tool's output are dim text. A shell call reads as its command (dim)
@@ -114,9 +114,11 @@ work figures, no wall-clock. A tool call shows how long it took and its status
 the prefill phase (`⏫ 6s (↑1731, 270 tok/s)`) and the generation phase
 (`✍️ 2s (↓51, 24 tok/s)`), each with its duration (whole seconds), token count
 and average speed; a turn with no reasoning shows those on the answer instead.
-While a block is still being produced its meta zone shows the ticking elapsed
-time and an animated spinner in place of the status check, so the work reads
-where the finished figures will land. Reopening a
+While a turn is still running, the same right-aligned meta zone shows the live
+figures: a `✍️` generation line with the running duration, estimated tokens and
+speed, and below it a `🕒` clock line with the turn's total elapsed time and an
+animated spinner. The `⏫` prefill line waits for the finished block, since the
+input token count is only known once the turn ends. Reopening a
 conversation restores each block's time and its reasoning from the log; the
 per-phase timing is not saved, so restored answers keep the time without the
 prefill/generation lines.

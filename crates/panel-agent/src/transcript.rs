@@ -131,9 +131,10 @@ pub struct Transcript {
     /// Item index per flattened line, for click-to-expand.
     line_item: Vec<usize>,
     flat_dirty: bool,
-    /// A live footer appended after the last item while the agent works (the
-    /// animated spinner + ticking phase); `None` when idle.
-    live_footer: Option<Line<'static>>,
+    /// Live footer lines appended after the last item while the agent works
+    /// (the ticking generation and clock meta with the spinner); empty when
+    /// idle.
+    live_footer: Vec<Line<'static>>,
 }
 
 impl Default for Transcript {
@@ -146,7 +147,7 @@ impl Default for Transcript {
             flat: Vec::new(),
             line_item: Vec::new(),
             flat_dirty: false,
-            live_footer: None,
+            live_footer: Vec::new(),
         }
     }
 }
@@ -190,11 +191,12 @@ impl Transcript {
     }
 
     /// Set the live footer shown after the last block while the agent works
-    /// (the animated spinner and the ticking phase). `None` removes it.
-    pub fn set_live_footer(&mut self, footer: Option<Line<'static>>) {
+    /// (the generation and clock meta with the spinner). An empty vector
+    /// removes it.
+    pub fn set_live_footer(&mut self, footer: Vec<Line<'static>>) {
         // The footer ticks every frame, so a rebuild of the flat line list is
         // needed whenever it is present or is being cleared.
-        if footer.is_some() || self.live_footer.is_some() {
+        if !footer.is_empty() || !self.live_footer.is_empty() {
             self.flat_dirty = true;
         }
         self.live_footer = footer;
@@ -428,8 +430,8 @@ impl Transcript {
                         .extend(std::iter::repeat_n(index, cached.lines.len()));
                 }
             }
-            if let Some(footer) = &self.live_footer {
-                self.flat.push(footer.clone());
+            for line in &self.live_footer {
+                self.flat.push(line.clone());
                 self.line_item.push(self.items.len().saturating_sub(1));
             }
             self.flat_dirty = false;
@@ -450,7 +452,7 @@ fn width_of(s: &str) -> usize {
 
 /// A right-aligned meta line: `spans` pushed to the right edge (one column
 /// short of the scrollbar gutter), the rest padded with spaces.
-fn right_meta(width: u16, spans: Vec<Span<'static>>) -> Line<'static> {
+pub(crate) fn right_meta(width: u16, spans: Vec<Span<'static>>) -> Line<'static> {
     let content: usize = spans.iter().map(|s| width_of(&s.content)).sum();
     let pad = (width as usize).saturating_sub(content + 1);
     let mut out = Vec::with_capacity(spans.len() + 1);
@@ -520,7 +522,7 @@ fn time_meta(
 
 /// A phase duration in whole seconds with localized units: `2s` under a
 /// minute, `1m13s` above. Tenths add no useful information here.
-fn fmt_dur(ms: u32) -> String {
+pub(crate) fn fmt_dur(ms: u32) -> String {
     let t = termide_i18n::t();
     let total = (ms as f32 / 1000.0).round() as u32;
     if total < 60 {
@@ -537,7 +539,7 @@ fn fmt_dur(ms: u32) -> String {
 }
 
 /// Average token throughput for a phase, localized (e.g. `88 tok/s`).
-fn fmt_speed(tokens: u64, ms: u32) -> String {
+pub(crate) fn fmt_speed(tokens: u64, ms: u32) -> String {
     let t = termide_i18n::t();
     let secs = (ms as f32 / 1000.0).max(0.001);
     let rate = (tokens as f32 / secs).round() as u64;
@@ -732,45 +734,50 @@ fn render_item(
             framed
         }
         Item::Thinking { text, cost, .. } => {
-            // Reasoning is its own dim block, marked with an accent `@`. Long
-            // reasoning folds behind a one-line summary; a few lines show as
-            // they are. While it is still empty (prefill) the spinner stands in.
+            // Reasoning is its own dim block, marked with an accent `@`. It folds
+            // like the system block: the fold marker sits before the `@`, a
+            // collapsed block shows its first lines and a skipped-line note, an
+            // expanded one wraps the whole thing.
             let accent = Style::default().fg(colors.info);
             let reasoning = text.trim();
             if reasoning.is_empty() {
                 return Vec::new();
             }
-            let foldable = reasoning.lines().count() > FOLD_THRESHOLD;
+            let all: Vec<&str> = reasoning.lines().collect();
+            let foldable = all.len() > FOLD_THRESHOLD;
+            // The first line carries the fold marker (when foldable) and the `@`;
+            // continuation lines indent to match.
+            let head = |first: bool| -> Vec<Span<'static>> {
+                if !first {
+                    return vec![Span::raw("  ")];
+                }
+                let mut spans = Vec::new();
+                if foldable {
+                    spans.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
+                }
+                spans.push(Span::styled("@ ", accent));
+                spans
+            };
             let mut lines: Vec<Line<'static>> = Vec::new();
             if foldable && collapsed {
-                lines.push(Line::from(vec![
-                    Span::styled("@ ", accent),
-                    Span::styled(
-                        format!("▸ {}", t.agent_thought_chars(text.chars().count())),
-                        dim,
-                    ),
-                ]));
-            } else if foldable {
-                // A header names the block, the reasoning wraps under it.
-                lines.push(Line::from(vec![
-                    Span::styled("@ ", accent),
-                    Span::styled(format!("▾ {}", t.agent_thinking()), dim),
-                ]));
-                lines.extend(wrap_plain(reasoning, width, dim, colors, is_light));
+                for (i, line) in all.iter().take(FOLD_THRESHOLD).enumerate() {
+                    let mut spans = head(i == 0);
+                    spans.push(Span::styled((*line).to_string(), dim));
+                    lines.push(Line::from(spans));
+                }
+                lines.push(Line::styled(
+                    format!("  {}", t.agent_more_lines(all.len() - FOLD_THRESHOLD)),
+                    dim,
+                ));
             } else {
-                // Short reasoning shows in full behind the accent mark, wrapped
-                // to the width rather than clipped.
+                // Expanded, or short enough to never fold: the reasoning wraps
+                // under the marker rather than being clipped.
                 let mut body =
                     wrap_plain(reasoning, width.saturating_sub(2), dim, colors, is_light);
                 for (i, line) in body.iter_mut().enumerate() {
-                    line.spans.insert(
-                        0,
-                        if i == 0 {
-                            Span::styled("@ ", accent)
-                        } else {
-                            Span::raw("  ")
-                        },
-                    );
+                    for span in head(i == 0).into_iter().rev() {
+                        line.spans.insert(0, span);
+                    }
                 }
                 lines.append(&mut body);
             }
@@ -986,15 +993,15 @@ mod tests {
         });
         let base = transcript.lines(40, &colors, false).len();
 
-        transcript.set_live_footer(Some(Line::from("⠙ generating · 1.2s")));
+        transcript.set_live_footer(vec![
+            Line::from("✍️ 3m39s (↓3215, 15 tok/s)"),
+            Line::from("🕒 3m41s ⠙"),
+        ]);
         let with = transcript.lines(40, &colors, false);
-        assert_eq!(with.len(), base + 1);
-        assert_eq!(
-            text_of(with).last().map(String::as_str),
-            Some("⠙ generating · 1.2s")
-        );
+        assert_eq!(with.len(), base + 2);
+        assert_eq!(text_of(with).last().map(String::as_str), Some("🕒 3m41s ⠙"));
 
-        transcript.set_live_footer(None);
+        transcript.set_live_footer(Vec::new());
         assert_eq!(transcript.lines(40, &colors, false).len(), base);
     }
 
@@ -1079,11 +1086,15 @@ mod tests {
         assert_eq!(lines[0].trim_end(), "");
         assert_eq!(lines[1].trim_end(), "");
         assert_eq!(lines[2].trim_end(), "› Fix the bug");
-        // Long thinking folds to a one-line summary by default; the answer shows
-        // behind its own accent mark.
+        // Long thinking folds like the system block: the first lines behind the
+        // `▸ @` marker and a skipped-line note; the answer shows behind its own
+        // accent mark.
         assert!(lines
             .iter()
-            .any(|l| l.contains("@ ") && l.contains("thought for")));
+            .any(|l| l.contains("@ ") && l.contains("mulling this")));
+        assert!(lines.iter().any(|l| l.contains('▸')));
+        assert!(lines.iter().any(|l| l.contains("more lines")));
+        assert!(lines.iter().all(|l| !l.contains("thought for")));
         assert!(lines.iter().any(|l| l.contains("› Looking at")));
         assert!(lines.iter().any(|l| l.contains("Read main.rs")));
         assert_eq!(transcript.line_count(), lines.len());

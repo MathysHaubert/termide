@@ -841,42 +841,58 @@ impl AgentPanel {
     /// (and a live token estimate while generating) and, in place of the status
     /// check, an animated spinner. Sits after the last block, animating on the
     /// panel's ~10 fps redraw while busy; `None` when idle.
-    fn live_footer_line(&self, width: u16) -> Option<Line<'static>> {
+    fn live_footer_lines(&self, width: u16) -> Vec<Line<'static>> {
         const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let activity = self.activity.as_ref()?;
-        let elapsed = activity.since.elapsed();
-        let frame = (elapsed.as_millis() / 80) as usize % SPINNER.len();
-        let secs = elapsed.as_secs_f32();
-        let glyph = match activity.phase {
-            Phase::Tool => "⚙\u{fe0f} ",
-            _ => "🤖 ",
+        let Some(activity) = self.activity.as_ref() else {
+            return Vec::new();
         };
         let dim = Style::default().fg(self.colors.disabled);
-        let mut spans = vec![Span::raw(glyph)];
-        if activity.phase == Phase::Generating {
-            spans.push(Span::styled(
-                format!("{secs:.1}s · {} tok ", activity.est_tokens()),
-                dim,
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        // While tokens stream (an answer or reasoning), a generation line in the
+        // same shape as a finished block's `✍️` meta, with the live estimate.
+        // Input tokens are only known once the turn ends, so the `⏫` prefill
+        // line waits for the finished block.
+        if let Some(first_token) = activity.first_token {
+            let gen_ms = first_token.elapsed().as_millis() as u32;
+            let tokens = activity.est_tokens();
+            lines.push(transcript::right_meta(
+                width,
+                vec![Span::styled(
+                    format!(
+                        "✍\u{fe0f} {} (↓{tokens}, {})",
+                        transcript::fmt_dur(gen_ms),
+                        transcript::fmt_speed(tokens, gen_ms)
+                    ),
+                    dim,
+                )],
             ));
-        } else {
-            spans.push(Span::styled(format!("{secs:.1}s "), dim));
         }
-        spans.push(Span::styled(
-            SPINNER[frame].to_string(),
-            Style::default()
-                .fg(self.colors.info)
-                .add_modifier(Modifier::BOLD),
+        // The clock line: the message's total elapsed time and the spinner.
+        let elapsed = activity.msg_start.elapsed();
+        let frame = (elapsed.as_millis() / 80) as usize % SPINNER.len();
+        let glyph = match activity.phase {
+            Phase::Tool => "⚙\u{fe0f} ",
+            _ => "🕒 ",
+        };
+        lines.push(transcript::right_meta(
+            width,
+            vec![
+                Span::styled(
+                    format!(
+                        "{glyph}{} ",
+                        transcript::fmt_dur(elapsed.as_millis() as u32)
+                    ),
+                    dim,
+                ),
+                Span::styled(
+                    SPINNER[frame].to_string(),
+                    Style::default()
+                        .fg(self.colors.info)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ],
         ));
-        // Right-align to one column short of the scrollbar gutter, like a
-        // finished block's meta.
-        let content: usize = spans
-            .iter()
-            .map(|s| termide_ui::str_display_width(&s.content))
-            .sum();
-        let pad = (width as usize).saturating_sub(content + 1);
-        let mut out = vec![Span::raw(" ".repeat(pad))];
-        out.extend(spans);
-        Some(Line::from(out))
+        lines
     }
 
     /// The live phase text for the status bar: the phase, its ticking elapsed
@@ -2943,7 +2959,7 @@ impl Panel for AgentPanel {
         let is_light = self.is_light;
         // The streaming block's live meta (ticking time + spinner) sits after
         // the last block while the agent works, animating on the ~10 fps redraw.
-        let footer = self.live_footer_line(text_width);
+        let footer = self.live_footer_lines(text_width);
         self.transcript.set_live_footer(footer);
         let total = self.transcript.lines(text_width, &colors, is_light).len();
         let max_top = total.saturating_sub(transcript_height as usize);
@@ -4032,6 +4048,37 @@ mod tests {
         assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Tool));
         panel.apply(AgentEvent::AgentEnd);
         assert!(panel.activity.is_none());
+    }
+
+    #[test]
+    fn the_live_footer_shows_generation_meta_and_a_clock() {
+        let text_of = |panel: &AgentPanel| -> Vec<String> {
+            panel
+                .live_footer_lines(40)
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+                .collect()
+        };
+        let mut panel = panel(vec![]);
+        panel.apply(AgentEvent::AgentStart);
+        panel.apply(AgentEvent::MessageStart);
+        // Prefill: no first token yet — only the clock line, with the spinner.
+        let lines = text_of(&panel);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("🕒"));
+        assert!(!lines[0].contains('✍'));
+
+        // Once tokens stream, the `✍️` generation line joins the clock, in the
+        // same shape as a finished block's meta; the `⏫` prefill line does not
+        // appear live (input tokens are only known at the end).
+        panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
+            "hello there".into(),
+        )));
+        let lines = text_of(&panel);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains('✍') && lines[0].contains('↓'));
+        assert!(lines[1].contains("🕒"));
+        assert!(lines.iter().all(|l| !l.contains('⏫')));
     }
 
     #[test]
