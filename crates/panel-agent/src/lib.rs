@@ -242,14 +242,22 @@ struct Activity {
     /// Characters streamed in the current generation, for a rough live token
     /// count and speed (reconciled to `Usage` at `MessageEnd`).
     gen_chars: usize,
+    /// When the current model message began (`MessageStart`), for the block's
+    /// prefill/generation split in its cost footer.
+    msg_start: Instant,
+    /// When the first token of the current message arrived.
+    first_token: Option<Instant>,
 }
 
 impl Activity {
     fn new(phase: Phase) -> Self {
+        let now = Instant::now();
         Self {
             phase,
-            since: Instant::now(),
+            since: now,
             gen_chars: 0,
+            msg_start: now,
+            first_token: None,
         }
     }
 
@@ -262,6 +270,22 @@ impl Activity {
     /// Rough live token count from streamed characters (~4 chars per token).
     fn est_tokens(&self) -> u64 {
         (self.gen_chars / 4) as u64
+    }
+
+    /// The finished message's cost: prefill (start→first token), generation
+    /// (first token→now) and the token count.
+    fn cost(&self, tokens: u64) -> transcript::Cost {
+        let ms = |d: Duration| d.as_millis() as u32;
+        let prefill_ms = self.first_token.map_or(0, |ft| ms(ft - self.msg_start));
+        let gen_ms = self
+            .first_token
+            .map_or(0, |ft| ms(ft.elapsed()))
+            .min(ms(self.msg_start.elapsed()));
+        transcript::Cost {
+            prefill_ms,
+            gen_ms,
+            tokens,
+        }
     }
 }
 
@@ -360,6 +384,8 @@ pub struct AgentPanel {
     context_tokens: u64,
     /// What the agent is doing right now; `None` when idle.
     activity: Option<Activity>,
+    /// When the running tool started, for its duration in the block footer.
+    tool_start: Option<Instant>,
     /// Session token totals from `Usage`: input (prefill) and output.
     session_input: u64,
     session_output: u64,
@@ -488,6 +514,7 @@ impl AgentPanel {
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
+            tool_start: None,
             session_input: 0,
             session_output: 0,
             last_anim: Instant::now(),
@@ -743,6 +770,7 @@ impl AgentPanel {
         let activity = self
             .activity
             .get_or_insert_with(|| Activity::new(Phase::Generating));
+        activity.first_token.get_or_insert_with(Instant::now);
         if activity.phase != Phase::Generating {
             activity.enter(Phase::Generating);
         }
@@ -827,6 +855,9 @@ impl AgentPanel {
                     thinking: String::new(),
                     streaming: true,
                     error: None,
+                    agent: self.agent.clone(),
+                    at: now_hms(),
+                    cost: None,
                 });
             }
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(delta)) => {
@@ -854,6 +885,7 @@ impl AgentPanel {
                 match &message {
                     Message::User(user) => self.transcript.push(Item::User {
                         text: user.plain_text(),
+                        at: now_hms(),
                     }),
                     Message::Assistant(assistant) => {
                         if assistant.usage.total() > 0 {
@@ -861,9 +893,14 @@ impl AgentPanel {
                         }
                         self.session_input += assistant.usage.input;
                         self.session_output += assistant.usage.output;
+                        let cost = self
+                            .activity
+                            .as_ref()
+                            .map(|a| a.cost(assistant.usage.output));
                         self.transcript.finish_assistant(
                             assistant.plain_text(),
                             assistant.error_message.clone(),
+                            cost,
                         );
                     }
                     Message::ToolResult(_) => {}
@@ -876,10 +913,12 @@ impl AgentPanel {
             }
             AgentEvent::ToolExecutionStart { call } => {
                 self.set_phase(Phase::Tool);
+                self.tool_start = Some(Instant::now());
                 self.transcript.push(Item::Tool {
                     call,
                     result: None,
                     live: None,
+                    duration: None,
                 });
             }
             AgentEvent::ToolExecutionUpdate {
@@ -898,13 +937,21 @@ impl AgentPanel {
                         .push(PanelEvent::FileChangedOnDisk(path));
                 }
                 let id = result.tool_call_id.clone();
+                let took = self
+                    .tool_start
+                    .take()
+                    .map(|start| format!("{:.1}s", start.elapsed().as_secs_f32()));
                 self.transcript.with_tool(&id, |item| {
                     if let Item::Tool {
-                        result: slot, live, ..
+                        result: slot,
+                        live,
+                        duration,
+                        ..
                     } = item
                     {
                         *slot = Some(result);
                         *live = None;
+                        *duration = took;
                     }
                 });
             }
@@ -1521,7 +1568,7 @@ impl AgentPanel {
     fn history(&self) -> Vec<String> {
         let mut history: Vec<String> = Vec::new();
         for item in self.transcript.items() {
-            if let Item::User { text } = item {
+            if let Item::User { text, .. } = item {
                 if history.last() != Some(text) {
                     history.push(text.clone());
                 }
@@ -1572,7 +1619,9 @@ impl AgentPanel {
             return vec![];
         };
         let (content, name) = match item {
-            Item::Tool { call, result, live } => {
+            Item::Tool {
+                call, result, live, ..
+            } => {
                 if let Some(path) = result.as_ref().and_then(full_log_path) {
                     if path.exists() {
                         return vec![PanelEvent::ViewFile(path)];
@@ -1595,7 +1644,7 @@ impl AgentPanel {
                 content.push_str(text);
                 (content, "agent-answer.md".to_string())
             }
-            Item::User { text } => (text.clone(), "message.txt".to_string()),
+            Item::User { text, .. } => (text.clone(), "message.txt".to_string()),
             Item::Notice { .. } => return vec![PanelEvent::NeedsRedraw],
         };
         if content.trim().is_empty() {
@@ -2092,6 +2141,11 @@ fn spawn_model_list(provider: Arc<dyn Provider>) -> Receiver<Result<Vec<ModelInf
     rx
 }
 
+/// Local wall-clock time as `HH:MM:SS`, for a transcript block's byline.
+fn now_hms() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
 /// Upper-case the first character of `name`, leaving the rest as written
 /// (so `reviewer` → `Reviewer`, `web-dev` → `Web-dev`).
 fn capitalize(name: &str) -> String {
@@ -2476,9 +2530,13 @@ fn spawn_runtime(
 /// Mirror a session's message into transcript items when a session is
 /// reopened.
 fn push_history(transcript: &mut Transcript, message: &Message) {
+    // Restored blocks carry no byline or cost: the session log keeps neither a
+    // per-message wall-clock nor its timing, and the live indicators are for
+    // the current run.
     match message {
         Message::User(user) => transcript.push(Item::User {
             text: user.plain_text(),
+            at: String::new(),
         }),
         Message::Assistant(assistant) => {
             for call in assistant.tool_calls() {
@@ -2486,6 +2544,7 @@ fn push_history(transcript: &mut Transcript, message: &Message) {
                     call: call.clone(),
                     result: None,
                     live: None,
+                    duration: None,
                 });
             }
             transcript.push(Item::Assistant {
@@ -2493,6 +2552,9 @@ fn push_history(transcript: &mut Transcript, message: &Message) {
                 thinking: String::new(),
                 streaming: false,
                 error: assistant.error_message.clone(),
+                agent: String::new(),
+                at: String::new(),
+                cost: None,
             });
         }
         Message::ToolResult(result) => {
@@ -2532,7 +2594,7 @@ impl Panel for AgentPanel {
         let subject = named
             .or_else(|| {
                 self.transcript.items().iter().find_map(|item| match item {
-                    Item::User { text } => Some(truncate_title(text)),
+                    Item::User { text, .. } => Some(truncate_title(text)),
                     _ => None,
                 })
             })
@@ -3551,7 +3613,7 @@ mod tests {
         settle(&mut panel);
 
         let items = panel.transcript().items();
-        assert!(matches!(&items[0], Item::User { text } if text == "hi there"));
+        assert!(matches!(&items[0], Item::User { text, .. } if text == "hi there"));
         assert!(items.iter().any(|item| matches!(
             item,
             Item::Assistant { text, streaming: false, .. } if text == "Hello from the model"
@@ -3857,7 +3919,7 @@ mod tests {
         assert_eq!(panel.session_path().unwrap(), first_path);
         assert_eq!(panel.title(), "Agent: first task");
         let items = panel.transcript().items();
-        assert!(matches!(&items[0], Item::User { text } if text == "first task"));
+        assert!(matches!(&items[0], Item::User { text, .. } if text == "first task"));
         assert!(items
             .iter()
             .any(|item| matches!(item, Item::Assistant { text, .. } if text == "one")));
@@ -4466,7 +4528,7 @@ mod tests {
         settle(&mut expanding);
         let items = expanding.transcript().items();
         assert!(
-            matches!(&items[0], Item::User { text } if text == "Review src/x.rs carefully."),
+            matches!(&items[0], Item::User { text, .. } if text == "Review src/x.rs carefully."),
             "{items:?}"
         );
 
@@ -4666,7 +4728,7 @@ mod tests {
         assert!(texts.contains(&" (acp)".to_string()));
         // The earlier conversation is shown, and marked as unknown to the agent.
         let items = panel.transcript().items();
-        assert!(matches!(&items[0], Item::User { text } if text == "hello"));
+        assert!(matches!(&items[0], Item::User { text, .. } if text == "hello"));
         assert!(items.iter().any(
             |i| matches!(i, Item::Notice { text, .. } if text.contains("not known to the external agent"))
         ));
@@ -4761,7 +4823,7 @@ mod tests {
         settle(&mut panel);
         assert!(matches!(
             panel.transcript().items().first(),
-            Some(Item::User { text }) if text == "Review  carefully."
+            Some(Item::User { text, .. }) if text == "Review  carefully."
         ));
 
         // No match, no popup; Esc closes an open one.
@@ -4838,7 +4900,7 @@ mod tests {
                     .transcript()
                     .items()
                     .iter()
-                    .any(|i| matches!(i, Item::User { text: t } if t == text))
+                    .any(|i| matches!(i, Item::User { text: t, .. } if t == text))
                 {
                     break;
                 }
@@ -4958,7 +5020,7 @@ mod tests {
             .transcript()
             .items()
             .iter()
-            .any(|i| matches!(i, Item::User { text } if text == "task two")));
+            .any(|i| matches!(i, Item::User { text, .. } if text == "task two")));
         assert!(panel.transcript().items().iter().any(
             |i| matches!(i, Item::Notice { text, .. } if text.contains("undid the last request"))
         ));
@@ -5007,7 +5069,7 @@ mod tests {
             .items()
             .iter()
             .filter_map(|i| match i {
-                Item::User { text } => Some(text.as_str()),
+                Item::User { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();

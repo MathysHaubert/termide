@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Coding agent panel for termide: transcript, input, tool calls and permission prompts"
 
 [dependencies]
+chrono.workspace = true
 crossterm.workspace = true
 log.workspace = true
 ratatui.workspace = true

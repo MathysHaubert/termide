@@ -24,10 +24,20 @@ pub enum NoticeKind {
     Error,
 }
 
+/// Cost of a finished assistant message, for the block's footer line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cost {
+    pub prefill_ms: u32,
+    pub gen_ms: u32,
+    pub tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     User {
         text: String,
+        /// Local wall-clock time the message was shown, e.g. `21:03:14`.
+        at: String,
     },
     Assistant {
         text: String,
@@ -35,12 +45,20 @@ pub enum Item {
         thinking: String,
         streaming: bool,
         error: Option<String>,
+        /// The agent that produced it (the block byline's "who").
+        agent: String,
+        /// Local wall-clock time the block started (the byline's "when").
+        at: String,
+        /// Timing and token cost, once the message has finished.
+        cost: Option<Cost>,
     },
     Tool {
         call: ToolCall,
         result: Option<ToolResultMessage>,
         /// Accumulated output while the tool is still running.
         live: Option<String>,
+        /// How long the call took, e.g. `5.1s`, once it has finished.
+        duration: Option<String>,
     },
     Notice {
         text: String,
@@ -162,27 +180,34 @@ impl Transcript {
     /// Complete the assistant message being streamed; a message that
     /// arrives whole, without a `MessageStart` (an external agent's failure,
     /// for one), is appended as it is.
-    pub fn finish_assistant(&mut self, text: String, error: Option<String>) {
+    pub fn finish_assistant(&mut self, text: String, error: Option<String>, cost: Option<Cost>) {
         if let Some(index) = self.items.len().checked_sub(1) {
             if let Item::Assistant {
                 text: current,
                 streaming: streaming @ true,
                 error: current_error,
+                cost: current_cost,
                 ..
             } = &mut self.items[index]
             {
                 *current = text;
                 *streaming = false;
                 *current_error = error;
+                *current_cost = cost;
                 self.invalidate(index);
                 return;
             }
         }
+        // A whole message with no `MessageStart` (an external agent's failure):
+        // no byline is known, so leave it blank.
         self.push(Item::Assistant {
             text,
             thinking: String::new(),
             streaming: false,
             error,
+            agent: String::new(),
+            at: String::new(),
+            cost,
         });
     }
 
@@ -296,6 +321,19 @@ impl Transcript {
     }
 }
 
+/// Format a finished message's cost for its footer: total time, its
+/// prefill/generation split, and the tokens produced.
+fn format_cost(cost: &Cost) -> String {
+    let secs = |ms: u32| format!("{:.1}s", ms as f32 / 1000.0);
+    format!(
+        "{} · prefill {} · gen {} · {} tok",
+        secs(cost.prefill_ms + cost.gen_ms),
+        secs(cost.prefill_ms),
+        secs(cost.gen_ms),
+        cost.tokens
+    )
+}
+
 fn render_item(
     item: &Item,
     collapsed: bool,
@@ -306,7 +344,7 @@ fn render_item(
     let t = termide_i18n::t();
     let dim = Style::default().fg(colors.disabled);
     match item {
-        Item::User { text } => {
+        Item::User { text, at } => {
             let trimmed = text.trim();
             let total = trimmed.lines().count();
             // A long paste folds to its first lines; the model still gets the
@@ -320,6 +358,10 @@ fn render_item(
             } else {
                 trimmed.to_string()
             };
+            let mut lines = Vec::new();
+            if !at.is_empty() {
+                lines.push(Line::styled(format!("you · {at}"), dim));
+            }
             let mut builder = Builder::new(width, colors, is_light);
             builder.styled(
                 "› ",
@@ -331,7 +373,7 @@ fn render_item(
             builder.text(&shown);
             builder.pop_style();
             builder.end_paragraph();
-            let mut lines = builder.finish().lines;
+            lines.extend(builder.finish().lines);
             if collapsed && total > USER_PREVIEW_LINES {
                 lines.push(Line::styled(
                     format!("  {}", t.agent_more_lines(total - USER_PREVIEW_LINES)),
@@ -346,8 +388,16 @@ fn render_item(
             thinking,
             streaming,
             error,
+            agent,
+            at,
+            cost,
         } => {
             let mut lines = Vec::new();
+            // Byline: who produced the block and when.
+            if !at.is_empty() {
+                let who = if agent.is_empty() { "agent" } else { agent };
+                lines.push(Line::styled(format!("{who} · {at}"), dim));
+            }
             let think_chars = thinking.chars().count();
             if think_chars > 0 {
                 if collapsed {
@@ -376,12 +426,22 @@ fn render_item(
                     Style::default().fg(colors.error),
                 ));
             }
+            // Cost footer once the message has finished: total time, its
+            // prefill/generation split, and the tokens produced.
+            if let Some(cost) = cost {
+                lines.push(Line::styled(format!("  {}", format_cost(cost)), dim));
+            }
             if !lines.is_empty() && !*streaming {
                 lines.push(Line::default());
             }
             lines
         }
-        Item::Tool { call, result, live } => {
+        Item::Tool {
+            call,
+            result,
+            live,
+            duration,
+        } => {
             let mut lines = Vec::new();
             let glyph = if collapsed { "▸ " } else { "▾ " };
             let (status, status_style) = match (result, live) {
@@ -402,6 +462,13 @@ fn render_item(
                 Span::styled(summary, Style::default().fg(colors.fg)),
                 Span::raw(" "),
                 Span::styled(status, status_style),
+                Span::styled(
+                    duration
+                        .as_ref()
+                        .map(|d| format!(" · {d}"))
+                        .unwrap_or_default(),
+                    dim,
+                ),
             ]));
             let body = match (result, live) {
                 (Some(result), _) => result.plain_text(),
@@ -503,7 +570,10 @@ mod tests {
     fn the_live_footer_appears_after_the_last_line_and_clears() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
-        transcript.push(Item::User { text: "hi".into() });
+        transcript.push(Item::User {
+            text: "hi".into(),
+            at: String::new(),
+        });
         let base = transcript.lines(40, &colors, false).len();
 
         transcript.set_live_footer(Some(Line::from("⠙ generating · 1.2s")));
@@ -519,17 +589,64 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_block_shows_its_byline_and_cost() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::Assistant {
+            text: "Done.".into(),
+            thinking: String::new(),
+            streaming: false,
+            error: None,
+            agent: "default".into(),
+            at: "21:03:16".into(),
+            cost: Some(Cost {
+                prefill_ms: 600,
+                gen_ms: 3600,
+                tokens: 1210,
+            }),
+        });
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert_eq!(
+            lines.first().map(String::as_str),
+            Some("default · 21:03:16")
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("4.2s · prefill 0.6s · gen 3.6s · 1210 tok")),
+            "cost footer: {lines:?}"
+        );
+
+        // A finished tool shows its duration in the header.
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "cargo test" })),
+            result: Some(ToolResultMessage::text(&call("bash", json!({})), "ok")),
+            live: None,
+            duration: Some("5.1s".into()),
+        });
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(
+            lines.iter().any(|l| l.contains("· 5.1s")),
+            "tool duration: {lines:?}"
+        );
+    }
+
+    #[test]
     fn items_render_and_cache_per_width() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
         transcript.push(Item::User {
             text: "Fix the bug".into(),
+            at: String::new(),
         });
         transcript.push(Item::Assistant {
             text: String::new(),
             thinking: String::new(),
             streaming: true,
             error: None,
+            agent: String::new(),
+            at: String::new(),
+            cost: None,
         });
         assert!(transcript.with_streaming_assistant(|text, thinking| {
             text.push_str("Looking at `main.rs` now.");
@@ -539,6 +656,7 @@ mod tests {
             call: call("read", json!({ "path": "main.rs" })),
             result: None,
             live: None,
+            duration: None,
         });
 
         let lines = text_of(transcript.lines(40, &colors, false));
@@ -597,11 +715,15 @@ mod tests {
     fn autofold_off_leaves_every_block_expanded() {
         let mut transcript = Transcript::default();
         transcript.set_autofold(false);
-        transcript.push(Item::User { text: "hi".into() });
+        transcript.push(Item::User {
+            text: "hi".into(),
+            at: String::new(),
+        });
         transcript.push(Item::Tool {
             call: call("bash", json!({ "command": "ls" })),
             result: Some(ToolResultMessage::text(&call("bash", json!({})), "a\nb")),
             live: None,
+            duration: None,
         });
         assert!(transcript.any_expanded());
     }
@@ -615,8 +737,11 @@ mod tests {
             thinking: String::new(),
             streaming: true,
             error: None,
+            agent: String::new(),
+            at: String::new(),
+            cost: None,
         });
-        transcript.finish_assistant(String::new(), Some("HTTP 500".into()));
+        transcript.finish_assistant(String::new(), Some("HTTP 500".into()), None);
         transcript.push(Item::Notice {
             text: "compacted 1200 tokens".into(),
             kind: NoticeKind::Info,
@@ -628,6 +753,7 @@ mod tests {
                 "[exit code 1]",
             )),
             live: None,
+            duration: None,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));

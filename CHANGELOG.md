@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a fill bar with its percentage (`ctx ▰▱▱▱▱▱▱▱ 12%`) and the session's token
   totals (`↑` input / `↓` output).
 
+- **Every chat block has a byline and a cost.** Each block shows who wrote it
+  and when (`default · 21:03:16` for the agent, `you · 21:03:14` for you), and
+  a finished answer ends with a dim cost line — total time, its
+  prefill/generation split, and the tokens produced (`4.2s · prefill 0.6s · gen
+  3.6s · 1210 tok`); a finished tool call shows how long it took.
+
 - **A reasoning toggle in the status bar.** A **reasoning** chip turns extended
   thinking / `reasoning_effort` on or off from the next request; the choice is
   remembered in the session, so a resume comes back with it. The default is the

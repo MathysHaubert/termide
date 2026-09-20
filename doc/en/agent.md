@@ -89,6 +89,12 @@ acted on and whether it succeeded, with its live output underneath as it
 runs. While the agent works, an animated spinner under the last block names
 the current phase with its ticking time (`⠹ generating · 3.1s · 512 tok`).
 
+Each block carries a byline of who wrote it and when — `default · 21:03:16`
+for the agent (a custom agent shows its own name), `you · 21:03:14` for your
+message. A finished answer ends with a dim cost line: the total time, its
+prefill/generation split, and the tokens produced (`4.2s · prefill 0.6s · gen
+3.6s · 1210 tok`); a finished tool call shows how long it took.
+
 Unfold a block to see all of it: click it, or press `Tab` to move into the
 chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on; `Ctrl+O`
 unfolds everything at once, and `o` opens the selected block in its own
