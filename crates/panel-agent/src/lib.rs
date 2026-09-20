@@ -9,7 +9,7 @@
 mod transcript;
 
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
@@ -272,9 +272,9 @@ impl Activity {
         (self.gen_chars / 4) as u64
     }
 
-    /// The finished message's cost: prefill (start→first token), generation
-    /// (first token→now) and the token count.
-    fn cost(&self, tokens: u64) -> transcript::Cost {
+    /// The finished turn's cost from the phase timings and token `usage`:
+    /// prefill (start→first token) and generation (first token→now).
+    fn cost(&self, input: u64, output: u64) -> transcript::Cost {
         let ms = |d: Duration| d.as_millis() as u32;
         let prefill_ms = self.first_token.map_or(0, |ft| ms(ft - self.msg_start));
         let gen_ms = self
@@ -284,7 +284,8 @@ impl Activity {
         transcript::Cost {
             prefill_ms,
             gen_ms,
-            tokens,
+            input,
+            output,
         }
     }
 }
@@ -353,6 +354,9 @@ pub struct AgentPanel {
     /// The worker still has the prompt of the other plan-ness: a mode
     /// switch during a run could not update it, `AgentEnd` retries.
     prompt_stale: bool,
+    /// The system prompt last shown as a `#` block, so a new one is surfaced
+    /// (before the next message) only when it actually changed.
+    shown_system: String,
     persist_rule: Option<PersistFn>,
 
     transcript: Transcript,
@@ -384,11 +388,11 @@ pub struct AgentPanel {
     context_tokens: u64,
     /// What the agent is doing right now; `None` when idle.
     activity: Option<Activity>,
-    /// When the running tool started, for its duration in the block footer.
-    tool_start: Option<Instant>,
     /// Session token totals from `Usage`: input (prefill) and output.
     session_input: u64,
     session_output: u64,
+    /// When each running tool started, to report how long it took (`🕒`).
+    tool_starts: HashMap<String, Instant>,
     /// Throttles the animation redraws requested while busy.
     last_anim: Instant,
 
@@ -496,6 +500,7 @@ impl AgentPanel {
             plan_prompt: setup.plan_prompt,
             autofold: setup.autofold,
             prompt_stale: false,
+            shown_system: String::new(),
             persist_rule: setup.persist_rule,
             transcript,
             input: InputBar::new(vec![])
@@ -514,9 +519,9 @@ impl AgentPanel {
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
-            tool_start: None,
             session_input: 0,
             session_output: 0,
+            tool_starts: HashMap::new(),
             last_anim: Instant::now(),
             colors: ThemeColors::default(),
             is_light: false,
@@ -731,6 +736,16 @@ impl AgentPanel {
             self.queued = self.runtime.queue_lens();
             self.notice("queued for the next turn", NoticeKind::Info);
         } else {
+            // A fresh turn starts: surface the system prompt as a folded `#`
+            // block when it is new or has changed since it was last shown, so it
+            // sits just above this message.
+            let system = self.effective_system_prompt();
+            if system != self.shown_system {
+                self.transcript.push(Item::System {
+                    text: system.clone(),
+                });
+                self.shown_system = system;
+            }
             // A request starts: from here on the files it touches are kept
             // for /undo, together with where the conversation stood.
             if let Some(store) = &self.checkpoints {
@@ -785,34 +800,47 @@ impl AgentPanel {
         }
     }
 
-    /// The live footer for the transcript: an animated spinner and the current
-    /// phase with its ticking elapsed time (and a live token estimate while
-    /// generating). `None` when idle; the spinner animates on the panel's
-    /// ~10 fps redraw while busy.
-    fn live_footer_line(&self) -> Option<Line<'static>> {
+    /// The streaming block's live meta line: the same right-aligned zone a
+    /// finished block shows, but with the block glyph, the ticking elapsed time
+    /// (and a live token estimate while generating) and, in place of the status
+    /// check, an animated spinner. Sits after the last block, animating on the
+    /// panel's ~10 fps redraw while busy; `None` when idle.
+    fn live_footer_line(&self, width: u16) -> Option<Line<'static>> {
         const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let activity = self.activity.as_ref()?;
         let elapsed = activity.since.elapsed();
         let frame = (elapsed.as_millis() / 80) as usize % SPINNER.len();
         let secs = elapsed.as_secs_f32();
-        let rest = if activity.phase == Phase::Generating {
-            format!(
-                " {} · {secs:.1}s · {} tok",
-                activity.phase.label(),
-                activity.est_tokens()
-            )
-        } else {
-            format!(" {} · {secs:.1}s", activity.phase.label())
+        let glyph = match activity.phase {
+            Phase::Tool => "⚙\u{fe0f} ",
+            _ => "🤖 ",
         };
-        Some(Line::from(vec![
-            Span::styled(
-                SPINNER[frame].to_string(),
-                Style::default()
-                    .fg(self.colors.info)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(rest, Style::default().fg(self.colors.disabled)),
-        ]))
+        let dim = Style::default().fg(self.colors.disabled);
+        let mut spans = vec![Span::raw(glyph)];
+        if activity.phase == Phase::Generating {
+            spans.push(Span::styled(
+                format!("{secs:.1}s · {} tok ", activity.est_tokens()),
+                dim,
+            ));
+        } else {
+            spans.push(Span::styled(format!("{secs:.1}s "), dim));
+        }
+        spans.push(Span::styled(
+            SPINNER[frame].to_string(),
+            Style::default()
+                .fg(self.colors.info)
+                .add_modifier(Modifier::BOLD),
+        ));
+        // Right-align to one column short of the scrollbar gutter, like a
+        // finished block's meta.
+        let content: usize = spans
+            .iter()
+            .map(|s| termide_ui::str_display_width(&s.content))
+            .sum();
+        let pad = (width as usize).saturating_sub(content + 1);
+        let mut out = vec![Span::raw(" ".repeat(pad))];
+        out.extend(spans);
+        Some(Line::from(out))
     }
 
     /// The live phase text for the status bar: the phase, its ticking elapsed
@@ -849,27 +877,18 @@ impl AgentPanel {
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => {
+                // The reasoning and answer blocks are created lazily on their
+                // first delta, so the reasoning lands above the answer and a
+                // prefill with neither shows only the spinner.
                 self.activity = Some(Activity::new(Phase::Prefill));
-                self.transcript.push(Item::Assistant {
-                    text: String::new(),
-                    thinking: String::new(),
-                    streaming: true,
-                    error: None,
-                    agent: self.agent.clone(),
-                    at: now_hms(),
-                    cost: None,
-                });
             }
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(delta)) => {
                 self.note_generation(delta.chars().count());
-                self.transcript
-                    .with_streaming_assistant(|text, _| text.push_str(&delta));
+                self.transcript.stream_answer(&delta);
             }
             AgentEvent::MessageUpdate(StreamEvent::ThinkingDelta(delta)) => {
                 self.note_generation(delta.chars().count());
-                self.transcript.with_streaming_assistant(|_, thinking| {
-                    thinking.push_str(&delta);
-                });
+                self.transcript.stream_thinking(&delta);
             }
             AgentEvent::MessageUpdate(StreamEvent::Retry {
                 attempt,
@@ -896,11 +915,21 @@ impl AgentPanel {
                         let cost = self
                             .activity
                             .as_ref()
-                            .map(|a| a.cost(assistant.usage.output));
+                            .map(|a| a.cost(assistant.usage.input, assistant.usage.output));
+                        let at = now_hms();
+                        let error = assistant.error_message.clone();
+                        // The answer always carries the wall-clock time; a
+                        // reasoning block, if any, carries the prefill/generation
+                        // indicators (else the answer does). A tool-only turn
+                        // (reasoning, no answer text) leaves no answer block.
+                        let had_thinking = self.transcript.finish_thinking(&at, cost);
+                        let answer_cost = if had_thinking { None } else { cost };
                         self.transcript.finish_assistant(
                             assistant.plain_text(),
-                            assistant.error_message.clone(),
-                            cost,
+                            error,
+                            answer_cost,
+                            at,
+                            had_thinking,
                         );
                     }
                     Message::ToolResult(_) => {}
@@ -913,12 +942,13 @@ impl AgentPanel {
             }
             AgentEvent::ToolExecutionStart { call } => {
                 self.set_phase(Phase::Tool);
-                self.tool_start = Some(Instant::now());
+                self.tool_starts.insert(call.id.clone(), Instant::now());
                 self.transcript.push(Item::Tool {
                     call,
                     result: None,
                     live: None,
-                    duration: None,
+                    at: String::new(),
+                    duration_ms: None,
                 });
             }
             AgentEvent::ToolExecutionUpdate {
@@ -937,21 +967,24 @@ impl AgentPanel {
                         .push(PanelEvent::FileChangedOnDisk(path));
                 }
                 let id = result.tool_call_id.clone();
-                let took = self
-                    .tool_start
-                    .take()
-                    .map(|start| format!("{:.1}s", start.elapsed().as_secs_f32()));
+                let finished = now_hms();
+                let elapsed = self
+                    .tool_starts
+                    .remove(&id)
+                    .map(|start| start.elapsed().as_millis() as u32);
                 self.transcript.with_tool(&id, |item| {
                     if let Item::Tool {
                         result: slot,
                         live,
-                        duration,
+                        at,
+                        duration_ms,
                         ..
                     } = item
                     {
                         *slot = Some(result);
                         *live = None;
-                        *duration = took;
+                        *at = finished;
+                        *duration_ms = elapsed;
                     }
                 });
             }
@@ -1610,21 +1643,24 @@ impl AgentPanel {
 
     /// Recompute the `/command` popup after the input changed: it shows
     /// while the input is a single `/word` with no space yet.
-    /// The plain text of the block under the chat cursor, for `Copy`.
+    /// The plain text of the block under the chat cursor, for `Copy`, trimmed of
+    /// the stray leading/trailing blank lines models and tools produce.
     fn selected_block_text(&self) -> Option<String> {
-        match self.transcript.items().get(self.selected)? {
-            Item::User { text, .. } | Item::Assistant { text, .. } => Some(text.clone()),
-            Item::Notice { text, .. } => Some(text.clone()),
+        let text = match self.transcript.items().get(self.selected)? {
+            Item::User { text, .. }
+            | Item::Assistant { text, .. }
+            | Item::Thinking { text, .. }
+            | Item::System { text } => text.clone(),
+            Item::Notice { text, .. } => text.clone(),
             Item::Tool {
                 result, live, call, ..
-            } => Some(
-                result
-                    .as_ref()
-                    .map(ToolResultMessage::plain_text)
-                    .or_else(|| live.clone())
-                    .unwrap_or_else(|| call.name.clone()),
-            ),
-        }
+            } => result
+                .as_ref()
+                .map(ToolResultMessage::plain_text)
+                .or_else(|| live.clone())
+                .unwrap_or_else(|| call.name.clone()),
+        };
+        Some(text.trim().to_string())
     }
 
     /// Open the selected block's full output as a read-only panel, for a
@@ -1651,16 +1687,9 @@ impl AgentPanel {
                     .unwrap_or_default();
                 (body, format!("{}-output.txt", call.name))
             }
-            Item::Assistant { text, thinking, .. } => {
-                let mut content = String::new();
-                if !thinking.trim().is_empty() {
-                    content.push_str("# Thinking\n\n");
-                    content.push_str(thinking);
-                    content.push_str("\n\n# Answer\n\n");
-                }
-                content.push_str(text);
-                (content, "agent-answer.md".to_string())
-            }
+            Item::Assistant { text, .. } => (text.clone(), "agent-answer.md".to_string()),
+            Item::Thinking { text, .. } => (text.clone(), "agent-thinking.md".to_string()),
+            Item::System { text } => (text.clone(), "system-prompt.md".to_string()),
             Item::User { text, .. } => (text.clone(), "message.txt".to_string()),
             Item::Notice { .. } => return vec![PanelEvent::NeedsRedraw],
         };
@@ -2471,12 +2500,13 @@ fn spawn_runtime(
 
     let mut transcript = Transcript::default();
     transcript.set_autofold(autofold);
-    let messages = session
-        .map(|s| s.context_messages_with(compaction_prompts))
+    let history = session
+        .map(|s| s.context_messages_with_times(compaction_prompts))
         .unwrap_or_default();
-    for message in &messages {
-        push_history(&mut transcript, message);
+    for (message, ts) in &history {
+        push_history(&mut transcript, message, hms_from_millis(*ts));
     }
+    let messages: Vec<Message> = history.into_iter().map(|(message, _)| message).collect();
 
     if let Some(factory) = backend {
         // The external agent gets its own prompter on a channel of its own;
@@ -2545,43 +2575,79 @@ fn spawn_runtime(
 }
 
 /// Mirror a session's message into transcript items when a session is
-/// reopened.
-fn push_history(transcript: &mut Transcript, message: &Message) {
-    // Restored blocks carry no byline or cost: the session log keeps neither a
-    // per-message wall-clock nor its timing, and the live indicators are for
-    // the current run.
+/// reopened. `at` is the message's wall-clock time (`HH:MM:SS`), restored from
+/// the session log so historical blocks still show when they were written; the
+/// per-phase cost is not persisted, so restored answers get no prefill/gen
+/// indicators.
+fn push_history(transcript: &mut Transcript, message: &Message, at: String) {
     match message {
         Message::User(user) => transcript.push(Item::User {
             text: user.plain_text(),
-            at: String::new(),
+            at,
         }),
         Message::Assistant(assistant) => {
+            // Reasoning is restored as its own block above the tools and answer.
+            // When it is present it carries the turn's meta (time), and the
+            // answer is left as plain text, matching a live turn. The prefill /
+            // generation cost is not persisted, so no `⏫`/`✍️` on resume.
+            let thinking = assistant.thinking_text();
+            let has_thinking = !thinking.trim().is_empty();
+            if has_thinking {
+                transcript.push(Item::Thinking {
+                    text: thinking,
+                    streaming: false,
+                    at: at.clone(),
+                    cost: None,
+                });
+            }
             for call in assistant.tool_calls() {
                 transcript.push(Item::Tool {
                     call: call.clone(),
                     result: None,
                     live: None,
-                    duration: None,
+                    at: at.clone(),
+                    duration_ms: None,
                 });
             }
-            transcript.push(Item::Assistant {
-                text: assistant.plain_text(),
-                thinking: String::new(),
-                streaming: false,
-                error: assistant.error_message.clone(),
-                agent: String::new(),
-                at: String::new(),
-                cost: None,
-            });
+            // The answer keeps its wall-clock time; skip an empty answer block
+            // when the reasoning already stands for the turn (a tool-only turn),
+            // so no phantom block is left behind.
+            let answer = assistant.plain_text();
+            let error = assistant.error_message.clone();
+            if !answer.trim().is_empty() || !has_thinking || error.is_some() {
+                transcript.push(Item::Assistant {
+                    text: answer,
+                    streaming: false,
+                    error,
+                    at,
+                    cost: None,
+                });
+            }
         }
         Message::ToolResult(result) => {
             let id = result.tool_call_id.clone();
             transcript.with_tool(&id, |item| {
-                if let Item::Tool { result: slot, .. } = item {
+                if let Item::Tool {
+                    result: slot,
+                    at: tool_at,
+                    ..
+                } = item
+                {
                     *slot = Some(result.clone());
+                    *tool_at = at;
                 }
             });
         }
+    }
+}
+
+/// Format an epoch-millis timestamp as the local `HH:MM:SS`, matching
+/// [`now_hms`] so restored blocks read the same as live ones.
+fn hms_from_millis(ms: u64) -> String {
+    use chrono::TimeZone;
+    match chrono::Local.timestamp_millis_opt(ms as i64) {
+        chrono::offset::LocalResult::Single(dt) => dt.format("%H:%M:%S").to_string(),
+        _ => String::new(),
     }
 }
 
@@ -2773,9 +2839,9 @@ impl Panel for AgentPanel {
         let text_width = area.width.saturating_sub(1).max(1);
         let colors = self.colors;
         let is_light = self.is_light;
-        // The live footer (spinner + ticking phase) sits after the last block
-        // while the agent works, and animates on the panel's ~10 fps redraw.
-        let footer = self.live_footer_line();
+        // The streaming block's live meta (ticking time + spinner) sits after
+        // the last block while the agent works, animating on the ~10 fps redraw.
+        let footer = self.live_footer_line(text_width);
         self.transcript.set_live_footer(footer);
         let total = self.transcript.lines(text_width, &colors, is_light).len();
         let max_top = total.saturating_sub(transcript_height as usize);
@@ -2801,7 +2867,10 @@ impl Panel for AgentPanel {
                 while self.transcript.item_at_line(last + 1) == Some(self.selected) {
                     last += 1;
                 }
-                selected_range = Some((first, last));
+                // The block's first line is its leading rule (or, for a user
+                // message, the gap above the plate); leave it out of the
+                // highlight so the divider is not inverted.
+                selected_range = Some((first + 1, last));
             }
         }
         let lines = self.transcript.lines(text_width, &colors, is_light);
@@ -3094,6 +3163,12 @@ impl Panel for AgentPanel {
                     && event.row >= area.y
                     && event.row < area.y + area.height;
                 if !inside {
+                    // A click below the transcript lands on the input: hand focus
+                    // back to it so typing resumes.
+                    if self.chat_focus {
+                        self.chat_focus = false;
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
                     return vec![];
                 }
                 let line = self.top + (event.row - area.y) as usize;
@@ -3413,12 +3488,27 @@ mod tests {
                 return AssistantMessage::failed("scripted", "m", StopReason::Error, "exhausted");
             }
             let reply = replies.remove(0);
+            let thinking = reply.thinking_text();
+            if !thinking.is_empty() {
+                on_event(StreamEvent::ThinkingDelta(thinking));
+            }
             on_event(StreamEvent::TextDelta(reply.plain_text()));
             reply
         }
         fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
             self.models.clone()
         }
+    }
+
+    fn reply_thinking(text: &str, thinking: &str) -> AssistantMessage {
+        let mut message = reply(text);
+        message.content.insert(
+            0,
+            AssistantContent::Thinking {
+                text: thinking.into(),
+            },
+        );
+        message
     }
 
     fn reply(text: &str) -> AssistantMessage {
@@ -3655,7 +3745,7 @@ mod tests {
             item,
             Item::Assistant { text, streaming: false, .. } if text == "Hello from the model"
         )));
-        let rows = render_text(&mut panel, 40, 8);
+        let rows = render_text(&mut panel, 40, 16);
         assert!(rows.iter().any(|r| r.contains("› hi there")));
         assert!(rows.iter().any(|r| r.contains("Hello from the model")));
         assert!(
@@ -3866,6 +3956,43 @@ mod tests {
         assert!(panel
             .selected_block_text()
             .is_some_and(|t| !t.trim().is_empty()));
+
+        // A click below the transcript (on the input) hands focus back.
+        let below = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 1,
+            row: area.y + area.height + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        panel.handle_mouse(below, area);
+        assert!(
+            !panel.chat_focus,
+            "a click on the input returns focus to it"
+        );
+    }
+
+    #[test]
+    fn a_resumed_block_shows_its_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), dir.path()).unwrap();
+        session
+            .append_message(&Message::User(UserMessage::text("earlier question")))
+            .unwrap();
+        session
+            .append_message(&Message::Assistant(reply("earlier answer")))
+            .unwrap();
+        let path = session.path().to_path_buf();
+        // Reopen: the restored blocks carry the wall-clock time from the log.
+        let session = Session::open(&path).unwrap();
+        let mut transcript = Transcript::default();
+        for (message, ts) in &session.context_messages_with_times(&CompactionPrompts::default()) {
+            push_history(&mut transcript, message, hms_from_millis(*ts));
+        }
+        let has_time = transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Assistant { at, .. } if !at.is_empty()));
+        assert!(has_time, "a resumed answer keeps its time");
     }
 
     #[test]
@@ -4385,6 +4512,40 @@ mod tests {
         // The prompt file is not mistaken for a session.
         assert!(panel.session_list().iter().all(|s| s.path != *path));
     }
+
+    #[test]
+    fn a_system_prompt_block_shows_once_and_on_change() {
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            system_prompt: "Base prompt.".into(),
+            ..setup(vec![reply("a"), reply("b"), reply("c")])
+        });
+        let count = |p: &AgentPanel| {
+            p.transcript()
+                .items()
+                .iter()
+                .filter(|i| matches!(i, Item::System { .. }))
+                .count()
+        };
+
+        type_text(&mut panel, "hi");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(count(&panel), 1, "shown with the first message");
+
+        // Unchanged prompt: not repeated.
+        type_text(&mut panel, "again");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(count(&panel), 1, "not repeated when unchanged");
+
+        // A different agent has a different prompt: shown again.
+        assert!(panel.switch_agent("review"));
+        type_text(&mut panel, "more");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert_eq!(count(&panel), 2, "shown again after it changed");
+    }
+
     #[test]
     fn switching_agents_changes_prompt_model_and_mode_and_is_saved() {
         let dir = tempfile::tempdir().unwrap();
@@ -4495,7 +4656,10 @@ mod tests {
 
     #[test]
     fn tab_moves_focus_to_the_chat_and_arrows_fold_blocks() {
-        let mut panel = AgentPanel::new(setup(vec![reply("the answer")]));
+        // The answer folds only when its reasoning is long enough to be worth
+        // hiding.
+        let thinking = "l1\nl2\nl3\nl4\nl5\nl6";
+        let mut panel = AgentPanel::new(setup(vec![reply_thinking("the answer", thinking)]));
         type_text(&mut panel, "do it");
         panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
         settle(&mut panel);
@@ -4503,24 +4667,29 @@ mod tests {
         assert!(panel.transcript().items().len() >= 2);
         assert!(!panel.chat_focus);
 
-        // Tab moves focus to the chat, on the last block.
+        // Tab moves focus to the chat, on the last (answer) block, which is not
+        // foldable. Blocks are user(0), thinking(1), answer(2).
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
         assert!(panel.chat_focus);
         assert_eq!(panel.selected, panel.transcript().items().len() - 1);
 
-        // Up walks to the user block; a printable key does not type.
+        // Up walks to the reasoning block, which folds; Space expands it, again
+        // folds it.
         panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(panel.selected, panel.transcript().items().len() - 2);
-        panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(panel.input_text().is_empty());
-
-        // Everything starts folded; Space expands the selected block, again
-        // folds it. Tab returns focus to the input.
         assert!(!panel.transcript().any_expanded());
         panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
         assert!(panel.transcript().any_expanded());
         panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
         assert!(!panel.transcript().any_expanded());
+
+        // Up walks to the user block; a printable key does not type.
+        panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(panel.selected, 0);
+        panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(panel.input_text().is_empty());
+
+        // Tab returns focus to the input.
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
         assert!(!panel.chat_focus);
         type_text(&mut panel, "hi");

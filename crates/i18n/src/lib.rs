@@ -446,6 +446,18 @@ pub trait Translation: Send + Sync {
     fn agent_more_lines_above(&self, count: usize) -> String;
     /// Agent transcript: hidden lines below a folded message/output preview.
     fn agent_more_lines(&self, count: usize) -> String;
+    /// Agent transcript: unit for seconds in a block's meta line.
+    fn agent_unit_secs(&self) -> &str;
+    /// Agent transcript: unit for minutes in a block's meta line.
+    fn agent_unit_mins(&self) -> &str;
+    /// Agent transcript: tokens-per-second unit in a block's meta line.
+    fn agent_unit_tok_per_sec(&self) -> &str;
+    /// Agent transcript: the action verb for a `read` tool call.
+    fn agent_tool_read(&self) -> &str;
+    /// Agent transcript: the action verb for a `write` tool call.
+    fn agent_tool_write(&self) -> &str;
+    /// Agent transcript: the action verb for an `edit` tool call.
+    fn agent_tool_edit(&self) -> &str;
     /// Settings modal: the Agent tab label.
     fn settings_tab_agent(&self) -> &str;
     /// Settings modal: Agent tab field labels.

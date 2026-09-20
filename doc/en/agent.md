@@ -83,27 +83,47 @@ you have named or sent even one message to is always kept.
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the start, or back to following the newest output |
 
-The conversation is a stack of foldable blocks. The agent's answer is shown
-in full; everything else is folded to a preview — a user message to its first
-lines, a tool call to its command and the last few lines of output, the
-agent's thinking to a one-line summary. A tool call shows the tool, what it
-acted on and whether it succeeded, with its live output underneath as it
-runs. While the agent works, an animated spinner under the last block names
-the current phase with its ticking time (`⠹ generating · 3.1s · 512 tok`).
+The conversation is a stack of blocks, each opened by an accent-coloured mark:
+`› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
+for a shell call, `# ` for the system prompt. The answer is shown in full;
+anything longer than five lines is folded to a preview — a user message and the
+system prompt to their first lines, a tool call to its command and the last few
+lines of output, the reasoning to a one-line summary. A folded preview ends with
+a `… N more lines` note. A block of five lines or fewer has nothing worth
+hiding, so it is shown in full with no fold marker. Your
+message reads as plain text on a faint background; the reasoning, the system
+prompt and a tool's output are dim text. A shell call reads as its command (dim)
+behind the `$ ` prompt, a file tool as a localized action and its path (`Read
+src/main.rs`), any other tool as its name and a summary. The reasoning is its own
+block above the answer, and its text wraps to the width. Every block except your
+message opens with a dim dashed rule that sets it apart from the one before. A
+folded block is marked with `▸`, an unfolded one with `▾`.
 
-Each block carries a byline of who wrote it and when — `default · 21:03:16`
-for the agent (a custom agent shows its own name), `you · 21:03:14` for your
-message. A finished answer ends with a dim cost line: the total time, its
-prefill/generation split, and the tokens produced (`4.2s · prefill 0.6s · gen
-3.6s · 1210 tok`); a finished tool call shows how long it took.
+The system prompt in effect is shown as a folded `# ` block at the start of a
+session and again whenever it changes before your next message (switching agent
+or mode, for instance), so what the model was told is always in view.
+
+Your message and the agent's answer each end with a dim, right-aligned time and a
+`✓`/`✗` status (`18:34:01 ✓`); the reasoning and tool blocks carry only their
+work figures, no wall-clock. A tool call shows how long it took and its status
+(`🕒 6s ✓`). When a turn reasons, the reasoning block carries the turn's cost —
+the prefill phase (`⏫ 6s (↑1731, 270 tok/s)`) and the generation phase
+(`✍️ 2s (↓51, 24 tok/s)`), each with its duration (whole seconds), token count
+and average speed; a turn with no reasoning shows those on the answer instead.
+While a block is still being produced its meta zone shows the ticking elapsed
+time and an animated spinner in place of the status check, so the work reads
+where the finished figures will land. Reopening a
+conversation restores each block's time and its reasoning from the log; the
+per-phase timing is not saved, so restored answers keep the time without the
+prefill/generation lines.
 
 Unfold a block to see all of it: click it, or press `Tab` to move into the
 chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on; `Ctrl+O`
 unfolds everything at once, and `o` opens the selected block in its own
 read-only panel for a bigger view (a command with a saved full log opens that
-file). `Tab` again returns to the input. The panel
-follows the newest output until you scroll up, and resumes following when you
-scroll back to the bottom.
+file). `Tab`, or a click back on the input, returns focus to the input. The
+panel follows the newest output until you scroll up, and resumes following when
+you scroll back to the bottom.
 
 To copy a whole block, select it (click it or move to it) and press `Ctrl+C`.
 TermIDE captures the mouse, so to select arbitrary text with the mouse instead

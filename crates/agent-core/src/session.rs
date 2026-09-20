@@ -419,6 +419,33 @@ impl Session {
         messages
     }
 
+    /// [`Session::context_messages_with`] paired with each message's wall-clock
+    /// timestamp (millis), so a reopened conversation can show when each block
+    /// was written. A compaction summary carries the compaction entry's time.
+    #[must_use]
+    pub fn context_messages_with_times(&self, prompts: &CompactionPrompts) -> Vec<(Message, u64)> {
+        let mut messages: Vec<(Message, u64)> = Vec::new();
+        for entry in self.branch() {
+            match &entry.kind {
+                EntryKind::Message { message } => messages.push((message.clone(), entry.timestamp)),
+                EntryKind::ModelChange { .. }
+                | EntryKind::SessionName { .. }
+                | EntryKind::AgentChange { .. }
+                | EntryKind::Rewind
+                | EntryKind::ReasoningChange { .. } => {}
+                EntryKind::Compaction {
+                    summary, keep_last, ..
+                } => {
+                    let start = messages.len().saturating_sub(*keep_last);
+                    let tail = messages.split_off(start);
+                    messages = vec![(prompts.summary_message(summary), entry.timestamp)];
+                    messages.extend(tail);
+                }
+            }
+        }
+        messages
+    }
+
     /// The conversation's name: the last one set on the current branch, or
     /// the one the file was created with.
     #[must_use]

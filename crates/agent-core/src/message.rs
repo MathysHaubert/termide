@@ -169,6 +169,19 @@ impl AssistantMessage {
             })
             .collect()
     }
+
+    /// Concatenated thinking blocks, so a reopened conversation can show the
+    /// reasoning it recorded.
+    #[must_use]
+    pub fn thinking_text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                AssistantContent::Thinking { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
