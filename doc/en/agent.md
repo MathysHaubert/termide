@@ -232,13 +232,16 @@ then the editor keeps them and marks the conflict, as with any change on disk
 
 Nothing that changes your project happens without your say-so. When the agent
 wants to do something that is not already allowed, a card appears in the
-panel above the input with six rows: allow once, allow for this session,
-allow always, deny, **deny and tell the agent why** (a sentence you type,
-returned to the model as the reason, so it can take another way), and
-**stop the run**. `↑`/`↓` and `Enter`, the digits `1`–`6`, or a click answer
-it; `Esc` stops the run. The status line announces the question too, so a
-panel that is not in focus does not ask unseen. "Allow always" appends a rule
-to `.termide/config.toml` in the project.
+panel above the input. Its title is the intent — "Agent wants to run bash:" —
+and under it, dim, exactly what that is (the command or path); a long one
+folds to five lines that a click unfolds. Six rows follow: allow once, allow
+for this session, allow always, deny, **deny and tell the agent why** (a
+sentence you type, returned to the model as the reason, so it can take another
+way), and **stop the run**. `↑`/`↓` and `Enter`, or the digits `1`–`6`, answer
+it; a click picks a row and a second click (or `Enter`) confirms it, so a
+stray click cannot answer; `Esc` stops the run. The status line announces the
+question too, so a panel that is not in focus does not ask unseen. "Allow
+always" appends a rule to `.termide/config.toml` in the project.
 
 Rules live per tool. Among the rules that match, the strictest wins, so a
 `deny` always beats an `allow`:

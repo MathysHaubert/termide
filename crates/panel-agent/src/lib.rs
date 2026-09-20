@@ -37,7 +37,8 @@ use termide_core::{
 use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
 use termide_ui::{
-    ChoiceAction, ChoiceForm, CompletionAction, CompletionItem, CompletionList, InputBar, ScrollBar,
+    ChoiceAction, ChoiceForm, ClickTracker, CompletionAction, CompletionItem, CompletionList,
+    InputBar, ScrollBar,
 };
 
 pub use transcript::{Item, NoticeKind, Transcript};
@@ -379,6 +380,9 @@ pub struct AgentPanel {
     /// When the open completion is an `@`-file mention, the span it replaces;
     /// `None` for a `/`-command completion, which replaces the whole input.
     completion_span: Option<MentionSpan>,
+    /// Consecutive clicks on a form row, so a single click selects and a
+    /// double click confirms; keyed by the row index.
+    form_clicks: ClickTracker<usize>,
     /// Keyboard focus is in the chat, not the input: `Tab` toggles it, then
     /// the arrows pick a block and Space/Enter fold it.
     chat_focus: bool,
@@ -517,6 +521,7 @@ impl AgentPanel {
             draft: String::new(),
             completion: None,
             completion_span: None,
+            form_clicks: ClickTracker::new(),
             chat_focus: false,
             selected: 0,
             top: 0,
@@ -1061,11 +1066,20 @@ impl AgentPanel {
             // with several panels open a modal does not say who is asking.
             // The status line still announces it for an unfocused panel.
             let request = &envelope.request;
-            // MCP tools and others without a path or command have no subject.
-            let title = if request.subject.is_empty() {
-                format!("Agent wants to run {}", request.tool)
+            // The card shows the intent in its title and what exactly the agent
+            // wants to do in the detail block below. MCP tools and others
+            // without a path or command have no subject, so no detail.
+            let has_subject = !request.subject.is_empty();
+            let title = if has_subject {
+                format!("Agent wants to run {}:", request.tool)
             } else {
+                format!("Agent wants to run {}", request.tool)
+            };
+            // The status line, for an unfocused panel, still names the subject.
+            let status = if has_subject {
                 format!("Agent wants to run {}: {}", request.tool, request.subject)
+            } else {
+                title.clone()
             };
             let options = PERMISSION_OPTIONS
                 .iter()
@@ -1078,13 +1092,16 @@ impl AgentPanel {
                     }
                 })
                 .collect();
-            events.push(PanelEvent::SetStatusMessage {
-                message: title.clone(),
-                is_error: false,
-            });
-            let form = ChoiceForm::new(title, options)
+            let mut form = ChoiceForm::new(title, options)
                 .with_custom("Deny and tell the agent why")
                 .with_cancel("Stop the run");
+            if has_subject {
+                form = form.with_detail(request.subject.clone());
+            }
+            events.push(PanelEvent::SetStatusMessage {
+                message: status,
+                is_error: false,
+            });
             self.pending = Some(Pending::Permission { envelope, form });
         }
         events
@@ -2861,7 +2878,7 @@ impl Panel for AgentPanel {
         let form_rows = self
             .pending
             .as_ref()
-            .map_or(0, |pending| pending.form().height())
+            .map_or(0, |pending| pending.form().height(area.width))
             .min(area.height.saturating_sub(bar_rows + 1));
         let has_separator = form_rows > 0 && area.height > bar_rows + form_rows;
         let transcript_height = area
@@ -3197,9 +3214,37 @@ impl Panel for AgentPanel {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(pending) = &mut self.pending {
-                    let action = pending.form_mut().click(event.column, event.row);
-                    if self.apply_form_action(action) {
+                if self.pending.is_some() {
+                    // A click on a row selects it, and only a second click (a
+                    // double click) on the same row confirms — so a misplaced
+                    // click cannot answer. A click on the detail folds it.
+                    let hit = self
+                        .pending
+                        .as_ref()
+                        .unwrap()
+                        .form()
+                        .hit(event.column, event.row);
+                    if let Some(index) = hit {
+                        if self.form_clicks.click(index) >= 2 {
+                            self.form_clicks.reset();
+                            let action =
+                                self.pending.as_mut().unwrap().form_mut().activate_at(index);
+                            if self.apply_form_action(action) {
+                                return vec![PanelEvent::NeedsRedraw];
+                            }
+                        } else {
+                            self.pending.as_mut().unwrap().form_mut().select(index);
+                        }
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
+                    if self
+                        .pending
+                        .as_mut()
+                        .unwrap()
+                        .form_mut()
+                        .click_select(event.column, event.row)
+                    {
+                        self.form_clicks.reset();
                         return vec![PanelEvent::NeedsRedraw];
                     }
                 }
@@ -4282,7 +4327,8 @@ mod tests {
         }
         {
             let form = panel.pending.as_ref().unwrap().form();
-            assert_eq!(form.title(), "Agent wants to run bash: git push");
+            assert_eq!(form.title(), "Agent wants to run bash:");
+            assert_eq!(form.detail(), Some("git push"));
             assert_eq!(form.options()[2], "Allow always (git push *)");
         }
         assert!(panel.captures_escape());
@@ -4333,9 +4379,9 @@ mod tests {
         {
             let form = panel.pending.as_ref().unwrap().form();
             assert_eq!(
-                form.height(),
-                8,
-                "four answers, a reason row and a stop row"
+                form.height(60),
+                10,
+                "a detail line and divider, four answers, a reason row and a stop row"
             );
         }
         panel.handle_key(chord(KeyCode::Char('5'), KeyModifiers::NONE));
@@ -4350,6 +4396,60 @@ mod tests {
         );
         let _ = request;
     }
+
+    #[test]
+    fn a_single_click_selects_and_a_double_click_answers_a_permission() {
+        let mut panel = panel(vec![]);
+        let (mut prompter, rx) = permission_channel(CancelToken::new());
+        panel.permission_rx = rx;
+        let worker = std::thread::spawn(move || {
+            prompter.ask(&termide_agent_core::PermissionRequest {
+                tool: "bash".into(),
+                subject: "git push".into(),
+                call: termide_agent_core::ToolCall {
+                    id: "c".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({ "command": "git push" }),
+                },
+                suggested_pattern: "git push *".into(),
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while panel.pending.is_none() {
+            panel.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Render so the form's row geometry exists, then find the second option.
+        let rows = render_text(&mut panel, 60, 16);
+        let y = rows
+            .iter()
+            .position(|r| r.contains("2. Allow for this session"))
+            .expect("the second option is on screen") as u16;
+        let area = Rect::new(0, 0, 60, 16);
+        let click = |panel: &mut AgentPanel, y: u16| {
+            panel.handle_mouse(
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: 5,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                },
+                area,
+            );
+        };
+
+        // A single click only moves the selection; the question stays open.
+        click(&mut panel, y);
+        assert!(panel.pending.is_some(), "a single click does not answer");
+        assert_eq!(panel.pending.as_ref().unwrap().form().selected(), 1);
+
+        // A second click on the same row (a double click) answers it.
+        click(&mut panel, y);
+        assert!(panel.pending.is_none());
+        assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
+    }
+
     #[test]
     fn mode_switches_from_the_chip_and_with_shift_tab() {
         let mut panel = panel(vec![]);
