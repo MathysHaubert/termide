@@ -74,6 +74,8 @@ you have named or sent even one message to is always kept.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every block |
 | `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `o` opens it in its own panel |
+| Click a block | Focus the chat and select that block (the selected block is shown inverted); click it again to fold or unfold it |
+| `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
@@ -102,6 +104,11 @@ read-only panel for a bigger view (a command with a saved full log opens that
 file). `Tab` again returns to the input. The panel
 follows the newest output until you scroll up, and resumes following when you
 scroll back to the bottom.
+
+To copy a whole block, select it (click it or move to it) and press `Ctrl+C`.
+TermIDE captures the mouse, so to select arbitrary text with the mouse instead
+hold your terminal's bypass modifier (usually `Shift`, `Option`/`Alt` in some
+terminals) and drag as usual.
 
 What the agent runs is captured cleanly for the model: colour and cursor
 escapes, progress-bar redraws, spinner frames and long runs of near-identical

@@ -1610,6 +1610,23 @@ impl AgentPanel {
 
     /// Recompute the `/command` popup after the input changed: it shows
     /// while the input is a single `/word` with no space yet.
+    /// The plain text of the block under the chat cursor, for `Copy`.
+    fn selected_block_text(&self) -> Option<String> {
+        match self.transcript.items().get(self.selected)? {
+            Item::User { text, .. } | Item::Assistant { text, .. } => Some(text.clone()),
+            Item::Notice { text, .. } => Some(text.clone()),
+            Item::Tool {
+                result, live, call, ..
+            } => Some(
+                result
+                    .as_ref()
+                    .map(ToolResultMessage::plain_text)
+                    .or_else(|| live.clone())
+                    .unwrap_or_else(|| call.name.clone()),
+            ),
+        }
+    }
+
     /// Open the selected block's full output as a read-only panel, for a
     /// bigger view than the inline preview. A tool with a saved raw log opens
     /// that file; anything else is written to a temporary file first. Focus
@@ -2788,16 +2805,17 @@ impl Panel for AgentPanel {
             }
         }
         let lines = self.transcript.lines(text_width, &colors, is_light);
-        let selected_bg = Style::default().bg(colors.selection_bg);
+        // The block under the chat cursor is shown inverted (text and
+        // background swapped), so the selection reads as one solid block.
+        let selected_style = Style::default().fg(colors.bg).bg(colors.fg);
         for row in 0..transcript_height as usize {
             let Some(line) = lines.get(self.top + row) else {
                 break;
             };
             buf.set_line(area.x, area.y + row as u16, line, text_width);
-            // Tint the whole row of the block the chat cursor is on.
             if selected_range.is_some_and(|(f, l)| self.top + row >= f && self.top + row <= l) {
                 for dx in 0..text_width {
-                    buf[(area.x + dx, area.y + row as u16)].set_style(selected_bg);
+                    buf[(area.x + dx, area.y + row as u16)].set_style(selected_style);
                 }
             }
         }
@@ -3079,9 +3097,16 @@ impl Panel for AgentPanel {
                     return vec![];
                 }
                 let line = self.top + (event.row - area.y) as usize;
-                match self.transcript.item_at_line(line) {
-                    Some(index) if self.transcript.toggle_expanded(index) => {}
-                    _ => return vec![],
+                let Some(index) = self.transcript.item_at_line(line) else {
+                    return vec![];
+                };
+                // A click focuses the chat and selects the clicked block; a
+                // second click on the block already selected folds/unfolds it.
+                if self.chat_focus && self.selected == index {
+                    self.transcript.toggle_expanded(index);
+                } else {
+                    self.chat_focus = true;
+                    self.selected = index;
                 }
             }
             _ => return vec![],
@@ -3142,6 +3167,18 @@ impl Panel for AgentPanel {
                 self.after_edit();
                 CommandResult::NeedsRedraw(true)
             }
+            // Copy the focused chat block. With the input focused instead, let
+            // the key fall through (the input has no selection of its own).
+            PanelCommand::Copy => match self.chat_focus.then(|| self.selected_block_text()) {
+                Some(Some(text)) if !text.trim().is_empty() => {
+                    if let Err(error) = termide_ui::clipboard::copy(&text) {
+                        log::warn!("agent copy failed: {error}");
+                        self.notice("could not copy to the clipboard", NoticeKind::Warn);
+                    }
+                    CommandResult::Handled(true)
+                }
+                _ => CommandResult::Handled(false),
+            },
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
             }
@@ -3806,6 +3843,29 @@ mod tests {
         let reopened = Session::open(&path).unwrap();
         assert_eq!(reopened.current_reasoning(), Some(true));
         assert!(session_model(&panel.configured_model, Some(&reopened)).reasoning);
+    }
+
+    #[test]
+    fn a_click_focuses_the_chat_and_selects_a_block() {
+        let mut panel = panel(vec![reply("Hello from the model")]);
+        type_text(&mut panel, "hi there");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        // Render so the transcript area and its lines exist.
+        let _ = render_text(&mut panel, 40, 12);
+        assert!(!panel.chat_focus, "starts on the input");
+        let area = panel.transcript_area;
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 1,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        panel.handle_mouse(click, area);
+        assert!(panel.chat_focus, "a click focuses the chat");
+        assert!(panel
+            .selected_block_text()
+            .is_some_and(|t| !t.trim().is_empty()));
     }
 
     #[test]

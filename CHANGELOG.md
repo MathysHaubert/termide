@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefill/generation split, and the tokens produced (`4.2s · prefill 0.6s · gen
   3.6s · 1210 tok`); a finished tool call shows how long it took.
 
+- **Click a chat block to focus and copy it.** Clicking a block now focuses the
+  chat and selects it (the selected block is shown inverted, not tinted);
+  clicking it again folds or unfolds it. `Ctrl+C` copies the selected block's
+  text. (TermIDE captures the mouse, so for arbitrary text selection hold your
+  terminal's bypass modifier — usually `Shift` — and drag.)
+
 - **A reasoning toggle in the status bar.** A **reasoning** chip turns extended
   thinking / `reasoning_effort` on or off from the next request; the choice is
   remembered in the session, so a resume comes back with it. The default is the
