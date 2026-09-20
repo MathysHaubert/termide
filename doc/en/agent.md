@@ -105,12 +105,16 @@ stream live in the panel.
 
 The status chips show the permission mode, the model with the endpoint it is
 served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), a **reasoning** toggle (bright
-when on), the agent, the context window with how much of it the last answer used
-(`Context: 12% of 32k`), whether the agent is working and how many messages are
-queued. Mode, model, reasoning and agent are buttons, and the same entries sit
-in the `[≡]` menu. Clicking **reasoning** asks the model to reason (extended
-thinking / `reasoning_effort`) from the next request; the choice is remembered
-in the session, so a resume comes back with it.
+when on), the agent, the context window as a fill bar with its percentage (`ctx
+▰▱▱▱▱▱▱▱ 12%`) and the session's token totals (`↑` input / `↓` output). Mode,
+model, reasoning and agent are buttons, and the same entries sit in the `[≡]`
+menu. Clicking **reasoning** asks the model to reason (extended thinking /
+`reasoning_effort`) from the next request; the choice is remembered in the
+session, so a resume comes back with it.
+
+While the agent works, a live indicator right after the mode names what it is
+doing and for how long — `prefill 0.6s`, `generating 3.1s · 88 tok/s`, `tool
+5.1s`, `compacting 2.0s` — the elapsed time ticking as it goes.
 
 Typing `/` opens a list of the matching prompt templates above the input;
 `↑`/`↓` move in it, `Tab` or `Enter` complete the highlighted one, and `Enter`

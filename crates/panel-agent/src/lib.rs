@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -205,6 +206,64 @@ pub trait AgentCatalog: Send + Sync {
     }
 }
 
+/// What the agent is doing right now, for the live activity indicators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Waiting for the model's first token.
+    Prefill,
+    /// Streaming the model's answer.
+    Generating,
+    /// A tool is running.
+    Tool,
+    /// The conversation is being compacted.
+    Compact,
+}
+
+impl Phase {
+    /// Short label shown in the status bar and the block footer.
+    fn label(self) -> &'static str {
+        match self {
+            Phase::Prefill => "prefill",
+            Phase::Generating => "generating",
+            Phase::Tool => "tool",
+            Phase::Compact => "compacting",
+        }
+    }
+}
+
+/// Live state of the current run: the phase, when it started, and enough to
+/// estimate the generation speed until the authoritative `Usage` arrives.
+#[derive(Debug, Clone, Copy)]
+struct Activity {
+    phase: Phase,
+    /// When the current phase started (for its ticking elapsed time).
+    since: Instant,
+    /// Characters streamed in the current generation, for a rough live token
+    /// count and speed (reconciled to `Usage` at `MessageEnd`).
+    gen_chars: usize,
+}
+
+impl Activity {
+    fn new(phase: Phase) -> Self {
+        Self {
+            phase,
+            since: Instant::now(),
+            gen_chars: 0,
+        }
+    }
+
+    fn enter(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.since = Instant::now();
+        self.gen_chars = 0;
+    }
+
+    /// Rough live token count from streamed characters (~4 chars per token).
+    fn est_tokens(&self) -> u64 {
+        (self.gen_chars / 4) as u64
+    }
+}
+
 pub struct AgentPanel {
     runtime: Box<dyn Backend>,
     /// The runtime is an external agent: model and mode are not ours to set.
@@ -298,6 +357,13 @@ pub struct AgentPanel {
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
+    /// What the agent is doing right now; `None` when idle.
+    activity: Option<Activity>,
+    /// Session token totals from `Usage`: input (prefill) and output.
+    session_input: u64,
+    session_output: u64,
+    /// Throttles the animation redraws requested while busy.
+    last_anim: Instant,
 
     colors: ThemeColors,
     is_light: bool,
@@ -420,6 +486,10 @@ impl AgentPanel {
             busy: false,
             queued: (0, 0),
             context_tokens: 0,
+            activity: None,
+            session_input: 0,
+            session_output: 0,
+            last_anim: Instant::now(),
             colors: ThemeColors::default(),
             is_light: false,
             transcript_area: Rect::default(),
@@ -666,11 +736,49 @@ impl AgentPanel {
     }
 
     /// Apply one runtime event to the transcript and the session log.
+    /// Note streamed output: enter the generating phase on the first token,
+    /// then count characters for the live token estimate and speed.
+    fn note_generation(&mut self, chars: usize) {
+        let activity = self
+            .activity
+            .get_or_insert_with(|| Activity::new(Phase::Generating));
+        if activity.phase != Phase::Generating {
+            activity.enter(Phase::Generating);
+        }
+        activity.gen_chars += chars;
+    }
+
+    /// Switch the current activity to `phase` (starting one if idle).
+    fn set_phase(&mut self, phase: Phase) {
+        match &mut self.activity {
+            Some(activity) => activity.enter(phase),
+            None => self.activity = Some(Activity::new(phase)),
+        }
+    }
+
+    /// The live phase text for the status bar: the phase, its ticking elapsed
+    /// time and, while generating, the estimated speed. `None` when idle.
+    fn activity_status(&self) -> Option<String> {
+        let activity = self.activity.as_ref()?;
+        let elapsed = activity.since.elapsed().as_secs_f32();
+        Some(if activity.phase == Phase::Generating {
+            let speed = if elapsed > 0.1 {
+                (activity.est_tokens() as f32 / elapsed).round() as u64
+            } else {
+                0
+            };
+            format!("{} {elapsed:.1}s · {speed} tok/s", activity.phase.label())
+        } else {
+            format!("{} {elapsed:.1}s", activity.phase.label())
+        })
+    }
+
     fn apply(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::AgentStart => self.busy = true,
             AgentEvent::AgentEnd => {
                 self.busy = false;
+                self.activity = None;
                 self.queued = self.runtime.queue_lens();
                 if let Some(store) = &self.checkpoints {
                     store.lock().unwrap().end_run();
@@ -681,17 +789,22 @@ impl AgentPanel {
                 self.offer_plan();
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
-            AgentEvent::MessageStart => self.transcript.push(Item::Assistant {
-                text: String::new(),
-                thinking: String::new(),
-                streaming: true,
-                error: None,
-            }),
+            AgentEvent::MessageStart => {
+                self.activity = Some(Activity::new(Phase::Prefill));
+                self.transcript.push(Item::Assistant {
+                    text: String::new(),
+                    thinking: String::new(),
+                    streaming: true,
+                    error: None,
+                });
+            }
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(delta)) => {
+                self.note_generation(delta.chars().count());
                 self.transcript
                     .with_streaming_assistant(|text, _| text.push_str(&delta));
             }
             AgentEvent::MessageUpdate(StreamEvent::ThinkingDelta(delta)) => {
+                self.note_generation(delta.chars().count());
                 self.transcript.with_streaming_assistant(|_, thinking| {
                     thinking.push_str(&delta);
                 });
@@ -715,6 +828,8 @@ impl AgentPanel {
                         if assistant.usage.total() > 0 {
                             self.context_tokens = assistant.usage.total();
                         }
+                        self.session_input += assistant.usage.input;
+                        self.session_output += assistant.usage.output;
                         self.transcript.finish_assistant(
                             assistant.plain_text(),
                             assistant.error_message.clone(),
@@ -728,11 +843,14 @@ impl AgentPanel {
                     }
                 }
             }
-            AgentEvent::ToolExecutionStart { call } => self.transcript.push(Item::Tool {
-                call,
-                result: None,
-                live: None,
-            }),
+            AgentEvent::ToolExecutionStart { call } => {
+                self.set_phase(Phase::Tool);
+                self.transcript.push(Item::Tool {
+                    call,
+                    result: None,
+                    live: None,
+                });
+            }
             AgentEvent::ToolExecutionUpdate {
                 tool_call_id,
                 update: ToolUpdate::Output(output),
@@ -764,6 +882,7 @@ impl AgentPanel {
                 follow_up,
             } => self.queued = (steering, follow_up),
             AgentEvent::CompactionStart { .. } => {
+                self.set_phase(Phase::Compact);
                 self.notice("compacting the conversation…", NoticeKind::Info)
             }
             AgentEvent::Compacted {
@@ -1977,6 +2096,17 @@ fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
 }
 
 /// Token counts as the status line shows them: `32k`, `1.2M`.
+/// An eight-cell fill bar for a 0–100 percentage, e.g. `▰▰▱▱▱▱▱▱` at 20%.
+fn context_bar(percent: u64) -> String {
+    const CELLS: u64 = 8;
+    let filled = (percent * CELLS).div_ceil(100).min(CELLS);
+    let mut bar = String::with_capacity(CELLS as usize * 3);
+    for i in 0..CELLS {
+        bar.push(if i < filled { '▰' } else { '▱' });
+    }
+    bar
+}
+
 fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         let millions = tokens as f64 / 1_000_000.0;
@@ -2896,6 +3026,12 @@ impl Panel for AgentPanel {
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
+        // While the agent works, keep the ticking timer and the block's
+        // spinner moving without waiting for an event (throttled to ~10 fps).
+        if self.is_busy() && self.last_anim.elapsed() >= Duration::from_millis(100) {
+            self.last_anim = Instant::now();
+            changed = true;
+        }
         if changed || !events.is_empty() {
             events.push(PanelEvent::NeedsRedraw);
         }
@@ -2976,6 +3112,18 @@ impl Panel for AgentPanel {
             segments.extend([
                 StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
                 StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
+            ]);
+            // The live phase sits right after the mode, so the phase/speed stays
+            // visible even when the bar is truncated on a narrow terminal. Its
+            // animated spinner is in the chat block, not here.
+            if let Some(text) = self.activity_status() {
+                segments.push(sep());
+                segments.push(StatusSegment::new(text, SegmentKind::Active));
+            } else if self.is_busy() {
+                segments.push(sep());
+                segments.push(StatusSegment::new("working", SegmentKind::Active));
+            }
+            segments.extend([
                 sep(),
                 StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
                 StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
@@ -3009,23 +3157,28 @@ impl Panel for AgentPanel {
         }
         if !self.external && self.model.context_window > 0 {
             segments.push(sep());
-            segments.push(StatusSegment::new("Context: ", SegmentKind::Label));
-            let window = format_tokens(self.model.context_window);
-            if self.context_tokens > 0 {
-                let percent = self.context_tokens * 100 / self.model.context_window;
-                let kind = if percent >= 80 {
-                    SegmentKind::Warn
-                } else {
-                    SegmentKind::Value
-                };
-                segments.push(StatusSegment::new(format!("{percent}% of {window}"), kind));
+            let percent = ((self.context_tokens * 100) / self.model.context_window).min(100);
+            let kind = if percent >= 80 {
+                SegmentKind::Warn
             } else {
-                segments.push(StatusSegment::new(window, SegmentKind::Value));
-            }
+                SegmentKind::Value
+            };
+            segments.push(StatusSegment::new(
+                format!("ctx {} {percent}%", context_bar(percent)),
+                kind,
+            ));
         }
-        if self.is_busy() {
+        // Session token totals: ↑ input (prefill), ↓ output (generated).
+        if !self.external && (self.session_input > 0 || self.session_output > 0) {
             segments.push(sep());
-            segments.push(StatusSegment::new("working", SegmentKind::Active));
+            segments.push(StatusSegment::new(
+                format!(
+                    "↑{} ↓{}",
+                    format_tokens(self.session_input),
+                    format_tokens(self.session_output)
+                ),
+                SegmentKind::Value,
+            ));
         }
         let queued = self.queued.0 + self.queued.1;
         if queued > 0 {
@@ -3387,7 +3540,7 @@ mod tests {
             .collect();
         assert_eq!(
             chips,
-            " Mode: ask │ Model: m │ reasoning │ Agent: default │ Context: 12% of 1k"
+            " Mode: ask │ Model: m │ reasoning │ Agent: default │ ctx ▰▱▱▱▱▱▱▱ 12% │ ↑100 ↓20"
         );
     }
 
@@ -3490,6 +3643,41 @@ mod tests {
         let fresh = panel.session.as_ref().unwrap().path().to_path_buf();
         assert!(fresh.exists());
         assert_ne!(empty, fresh);
+    }
+
+    #[test]
+    fn the_context_bar_fills_with_the_percentage() {
+        assert_eq!(context_bar(0), "▱▱▱▱▱▱▱▱");
+        assert_eq!(context_bar(12), "▰▱▱▱▱▱▱▱");
+        assert_eq!(context_bar(50), "▰▰▰▰▱▱▱▱");
+        assert_eq!(context_bar(100), "▰▰▰▰▰▰▰▰");
+        assert_eq!(context_bar(200), "▰▰▰▰▰▰▰▰");
+    }
+
+    #[test]
+    fn activity_follows_the_events_and_totals_accumulate() {
+        let mut panel = panel(vec![reply("hi")]);
+        assert!(panel.activity.is_none());
+        panel.apply(AgentEvent::AgentStart);
+        panel.apply(AgentEvent::MessageStart);
+        assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Prefill));
+        panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
+            "hello".into(),
+        )));
+        assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Generating));
+        panel.apply(AgentEvent::MessageEnd(Message::Assistant(reply("hello"))));
+        // reply()'s usage is input 100 / output 20.
+        assert_eq!((panel.session_input, panel.session_output), (100, 20));
+        panel.apply(AgentEvent::ToolExecutionStart {
+            call: termide_agent_core::ToolCall {
+                id: "1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({}),
+            },
+        });
+        assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Tool));
+        panel.apply(AgentEvent::AgentEnd);
+        assert!(panel.activity.is_none());
     }
 
     #[test]
