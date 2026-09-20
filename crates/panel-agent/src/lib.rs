@@ -75,6 +75,12 @@ const PROMPTS_ACTION: &str = "agent_prompts";
 const COMPACT_COMMAND: &str = "compact";
 /// The built-in `/undo` command.
 const UNDO_COMMAND: &str = "undo";
+/// The built-in `/new` command: start a fresh session, keeping the current one
+/// in the list.
+const NEW_COMMAND: &str = "new";
+/// The built-in `/clear` command: discard the current session and start a fresh
+/// one in its place.
+const CLEAR_COMMAND: &str = "clear";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -697,6 +703,27 @@ impl AgentPanel {
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
+            Some((NEW_COMMAND, _)) => {
+                // Start fresh, leaving the current session in the list (empty
+                // ones are still dropped by `switch_session`).
+                self.clear_input();
+                self.switch_session(None);
+                return vec![PanelEvent::NeedsRedraw];
+            }
+            Some((CLEAR_COMMAND, _)) => {
+                // Like `/new`, but the current session is deleted rather than
+                // kept, so there is nothing to resume back to.
+                if self.is_busy() {
+                    self.notice("finish or stop the current task first", NoticeKind::Warn);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                self.clear_input();
+                if let Some(old) = self.session.take() {
+                    discard(old);
+                }
+                self.switch_session(None);
+                return vec![PanelEvent::NeedsRedraw];
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -713,6 +740,10 @@ impl AgentPanel {
                     let mut names: Vec<String> = prompts.iter().map(|p| p.name.clone()).collect();
                     names.extend(self.catalog.commands().into_iter().map(|c| c.name));
                     names.push(COMPACT_COMMAND.to_string());
+                    if self.session_dir.is_some() {
+                        names.push(NEW_COMMAND.to_string());
+                        names.push(CLEAR_COMMAND.to_string());
+                    }
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
@@ -1813,6 +1844,22 @@ impl AgentPanel {
                     .with_description("Summarise the older part of the session now"),
             );
         }
+        if self.session_dir.is_some() {
+            if NEW_COMMAND.starts_with(prefix) {
+                items.push(
+                    CompletionItem::new(NEW_COMMAND)
+                        .with_label(format!("/{NEW_COMMAND}"))
+                        .with_description("Start a fresh session, keeping the current one"),
+                );
+            }
+            if CLEAR_COMMAND.starts_with(prefix) {
+                items.push(
+                    CompletionItem::new(CLEAR_COMMAND)
+                        .with_label(format!("/{CLEAR_COMMAND}"))
+                        .with_description("Discard the current session and start fresh"),
+                );
+            }
+        }
         if items.is_empty() {
             self.completion = None;
             return;
@@ -2273,9 +2320,15 @@ fn slash_command(text: &str) -> Option<(&str, &str)> {
 /// message or a user-given name is kept.
 fn discard_if_empty(session: Session) {
     if session.is_empty() {
-        if let Err(error) = session.discard() {
-            log::warn!("could not remove empty agent session: {error}");
-        }
+        discard(session);
+    }
+}
+
+/// Delete `session` from disk unconditionally (the `/clear` path). A failure is
+/// logged rather than surfaced: the session is being abandoned regardless.
+fn discard(session: Session) {
+    if let Err(error) = session.discard() {
+        log::warn!("could not remove agent session: {error}");
     }
 }
 
@@ -4120,6 +4173,49 @@ mod tests {
             roles(&reopened.context_messages()),
             vec!["user", "assistant", "user", "assistant"]
         );
+    }
+
+    #[test]
+    fn slash_new_starts_a_fresh_session_and_keeps_the_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("one")])
+        });
+        let first_path = panel.session_path().unwrap().to_path_buf();
+        type_text(&mut panel, "first task");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+
+        // /new opens a fresh session; the used one is left on disk to resume.
+        type_text(&mut panel, "/new");
+        panel.submit();
+        assert!(panel.transcript().items().is_empty());
+        assert_ne!(panel.session_path().unwrap(), first_path);
+        assert!(first_path.exists(), "the previous session log is kept");
+        assert_eq!(panel.session_list().len(), 2);
+    }
+
+    #[test]
+    fn slash_clear_discards_the_current_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("one")])
+        });
+        let first_path = panel.session_path().unwrap().to_path_buf();
+        type_text(&mut panel, "first task");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+
+        // /clear deletes the current session and starts a fresh one, so there
+        // is nothing to resume back to: only the new empty session remains.
+        type_text(&mut panel, "/clear");
+        panel.submit();
+        assert!(panel.transcript().items().is_empty());
+        assert_ne!(panel.session_path().unwrap(), first_path);
+        assert!(!first_path.exists(), "the previous session log is removed");
+        assert_eq!(panel.session_list().len(), 1);
     }
 
     fn roles(messages: &[Message]) -> Vec<&'static str> {

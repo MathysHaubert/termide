@@ -62,6 +62,10 @@ newest first (the current one marked `●`), so you can pick up where you left
 off. Switching waits for the
 current task: stop it with `Esc` first if the agent is still working.
 
+From the input, `/new` does what **New session** does, and `/clear` starts a
+fresh session too but deletes the current one first — use it when the work is
+done and you will not want to resume back to it.
+
 A session you never send anything to is discarded when you switch away from it
 or close the panel, so opening a panel and closing it — or trying a couple of
 new sessions — leaves no empty logs cluttering the list or the disk. A session
@@ -77,7 +81,7 @@ you have named or sent even one message to is always kept.
 | Click a block | Focus the chat and select that block (the selected block is shown inverted); click it again to fold or unfold it |
 | `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session and `/clear` starts one after discarding the current session |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
