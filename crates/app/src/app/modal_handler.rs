@@ -240,35 +240,34 @@ impl App {
             match action {
                 PendingAction::PanelSelection { action } => {
                     // Cancelling leaves the panel unanswered on purpose: it
-                    // keeps its pending state and can re-ask.
+                    // keeps its pending state and can re-ask. Deliver to the
+                    // focused panel — the one that raised the prompt — not the
+                    // first that happens to handle it, so with several panels of
+                    // the same kind open the answer lands where it was asked.
                     if let Some(index) = value
                         .downcast_ref::<Vec<usize>>()
                         .and_then(|picked| picked.first().copied())
                     {
-                        for panel in self.layout_manager.iter_all_panels_mut() {
-                            let handled =
-                                panel.handle_command(termide_core::PanelCommand::SelectionMade {
-                                    action: action.clone(),
-                                    index,
-                                });
-                            if matches!(handled, termide_core::CommandResult::Handled(true)) {
-                                break;
-                            }
+                        if let Some(panel) = self.layout_manager.active_panel_mut() {
+                            panel.handle_command(termide_core::PanelCommand::SelectionMade {
+                                action,
+                                index,
+                            });
                         }
                         self.state.needs_redraw = true;
                     }
                 }
                 PendingAction::PanelInput { action } => {
+                    // The typed answer goes to the focused panel that raised the
+                    // prompt (e.g. renaming a session), not the first panel that
+                    // recognises the action — otherwise, with several agent
+                    // panels open, the wrong session would be renamed.
                     if let Some(text) = value.downcast_ref::<String>() {
-                        for panel in self.layout_manager.iter_all_panels_mut() {
-                            let handled =
-                                panel.handle_command(termide_core::PanelCommand::InputSubmitted {
-                                    action: action.clone(),
-                                    text: text.clone(),
-                                });
-                            if matches!(handled, termide_core::CommandResult::Handled(true)) {
-                                break;
-                            }
+                        if let Some(panel) = self.layout_manager.active_panel_mut() {
+                            panel.handle_command(termide_core::PanelCommand::InputSubmitted {
+                                action,
+                                text: text.clone(),
+                            });
                         }
                         self.state.needs_redraw = true;
                     }

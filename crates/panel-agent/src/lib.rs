@@ -86,6 +86,10 @@ const NEW_COMMAND: &str = "new";
 /// The built-in `/clear` command: discard the current session and start a fresh
 /// one in its place.
 const CLEAR_COMMAND: &str = "clear";
+/// The built-in `/rename` and `/name` commands: rename the session, either from
+/// an argument or through the same prompt as the menu.
+const RENAME_COMMAND: &str = "rename";
+const NAME_COMMAND: &str = "name";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -790,6 +794,18 @@ impl AgentPanel {
                 self.switch_session(None);
                 return vec![PanelEvent::NeedsRedraw];
             }
+            Some((RENAME_COMMAND | NAME_COMMAND, args)) => {
+                // With a name, rename now; without one, open the same prompt as
+                // the `[≡]` menu and F2.
+                self.clear_input();
+                if args.is_empty() {
+                    return self.handle_status_action(RENAME_ACTION);
+                }
+                if !self.rename_session(args) {
+                    self.notice("this session has no log to name", NoticeKind::Warn);
+                }
+                return vec![PanelEvent::NeedsRedraw];
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -809,6 +825,8 @@ impl AgentPanel {
                     if self.session_dir.is_some() {
                         names.push(NEW_COMMAND.to_string());
                         names.push(CLEAR_COMMAND.to_string());
+                        names.push(RENAME_COMMAND.to_string());
+                        names.push(NAME_COMMAND.to_string());
                     }
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
@@ -1988,6 +2006,22 @@ impl AgentPanel {
                     CompletionItem::new(CLEAR_COMMAND)
                         .with_label(format!("/{CLEAR_COMMAND}"))
                         .with_description("Discard the current session and start fresh"),
+                );
+            }
+            if RENAME_COMMAND.starts_with(prefix) {
+                items.push(
+                    CompletionItem::new(RENAME_COMMAND)
+                        .with_label(format!("/{RENAME_COMMAND}"))
+                        .with_hint("[name]")
+                        .with_description("Rename this session"),
+                );
+            }
+            if NAME_COMMAND.starts_with(prefix) {
+                items.push(
+                    CompletionItem::new(NAME_COMMAND)
+                        .with_label(format!("/{NAME_COMMAND}"))
+                        .with_hint("[name]")
+                        .with_description("Rename this session"),
                 );
             }
         }
@@ -3290,6 +3324,12 @@ impl Panel for AgentPanel {
             if action == ChoiceAction::NotHandled && !scroll_key {
                 return vec![];
             }
+        }
+
+        // F2 renames the session, wherever the focus sits in the panel — the
+        // same prompt as the `[≡]` menu's Rename.
+        if key.code == KeyCode::F(2) && !ctrl && !alt && !shift {
+            return self.handle_status_action(RENAME_ACTION);
         }
 
         // The completion list gets the navigation keys while it is open.
@@ -4643,6 +4683,31 @@ mod tests {
         assert_eq!(panel.session_list().len(), 1);
     }
 
+    #[test]
+    fn slash_rename_and_name_set_the_session_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        // With an argument, both /rename and /name set the title directly.
+        type_text(&mut panel, "/rename my work");
+        panel.submit();
+        assert_eq!(panel.title(), "Agent: my work");
+        type_text(&mut panel, "/name other");
+        panel.submit();
+        assert_eq!(panel.title(), "Agent: other");
+        assert!(panel.input_text().is_empty());
+
+        // Without an argument, it opens the rename prompt instead of sending.
+        type_text(&mut panel, "/rename");
+        let events = panel.submit();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, PanelEvent::ShowInput { .. })));
+        assert!(panel.transcript().items().is_empty(), "nothing was sent");
+    }
+
     fn roles(messages: &[Message]) -> Vec<&'static str> {
         messages
             .iter()
@@ -4702,6 +4767,23 @@ mod tests {
         assert!(panel.input_text().is_empty());
         assert!(panel.pastes.is_empty());
         assert_eq!(panel.paste_seq, 0);
+    }
+
+    #[test]
+    fn f2_opens_the_rename_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        let events = panel.handle_key(chord(KeyCode::F(2), KeyModifiers::NONE));
+        let Some(PanelEvent::ShowInput { on_submit, .. }) = events.first() else {
+            panic!("F2 should open the rename prompt, got {events:?}");
+        };
+        assert!(
+            matches!(on_submit, InputAction::Custom(a) if a == RENAME_ACTION),
+            "{on_submit:?}"
+        );
     }
 
     #[test]
