@@ -257,6 +257,18 @@ pub enum PendingAction {
         /// Selected index to restore on return
         selected: usize,
     },
+    /// Create an AI resource (agent/skill/prompt); name comes from the input.
+    AiCreate {
+        /// Section key: `agents`/`skills`/`prompts`.
+        section: String,
+        /// Create under the global config dir rather than the project.
+        scope_global: bool,
+    },
+    /// Delete an AI resource (confirmed); `path` is the file or directory.
+    AiDelete { section: String, path: String },
+    /// Rename an AI resource; new name comes from the input. For sessions this
+    /// sets the display name; for the rest it renames the file/directory.
+    AiRename { section: String, path: String },
     /// Rename a bookmark (change description)
     RenameBookmark {
         path: String,

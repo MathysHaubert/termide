@@ -358,6 +358,25 @@ pub trait Translation: Send + Sync {
     fn menu_quit(&self) -> &str;
     fn menu_bookmarks(&self) -> &str;
 
+    // AI menu (agents / sessions / skills / prompts, with CRUD)
+    fn menu_ai(&self) -> &str;
+    fn menu_ai_agents(&self) -> &str;
+    fn menu_ai_sessions(&self) -> &str;
+    fn menu_ai_skills(&self) -> &str;
+    fn menu_ai_prompts(&self) -> &str;
+    fn menu_ai_new_project(&self) -> &str;
+    fn menu_ai_new_global(&self) -> &str;
+    fn menu_ai_edit_prompt(&self) -> &str;
+    fn menu_ai_edit_settings(&self) -> &str;
+    fn ai_create_title(&self) -> &str;
+    fn ai_rename_title(&self) -> &str;
+    fn ai_delete_title(&self) -> &str;
+    fn ai_name_invalid(&self) -> &str;
+    fn ai_name_exists(&self) -> &str;
+    fn ai_empty(&self) -> &str;
+    fn ai_delete_session_title(&self) -> &str;
+    fn ai_session_untitled(&self) -> &str;
+
     // Diagram (Mermaid / editor "view as diagram") menu + status
     fn menu_copy_diagram(&self) -> &str;
     fn menu_save_diagram_as(&self) -> &str;

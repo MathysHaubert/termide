@@ -133,6 +133,32 @@ impl LayoutManager {
         None
     }
 
+    /// Focus (and expand) the first panel that satisfies `predicate`, moving
+    /// keyboard focus to its group. Returns whether one was found. Lets a
+    /// caller reuse an already-open panel (matched by its own typed state)
+    /// without the layout crate knowing any concrete panel type.
+    pub fn focus_panel_where(&mut self, predicate: impl Fn(&dyn Panel) -> bool) -> bool {
+        let mut found: Option<(usize, usize)> = None;
+        for (group_idx, group) in self.panel_groups.iter().enumerate() {
+            for (panel_idx, panel) in group.panels().iter().enumerate() {
+                if predicate(panel.as_ref()) {
+                    found = Some((group_idx, panel_idx));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        if let Some((group_idx, panel_idx)) = found {
+            self.focus = group_idx;
+            self.panel_groups[group_idx].set_expanded(panel_idx);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Find the best group for a panel based on its width preference.
     fn find_preferred_group(&self, panel: &dyn Panel) -> usize {
         match panel.width_preference() {

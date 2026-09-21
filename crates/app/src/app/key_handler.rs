@@ -23,6 +23,7 @@ impl App {
         ui.projects_submenu.open
             || ui.tools_submenu.open
             || ui.commands_submenu.open
+            || ui.ai_submenu.open
             || ui.stash_submenu.open
             || ui.bookmarks_submenu.open
             || ui.panel_action_menu.open
@@ -66,6 +67,11 @@ impl App {
         // If Commands submenu is open, handle its navigation
         if self.state.ui.commands_submenu.open {
             return self.handle_commands_submenu_key(key);
+        }
+
+        // If the AI submenu is open, handle its navigation
+        if self.state.ui.ai_submenu.open {
+            return self.handle_ai_submenu_key(key);
         }
 
         // If Stash submenu is open, handle its navigation

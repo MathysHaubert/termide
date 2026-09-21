@@ -4,6 +4,7 @@
 
 // Note: PanelExt is used for editor save operations that require concrete type access.
 
+mod ai;
 mod bookmarks;
 mod command_palette;
 mod commands;
@@ -24,9 +25,9 @@ use crate::state::{ActiveModal, PendingAction};
 use termide_i18n as i18n;
 use termide_theme::Theme;
 use termide_ui_render::menu::{
-    BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, INDICATOR_CLOCK_INDEX, INDICATOR_CPU_INDEX,
-    INDICATOR_DISK_INDEX, INDICATOR_NET_INDEX, INDICATOR_RAM_INDEX, MENU_TOTAL_COUNT,
-    OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    AI_MENU_INDEX, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, INDICATOR_CLOCK_INDEX,
+    INDICATOR_CPU_INDEX, INDICATOR_DISK_INDEX, INDICATOR_NET_INDEX, INDICATOR_RAM_INDEX,
+    MENU_TOTAL_COUNT, OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 use termide_ui_render::{OPTIONS_SUBMENU_LANGUAGE, OPTIONS_SUBMENU_THEMES};
 
@@ -150,6 +151,9 @@ impl App {
                 }
                 COMMANDS_MENU_INDEX => {
                     self.state.open_commands_submenu();
+                }
+                AI_MENU_INDEX => {
+                    self.state.open_ai_submenu();
                 }
                 BOOKMARKS_MENU_INDEX => {
                     self.state.open_bookmarks_submenu();

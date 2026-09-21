@@ -172,6 +172,14 @@ impl App {
             return Ok(());
         }
 
+        // Handle AI submenu clicks when it's open
+        if self.state.ui.ai_submenu.open
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && self.handle_ai_submenu_click(mouse.column, mouse.row)?
+        {
+            return Ok(());
+        }
+
         // Handle Stash dropdown clicks when it's open
         if self.state.ui.stash_submenu.open
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))

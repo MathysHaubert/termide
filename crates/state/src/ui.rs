@@ -319,6 +319,16 @@ pub struct UiState {
     pub commands_nested: SubmenuState,
     /// Current command group name (for nested submenu)
     pub current_commands_group: Option<String>,
+    /// AI submenu state (Agents / Sessions / Skills / Prompts sections)
+    pub ai_submenu: SubmenuState,
+    /// AI nested submenu state (the selected section's item list)
+    pub ai_nested: SubmenuState,
+    /// Current AI section key (`agents`/`sessions`/`skills`/`prompts`)
+    pub current_ai_section: Option<String>,
+    /// AI agent file-choice submenu (third level: SOUL.md vs agent.toml)
+    pub ai_agent_choice: SubmenuState,
+    /// The agent whose file-choice submenu is open
+    pub current_ai_agent: Option<String>,
     /// Bookmarks submenu state
     pub bookmarks_submenu: SubmenuState,
     /// Bookmarks nested submenu state (for groups)
@@ -355,6 +365,11 @@ impl UiState {
         self.commands_submenu.close();
         self.commands_nested.close();
         self.current_commands_group = None;
+        self.ai_submenu.close();
+        self.ai_nested.close();
+        self.current_ai_section = None;
+        self.ai_agent_choice.close();
+        self.current_ai_agent = None;
         self.bookmarks_submenu.close();
         self.bookmarks_nested.close();
         self.current_bookmarks_group = None;

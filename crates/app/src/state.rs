@@ -169,6 +169,16 @@ impl Default for AppState {
     }
 }
 
+/// A localized "N units ago" for a millisecond timestamp, for the Sessions
+/// list's "last worked on" column. Reuses [`termide_i18n::relative_age`].
+fn relative_millis_ago(modified_ms: u64) -> String {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    termide_i18n::relative_age(now_ms.saturating_sub(modified_ms) / 1000)
+}
+
 impl AppState {
     /// Create new application state, loading config from file
     pub fn new() -> Self {
@@ -372,6 +382,147 @@ impl AppState {
     pub fn close_commands_nested_submenu(&mut self) {
         self.ui.commands_nested.close();
         self.ui.current_commands_group = None;
+    }
+
+    /// Open the AI submenu (Agents / Sessions / Skills / Prompts).
+    pub fn open_ai_submenu(&mut self) {
+        self.ui.close_all_submenus();
+        self.ui.ai_submenu.open();
+    }
+
+    /// Open the AI nested submenu for `section` (the section's item list).
+    pub fn open_ai_nested_submenu(&mut self, section: String) {
+        self.ui.ai_nested.open();
+        self.ui.current_ai_section = Some(section);
+    }
+
+    /// Close the AI nested submenu (also closes the agent file-choice level).
+    pub fn close_ai_nested_submenu(&mut self) {
+        self.ui.ai_nested.close();
+        self.ui.current_ai_section = None;
+        self.close_ai_agent_choice();
+    }
+
+    /// Open the agent file-choice submenu (third level) for `agent`.
+    pub fn open_ai_agent_choice(&mut self, agent: String) {
+        self.ui.ai_agent_choice.open();
+        self.ui.ai_agent_choice.selected = 0;
+        self.ui.current_ai_agent = Some(agent);
+    }
+
+    /// Close the agent file-choice submenu.
+    pub fn close_ai_agent_choice(&mut self) {
+        self.ui.ai_agent_choice.close();
+        self.ui.current_ai_agent = None;
+    }
+
+    /// The layered AI resource roots for this project (cwd/project/global). The
+    /// menu is project-scoped, so the working dir is the project root.
+    pub(crate) fn ai_dirs(&self) -> termide_agent_core::AgentDirs {
+        let global = termide_config::get_config_dir()
+            .ok()
+            .map(|d| d.join(termide_agent_core::GLOBAL_AGENT_DIR));
+        termide_agent_core::AgentDirs::new(
+            &self.project_root,
+            Some(&self.project_root),
+            global.as_deref(),
+        )
+    }
+
+    /// The session-log directory for this project (`<config>/ai/sessions/<key>`).
+    pub(crate) fn ai_sessions_dir(&self) -> Option<PathBuf> {
+        let dir = termide_config::get_config_dir().ok()?;
+        Some(
+            dir.join(termide_agent_core::GLOBAL_AGENT_DIR)
+                .join(termide_agent_core::SESSIONS_DIR)
+                .join(termide_project::project_key(&self.project_root)),
+        )
+    }
+
+    /// Build one AI section's dropdown rows. Called by both the renderer and the
+    /// action handler so they address the same rows by index. `section` is one
+    /// of `agents`/`sessions`/`skills`/`prompts`. Agents, skills and prompts get
+    /// two "New …" rows and a separator before the merged, source-marked items
+    /// (project-local first, in bold); sessions list the project's logs only.
+    pub fn ai_section_items(&self, section: &str) -> Vec<termide_ui_render::DropdownItem> {
+        use termide_ui_render::DropdownItem;
+        let t = termide_i18n::t();
+
+        if section == "sessions" {
+            let sessions = self
+                .ai_sessions_dir()
+                .and_then(|dir| termide_agent_core::Session::list(&dir).ok())
+                .unwrap_or_default();
+            if sessions.is_empty() {
+                return vec![DropdownItem::new(t.ai_empty(), String::new())];
+            }
+            return sessions
+                .into_iter()
+                .map(|s| {
+                    DropdownItem::new(s.label(), format!("session:{}", s.path.to_string_lossy()))
+                        .with_shortcut(Some(relative_millis_ago(s.modified)))
+                })
+                .collect();
+        }
+
+        let mut items = vec![
+            DropdownItem::new(t.menu_ai_new_project(), "new:project"),
+            DropdownItem::new(t.menu_ai_new_global(), "new:global"),
+            DropdownItem::separator(),
+        ];
+
+        let dirs = self.ai_dirs();
+        let mut listed: Vec<(String, bool)> = match section {
+            "agents" => dirs
+                .agents()
+                .into_iter()
+                .filter(|n| n != termide_agent_core::DEFAULT_AGENT)
+                .map(|name| {
+                    let is_project = dirs
+                        .agent_dir(&name)
+                        .map(|p| p.starts_with(&self.project_root))
+                        .unwrap_or(false);
+                    (name, is_project)
+                })
+                .collect(),
+            "skills" => dirs
+                .skills()
+                .into_iter()
+                .map(|s| {
+                    let is_project = s.path.starts_with(&self.project_root);
+                    (s.name, is_project)
+                })
+                .collect(),
+            "prompts" => dirs
+                .prompts()
+                .into_iter()
+                .map(|p| {
+                    let is_project = dirs
+                        .prompt_path(&p.name)
+                        .map(|path| path.starts_with(&self.project_root))
+                        .unwrap_or(false);
+                    (p.name, is_project)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        // Project-local first (bold), then global; each group alphabetical.
+        listed.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let has_project = listed.iter().any(|(_, p)| *p);
+        let has_global = listed.iter().any(|(_, p)| !*p);
+        let mut pushed_sep = false;
+        for (name, is_project) in listed {
+            if !is_project && has_project && has_global && !pushed_sep {
+                items.push(DropdownItem::separator());
+                pushed_sep = true;
+            }
+            let mut item = DropdownItem::new(name.clone(), format!("item:{name}"));
+            if is_project {
+                item = item.with_project();
+            }
+            items.push(item);
+        }
+        items
     }
 
     /// Open nested submenu (e.g., Themes list)

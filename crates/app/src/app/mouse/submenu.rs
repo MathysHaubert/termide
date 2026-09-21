@@ -11,10 +11,10 @@ use crate::app::App;
 use termide_i18n as i18n;
 use termide_theme::Theme;
 use termide_ui_render::{
-    get_bookmarks_group_items, get_bookmarks_items, get_commands_group_items, get_commands_items,
-    get_menu_item_x_position, get_options_items, get_projects_items, get_shell_items,
-    get_tools_items, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX,
-    PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    get_ai_agent_choice_items, get_ai_items, get_bookmarks_group_items, get_bookmarks_items,
+    get_commands_group_items, get_commands_items, get_menu_item_x_position, get_options_items,
+    get_projects_items, get_shell_items, get_tools_items, AI_MENU_INDEX, BOOKMARKS_MENU_INDEX,
+    COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 
 /// Hit-test a dropdown menu and return the clicked item index (if any).
@@ -313,6 +313,63 @@ impl App {
         if let Some(index) = hit_dropdown_item(x, y, menu_x, 1, &commands_items) {
             self.state.ui.commands_submenu.selected = index;
             self.execute_commands_submenu_action()?;
+            return Ok(true);
+        }
+
+        self.state.close_menu();
+        Ok(true)
+    }
+
+    /// Handle click on the AI submenu (sections) and its nested section list.
+    pub(in crate::app) fn handle_ai_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
+        let menu_x = get_menu_item_x_position(AI_MENU_INDEX);
+        let ai_items = get_ai_items();
+
+        // Nested section list first.
+        if self.state.ui.ai_nested.open {
+            if let Some(section) = self.state.ui.current_ai_section.clone() {
+                let nested_items = self.state.ai_section_items(&section);
+                if !nested_items.is_empty() {
+                    let parent_width =
+                        ai_items.iter().map(|i| i.label.width()).max().unwrap_or(10) as u16 + 4;
+                    let nested_x = menu_x + parent_width;
+                    let nested_y = 2 + self.state.ui.ai_submenu.selected as u16;
+
+                    // The agent file-choice (third level) sits to the right of
+                    // the nested list, at the selected agent's row.
+                    if self.state.ui.ai_agent_choice.open {
+                        let choice_items = get_ai_agent_choice_items();
+                        let nested_width = nested_items
+                            .iter()
+                            .map(|i| i.label.width())
+                            .max()
+                            .unwrap_or(10) as u16
+                            + 4;
+                        let choice_x = nested_x + nested_width;
+                        let choice_y = nested_y + 1 + self.state.ui.ai_nested.selected as u16;
+                        if let Some(index) =
+                            hit_dropdown_item(x, y, choice_x, choice_y, &choice_items)
+                        {
+                            self.state.ui.ai_agent_choice.selected = index;
+                            self.execute_ai_agent_choice_action()?;
+                            return Ok(true);
+                        }
+                    }
+
+                    if let Some(index) = hit_dropdown_item(x, y, nested_x, nested_y, &nested_items)
+                    {
+                        self.state.ui.ai_nested.selected = index;
+                        self.execute_ai_nested_action(&section)?;
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        // The AI main dropdown (the four sections).
+        if let Some(index) = hit_dropdown_item(x, y, menu_x, 1, &ai_items) {
+            self.state.ui.ai_submenu.selected = index;
+            self.open_ai_selected_section();
             return Ok(true);
         }
 

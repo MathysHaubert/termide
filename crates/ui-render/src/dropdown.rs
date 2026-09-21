@@ -326,6 +326,40 @@ pub const PROJECTS_SUBMENU_NEW: usize = 0;
 pub const PROJECTS_SUBMENU_SWITCH: usize = 1;
 pub const PROJECTS_SUBMENU_CHANGE_ROOT: usize = 2;
 
+/// The AI submenu: four fixed sections, each opening a nested list. The item
+/// keys (`agents`/`sessions`/`skills`/`prompts`) are the contract the app's AI
+/// menu handler decodes; the `AI_SUBMENU_*` indices below address the rows.
+pub fn get_ai_items() -> Vec<DropdownItem> {
+    let t = i18n::t();
+    vec![
+        DropdownItem::new(t.menu_ai_agents(), "agents").with_submenu(),
+        DropdownItem::new(t.menu_ai_sessions(), "sessions").with_submenu(),
+        DropdownItem::new(t.menu_ai_skills(), "skills").with_submenu(),
+        DropdownItem::new(t.menu_ai_prompts(), "prompts").with_submenu(),
+    ]
+}
+
+/// Number of items in the AI submenu.
+pub const AI_SUBMENU_ITEM_COUNT: usize = 4;
+/// Index of the Agents section in the AI submenu.
+pub const AI_SUBMENU_AGENTS: usize = 0;
+/// Index of the Sessions section in the AI submenu.
+pub const AI_SUBMENU_SESSIONS: usize = 1;
+/// Index of the Skills section in the AI submenu.
+pub const AI_SUBMENU_SKILLS: usize = 2;
+/// Index of the Prompts section in the AI submenu.
+pub const AI_SUBMENU_PROMPTS: usize = 3;
+
+/// The agent file-choice submenu (third level): which file of an agent to edit.
+/// Row keys `soul`/`toml` are decoded by the app's AI menu handler.
+pub fn get_ai_agent_choice_items() -> Vec<DropdownItem> {
+    let t = i18n::t();
+    vec![
+        DropdownItem::new(t.menu_ai_edit_prompt(), "soul"),
+        DropdownItem::new(t.menu_ai_edit_settings(), "toml"),
+    ]
+}
+
 /// Get tools submenu items
 pub fn get_tools_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();

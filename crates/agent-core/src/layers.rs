@@ -478,6 +478,27 @@ impl AgentDirs {
         names
     }
 
+    /// The directory of `agent` in the highest root that defines it, for
+    /// editing or removing it; `None` for the default agent (it has no
+    /// directory of its own) or a name no root defines.
+    #[must_use]
+    pub fn agent_dir(&self, agent: &str) -> Option<PathBuf> {
+        if agent == DEFAULT_AGENT {
+            return None;
+        }
+        self.roots
+            .iter()
+            .map(|root| root.join("agents").join(agent))
+            .find(|path| path.is_dir())
+    }
+
+    /// The file of prompt `name` (`prompts/<name>.md`) in the highest root that
+    /// defines it, for editing or removing it.
+    #[must_use]
+    pub fn prompt_path(&self, name: &str) -> Option<PathBuf> {
+        self.find_file(Path::new(PROMPTS_DIR).join(format!("{name}.md")))
+    }
+
     /// The system prompt template of `agent`: its own `agents/<name>/SOUL.md`
     /// when a root has one, else the root `AGENTS.md` of the highest root
     /// that has it (which is all the default agent has).
@@ -557,6 +578,40 @@ mod tests {
         );
         let agents = dirs.merged_entries("agents");
         assert_eq!(agents.keys().collect::<Vec<_>>(), ["bare", "review"]);
+
+        // Path resolvers point at the highest root that defines the item.
+        assert_eq!(
+            dirs.agent_dir("review"),
+            Some(project.join(PROJECT_AGENT_DIR).join("agents/review"))
+        );
+        assert_eq!(dirs.agent_dir(DEFAULT_AGENT), None);
+        assert_eq!(dirs.agent_dir("missing"), None);
+    }
+
+    #[test]
+    fn prompt_path_resolves_the_highest_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let global = tmp.path().join("config/agent");
+        for (base, name) in [
+            (project.join(PROJECT_AGENT_DIR), "prompts/review.md"),
+            (global.clone(), "prompts/review.md"),
+            (global.clone(), "prompts/global-only.md"),
+        ] {
+            let path = base.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "---\n---\nbody").unwrap();
+        }
+        let dirs = AgentDirs::new(&project, Some(&project), Some(&global));
+        assert_eq!(
+            dirs.prompt_path("review"),
+            Some(project.join(PROJECT_AGENT_DIR).join("prompts/review.md"))
+        );
+        assert_eq!(
+            dirs.prompt_path("global-only"),
+            Some(global.join("prompts/global-only.md"))
+        );
+        assert_eq!(dirs.prompt_path("missing"), None);
     }
     #[test]
     fn agent_settings_come_from_agent_toml_and_default_otherwise() {
