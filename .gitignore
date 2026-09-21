@@ -38,3 +38,7 @@ termide.log
 /.qwen
 /docs/
 CLAUDE.md
+
+# Local agent panel settings (model, provider, permission grants): per-machine,
+# not shared like the tracked .termide/bookmarks.toml and commands.toml.
+/.termide/config.toml
