@@ -48,10 +48,12 @@ built in; set it only for a gateway) and point `api_key_env` at your
 of the built-in loop talking to a model endpoint, the panel drives that tool's
 own CLI as an [external agent](#external-agents) over ACP
 (`@zed-industries/claude-code-acp` / `@zed-industries/codex-acp`, run through
-`npx`). The CLI owns the model, the endpoint and the sign-in — its own
-subscription or API key — so `base_url`, `model` and `api_key_env` do not apply;
-the settings modal hides them for these providers and clears them from the file.
-The tool must be installed and signed in first (`npx` on `PATH`). This is the
+`npx`). The CLI owns the endpoint and the sign-in — its own subscription or
+API key — so `base_url`, `model` and `api_key_env` in `[ai]` do not apply; the
+settings modal hides them for these providers and clears them from the file.
+The model is still yours to pick, but through the CLI: when the adapter
+advertises its models over ACP the **Model** chip lists and switches them. The
+tool must be installed and signed in first (`npx` on `PATH`). This is the
 built-in shortcut for what an agent's own `[acp]` table does by hand.
 
 ## Using the panel
@@ -472,12 +474,14 @@ The program starts in the background when you switch to the agent; the first
 request waits for it. Its answers, thoughts and tool calls appear in the
 session like the built-in agent's, its permission requests use the same
 card, and it reads and writes files through TermIDE, so an open editor
-follows its edits. The **Model** and **Mode** chips disappear while an
-external agent is active: it has its own. Skills, prompt templates and MCP
-servers are the agent's own affair too; `model`, `mode` and `tools` in
-`agent.toml` do not apply. Switching agents rebuilds the conversation on the
-same session log: earlier messages stay on screen but the external agent
-does not know them, and the panel says so.
+follows its edits. The **Mode** chip disappears while an external agent is
+active: it has its own. The **Model** chip stays when the agent advertises
+its models over ACP — it then lists them and switches with `session/set_model`,
+so you pick the agent's model in TermIDE; agents that advertise none show no
+chip. Skills, prompt templates and MCP servers are the agent's own affair too;
+`model`, `mode` and `tools` in `agent.toml` do not apply. Switching agents
+rebuilds the conversation on the same session log: earlier messages stay on
+screen but the external agent does not know them, and the panel says so.
 
 ### The system prompt
 

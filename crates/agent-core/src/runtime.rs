@@ -55,6 +55,17 @@ enum WorkerCommand {
     Shutdown,
 }
 
+/// A model an external backend offers for the panel's picker. The built-in
+/// loop lists its models through its [`crate::Provider`] instead; these come
+/// from an ACP agent that advertises its models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendModel {
+    /// Id the backend expects back in [`Backend::select_model`].
+    pub id: String,
+    /// Human label for the picker; falls back to the id.
+    pub name: String,
+}
+
 /// What the panel hands an external backend when it starts it.
 pub struct BackendSetup {
     pub cwd: PathBuf,
@@ -96,6 +107,22 @@ pub trait Backend: Send {
     /// reports it is unsupported (an external agent has no such call).
     fn judge(&self, _goal: String) -> Result<(), PromptError> {
         Err(PromptError::Unsupported)
+    }
+    /// Models the backend offers for a picker, current first when known. Empty
+    /// means it cannot enumerate them (the built-in loop lists via its
+    /// provider instead); an ACP agent that advertises models returns them.
+    fn available_models(&self) -> Vec<BackendModel> {
+        Vec::new()
+    }
+    /// The backend's current model id, when it tracks one (an ACP agent).
+    fn current_model(&self) -> Option<String> {
+        None
+    }
+    /// Switch the backend's model for the runs that follow, reporting the
+    /// agent's own error on failure. The built-in loop changes model through
+    /// [`Backend::update`] instead; the default here says it is unsupported.
+    fn select_model(&self, _model_id: String) -> Result<(), String> {
+        Err("model selection is not supported".to_string())
     }
     /// Stop and hand the built-in agent back, when there is one.
     fn into_agent(self: Box<Self>) -> Option<Agent>;

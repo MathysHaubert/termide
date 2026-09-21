@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use termide_agent_core::{
     expand_env, now_millis, AcpConfig, Agent, AgentEvent, AssistantContent, AssistantMessage,
-    Backend, BackendSetup, CancelToken, ChannelPrompter, Message, PermissionAnswer,
+    Backend, BackendModel, BackendSetup, CancelToken, ChannelPrompter, Message, PermissionAnswer,
     PermissionPrompter, PermissionRequest, PromptError, StopReason, StreamEvent, ToolCall,
     ToolResultMessage, UserMessage,
 };
@@ -60,6 +60,12 @@ struct Shared {
     /// The assistant message being streamed, if any: text and thought count.
     open_message: Mutex<Option<String>>,
     child: Mutex<Option<Child>>,
+    /// Models the agent advertised at `session/new`, for the picker; empty when
+    /// it advertises none.
+    models: Mutex<Vec<BackendModel>>,
+    /// The agent's current model id, from `session/new` and kept up to date by
+    /// `current_model_update` notifications and `select_model`.
+    current_model: Mutex<Option<String>>,
 }
 
 pub struct AcpRuntime {
@@ -123,6 +129,8 @@ impl AcpRuntime {
             name: name.to_string(),
             open_message: Mutex::new(None),
             child: Mutex::new(None),
+            models: Mutex::new(Vec::new()),
+            current_model: Mutex::new(None),
         });
         let for_reader = Arc::clone(&shared);
         std::thread::spawn(move || for_reader.read_loop(reader));
@@ -200,6 +208,34 @@ impl Backend for AcpRuntime {
         Err(PromptError::Unsupported)
     }
 
+    fn available_models(&self) -> Vec<BackendModel> {
+        self.shared.models.lock().unwrap().clone()
+    }
+
+    fn current_model(&self) -> Option<String> {
+        self.shared.current_model.lock().unwrap().clone()
+    }
+
+    fn select_model(&self, model_id: String) -> Result<(), String> {
+        let session_id = match &*self.shared.conn.lock().unwrap() {
+            Conn::Ready { session_id } => session_id.clone(),
+            Conn::Starting => return Err("the agent is still starting".to_string()),
+            Conn::Failed(error) => return Err(error.clone()),
+        };
+        // Refused while a turn runs: the switch applies to the runs that follow,
+        // like the built-in loop's model change between turns.
+        if self.is_busy() {
+            return Err("finish or stop the current task first".to_string());
+        }
+        self.shared.request(
+            "session/set_model",
+            json!({ "sessionId": session_id, "modelId": model_id }),
+            Duration::from_secs(30),
+        )?;
+        *self.shared.current_model.lock().unwrap() = Some(model_id);
+        Ok(())
+    }
+
     fn into_agent(self: Box<Self>) -> Option<Agent> {
         None
     }
@@ -240,15 +276,42 @@ impl Shared {
         });
         let conn = match result {
             Ok(value) => match value["sessionId"].as_str() {
-                Some(id) => Conn::Ready {
-                    session_id: id.to_string(),
-                },
+                Some(id) => {
+                    self.adopt_models(&value["models"]);
+                    Conn::Ready {
+                        session_id: id.to_string(),
+                    }
+                }
                 None => Conn::Failed("session/new returned no sessionId".into()),
             },
             Err(error) => Conn::Failed(error),
         };
         *self.conn.lock().unwrap() = conn;
         self.kick();
+    }
+
+    /// Record the models an agent advertises in a `session/new`/`load` result
+    /// (`models.availableModels` and `models.currentModelId`), so the panel can
+    /// list and switch them. Missing or malformed data leaves the lists empty.
+    fn adopt_models(&self, models: &Value) {
+        let list: Vec<BackendModel> = models["availableModels"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|m| {
+                        let id = m["modelId"].as_str()?.to_string();
+                        let name = m["name"].as_str().unwrap_or(&id).to_string();
+                        Some(BackendModel { id, name })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let current = models["currentModelId"].as_str().map(str::to_string);
+        *self.models.lock().unwrap() = list;
+        if let Some(current) = current {
+            *self.current_model.lock().unwrap() = Some(current);
+        }
     }
 
     /// Start the next queued turn when the session is ready and no turn is
@@ -343,7 +406,12 @@ impl Shared {
             stop_reason: stop,
             usage: Default::default(),
             provider: "acp".into(),
-            model: self.name.clone(),
+            model: self
+                .current_model
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| self.name.clone()),
             error_message: error,
             timestamp: now_millis(),
         };
@@ -579,6 +647,11 @@ impl Shared {
                     Some("completed") | Some("failed")
                 ) {
                     self.finish_tool_call(update);
+                }
+            }
+            "current_model_update" => {
+                if let Some(id) = update["modelId"].as_str() {
+                    *self.current_model.lock().unwrap() = Some(id.to_string());
                 }
             }
             other => log::debug!("acp {}: update {other} ignored", self.name),
@@ -891,6 +964,84 @@ mod tests {
             assert!(Instant::now() < deadline, "no AgentEnd: {events:?}");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// An agent that advertises two models at `session/new` and accepts a
+    /// `session/set_model`.
+    fn models_agent(dir: PathBuf) -> AcpRuntime {
+        let (to_agent_rx, to_agent_tx) = pipe().unwrap();
+        let (from_agent_rx, from_agent_tx) = pipe().unwrap();
+        std::thread::spawn(move || {
+            let mut out = from_agent_tx;
+            let mut send = |value: Value| writeln!(out, "{value}").unwrap();
+            let mut reader = BufReader::new(to_agent_rx).lines();
+            while let Some(Ok(line)) = reader.next() {
+                let message: Value = serde_json::from_str(&line).unwrap();
+                let id = message["id"].clone();
+                match message["method"].as_str() {
+                    Some("initialize") => send(
+                        json!({ "jsonrpc": "2.0", "id": id, "result": { "protocolVersion": 1, "agentCapabilities": {} } }),
+                    ),
+                    Some("session/new") => send(json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "sessionId": "s1",
+                        "models": {
+                            "availableModels": [
+                                { "modelId": "m-fast", "name": "Fast" },
+                                { "modelId": "m-slow", "name": "Slow" }
+                            ],
+                            "currentModelId": "m-fast"
+                        }
+                    } })),
+                    Some("session/set_model") => {
+                        assert_eq!(message["params"]["modelId"], "m-slow");
+                        send(json!({ "jsonrpc": "2.0", "id": id, "result": {} }));
+                    }
+                    _ => {}
+                }
+            }
+        });
+        let cancel = CancelToken::new();
+        let (prompter, _permissions) = permission_channel(cancel.clone());
+        AcpRuntime::from_streams(
+            "fake",
+            from_agent_rx,
+            to_agent_tx,
+            BackendSetup {
+                cwd: dir,
+                prompter,
+                cancel,
+            },
+            5,
+        )
+    }
+
+    #[test]
+    fn models_are_read_from_the_session_and_switched_over_acp() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = models_agent(dir.path().to_path_buf());
+        // The handshake runs on a thread; wait for the advertised models.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.available_models().is_empty() {
+            assert!(Instant::now() < deadline, "models never arrived");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            runtime.available_models(),
+            vec![
+                BackendModel {
+                    id: "m-fast".into(),
+                    name: "Fast".into()
+                },
+                BackendModel {
+                    id: "m-slow".into(),
+                    name: "Slow".into()
+                },
+            ]
+        );
+        assert_eq!(runtime.current_model(), Some("m-fast".to_string()));
+
+        runtime.select_model("m-slow".to_string()).unwrap();
+        assert_eq!(runtime.current_model(), Some("m-slow".to_string()));
     }
 
     #[test]

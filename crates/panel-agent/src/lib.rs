@@ -21,12 +21,13 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use termide_agent_core::{
-    civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendSetup,
-    CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
-    CompactionPrompts, Decision, GoalPrompt, Hooks, LateTools, Message, Mode, ModeHandle,
-    ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules,
-    PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session, SessionSummary,
-    StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendModel,
+    BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript,
+    CompactionPolicy, CompactionPrompts, Decision, GoalPrompt, Hooks, LateTools, Message, Mode,
+    ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks,
+    PermissionRules, PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session,
+    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
+    DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -396,6 +397,11 @@ pub struct AgentPanel {
     mode: ModeHandle,
     /// Models offered by the last picker, in the order they were shown.
     model_choices: Vec<ModelInfo>,
+    /// The external (ACP) agent's models, filled while its picker is open.
+    acp_models: Vec<BackendModel>,
+    /// Whether the external agent advertised any models (so a Model chip and
+    /// picker are worth showing); latched once known.
+    acp_has_models: bool,
     /// Background `list_models` call, polled from `tick()`.
     model_fetch: Option<Receiver<Result<Vec<ModelInfo>, String>>>,
     /// A silent `list_models` call started at construction to adopt the active
@@ -583,6 +589,8 @@ impl AgentPanel {
             waiting_tools: Vec::new(),
             mode,
             model_choices: Vec::new(),
+            acp_models: Vec::new(),
+            acp_has_models: false,
             model_fetch: None,
             context_probe,
             pending_events: Vec::new(),
@@ -1658,6 +1666,35 @@ impl AgentPanel {
             options,
             on_select: SelectAction::Custom(MODEL_ACTION.to_string()),
         }
+    }
+
+    /// The model picker for an external (ACP) agent: the models it advertised,
+    /// current marked, switched over ACP rather than through the built-in loop.
+    fn acp_model_picker(&mut self) -> Vec<PanelEvent> {
+        let t = termide_i18n::t();
+        let models = self.runtime.available_models();
+        if models.is_empty() {
+            self.notice("this agent offers no model choices", NoticeKind::Info);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let current = self.runtime.current_model();
+        let options = models
+            .iter()
+            .map(|m| {
+                let mark = current_mark(current.as_deref() == Some(m.id.as_str()));
+                if m.name == m.id {
+                    format!("{mark}{}", m.id)
+                } else {
+                    format!("{mark}{} · {}", m.name, m.id)
+                }
+            })
+            .collect();
+        self.acp_models = models;
+        vec![PanelEvent::ShowSelect {
+            title: t.agent_change_model().to_string(),
+            options,
+            on_select: SelectAction::Custom(MODEL_ACTION.to_string()),
+        }]
     }
 
     fn model_input(&self) -> PanelEvent {
@@ -3708,7 +3745,8 @@ impl Panel for AgentPanel {
             PROMPTS_ACTION => self.prompt_picker(),
             UNDO_ACTION => self.ask_undo(),
             AGENT_ACTION => vec![self.agent_picker()],
-            MODEL_ACTION | MODE_ACTION if self.external => {
+            MODEL_ACTION if self.external => self.acp_model_picker(),
+            MODE_ACTION if self.external => {
                 self.notice(PromptError::Unsupported.to_string(), NoticeKind::Warn);
                 vec![PanelEvent::NeedsRedraw]
             }
@@ -4262,6 +4300,21 @@ impl Panel for AgentPanel {
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
+        // An external agent's model becomes known once its handshake finishes
+        // (its adapter starts asynchronously): adopt the current model for the
+        // banner and the Model chip, and note whether it offers a choice.
+        if self.external {
+            if !self.acp_has_models && !self.runtime.available_models().is_empty() {
+                self.acp_has_models = true;
+                changed = true;
+            }
+            if let Some(id) = self.runtime.current_model() {
+                if id != self.model.id {
+                    self.model.id = id;
+                    changed = true;
+                }
+            }
+        }
         // A loop whose wait has elapsed starts its next iteration once the
         // panel is free (no run in flight, no card waiting for an answer).
         let due = self
@@ -4340,6 +4393,25 @@ impl Panel for AgentPanel {
                 if let Some(mode) = Mode::ALL.get(index).copied() {
                     let event = self.set_mode(mode);
                     self.pending_events.push(event);
+                }
+                CommandResult::Handled(true)
+            }
+            PanelCommand::SelectionMade { action, index }
+                if action == MODEL_ACTION && self.external =>
+            {
+                let choice = self.acp_models.get(index).cloned();
+                self.acp_models.clear();
+                if let Some(model) = choice {
+                    match self.runtime.select_model(model.id.clone()) {
+                        Ok(()) => {
+                            self.model.id = model.id.clone();
+                            self.notice(format!("model: {}", model.id), NoticeKind::Info);
+                        }
+                        Err(error) => self.notice(
+                            format!("cannot switch the model: {error}"),
+                            NoticeKind::Warn,
+                        ),
+                    }
                 }
                 CommandResult::Handled(true)
             }
@@ -4432,6 +4504,19 @@ impl Panel for AgentPanel {
         ]);
         if self.external {
             segments.push(StatusSegment::new(" (acp)", SegmentKind::Label));
+            // The agent's model, when it advertised any over ACP: clickable to
+            // switch, like the built-in loop's Model chip.
+            if self.acp_has_models {
+                segments.extend([
+                    sep(),
+                    StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
+                    StatusSegment::clickable(
+                        self.model.id.clone(),
+                        SegmentKind::Active,
+                        MODEL_ACTION,
+                    ),
+                ]);
+            }
         }
         if !self.external && self.model.context_window > 0 {
             segments.push(sep());
@@ -6680,6 +6765,105 @@ mod tests {
         assert!(!panel.external);
         assert_eq!(chip(&panel, MODE_ACTION), "ask");
     }
+
+    /// An external agent that advertises two models and records the one picked.
+    struct ModelBackend {
+        picked: Arc<Mutex<Option<String>>>,
+    }
+
+    impl Backend for ModelBackend {
+        fn prompt(&self, _message: UserMessage) -> Result<(), PromptError> {
+            Ok(())
+        }
+        fn steer(&self, _message: UserMessage) {}
+        fn queue_lens(&self) -> (usize, usize) {
+            (0, 0)
+        }
+        fn abort(&self) {}
+        fn is_busy(&self) -> bool {
+            false
+        }
+        fn drain(&self) -> Vec<AgentEvent> {
+            Vec::new()
+        }
+        fn update(&self, _update: Box<dyn FnOnce(&mut Agent) + Send>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
+        fn compact(&self, _focus: Option<String>) -> Result<(), PromptError> {
+            Err(PromptError::Unsupported)
+        }
+        fn available_models(&self) -> Vec<BackendModel> {
+            vec![
+                BackendModel {
+                    id: "m-fast".into(),
+                    name: "Fast".into(),
+                },
+                BackendModel {
+                    id: "m-slow".into(),
+                    name: "Slow".into(),
+                },
+            ]
+        }
+        fn current_model(&self) -> Option<String> {
+            Some(
+                self.picked
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| "m-fast".into()),
+            )
+        }
+        fn select_model(&self, model_id: String) -> Result<(), String> {
+            *self.picked.lock().unwrap() = Some(model_id);
+            Ok(())
+        }
+        fn into_agent(self: Box<Self>) -> Option<Agent> {
+            None
+        }
+    }
+
+    #[test]
+    fn an_external_agent_lists_and_switches_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let picked = Arc::new(Mutex::new(None));
+        let for_factory = Arc::clone(&picked);
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            backend: Some(Arc::new(move |_setup: BackendSetup| {
+                Ok(Box::new(ModelBackend {
+                    picked: Arc::clone(&for_factory),
+                }) as Box<dyn Backend>)
+            })),
+            ..setup(vec![])
+        });
+        assert!(panel.external);
+        // A tick adopts the advertised current model for the banner and chip.
+        panel.tick();
+        assert_eq!(panel.model.id, "m-fast");
+        let texts: Vec<String> = panel
+            .status_segments()
+            .into_iter()
+            .map(|s| s.text)
+            .collect();
+        assert!(texts.iter().any(|t| t == "m-fast"), "{texts:?}");
+
+        // The Model chip opens the agent's model list.
+        let events = panel.handle_status_action(MODEL_ACTION);
+        let Some(PanelEvent::ShowSelect { options, .. }) = events.first() else {
+            panic!("expected a model picker, got {events:?}");
+        };
+        assert_eq!(options.len(), 2);
+        assert!(options.iter().any(|o| o.contains("Slow")), "{options:?}");
+
+        // Picking the second switches it over ACP and updates the chip.
+        panel.handle_command(PanelCommand::SelectionMade {
+            action: MODEL_ACTION.to_string(),
+            index: 1,
+        });
+        assert_eq!(*picked.lock().unwrap(), Some("m-slow".to_string()));
+        assert_eq!(panel.model.id, "m-slow");
+    }
+
     #[test]
     fn arrow_keys_recall_earlier_requests_and_bring_the_draft_back() {
         let mut panel = panel(vec![reply("a"), reply("b")]);
