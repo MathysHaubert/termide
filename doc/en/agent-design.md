@@ -103,15 +103,15 @@ data-driven, so the panel and a future ACP client render the same prompt.
 Chosen TOML shape (OpenCode-style tables, so "allow always" appends one key):
 
 ```toml
-[agent.permissions]
+[ai.permissions]
 mode = "ask"        # ask | accept-edits | auto
 
-[agent.permissions.bash]
+[ai.permissions.bash]
 "git status*" = "allow"
 "git push*"   = "ask"
 "rm -rf *"    = "deny"
 
-[agent.permissions.edit]
+[ai.permissions.edit]
 "src/**" = "allow"
 ".env"   = "deny"
 ```

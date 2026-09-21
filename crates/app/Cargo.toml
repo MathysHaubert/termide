@@ -13,6 +13,7 @@ crossterm.workspace = true
 log = "0.4"
 ratatui.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
 dirs.workspace = true
 lsp-types.workspace = true
 open = "5"

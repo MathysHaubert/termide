@@ -352,6 +352,10 @@ pub struct AgentPanel {
     provider: Arc<dyn Provider>,
     tools: ToolRegistry,
     rules: PermissionRules,
+    /// "Allow for this session" grants, held for the panel's lifetime so a
+    /// rebuild of the agent (undo, a model or agent switch) keeps them. They
+    /// are never written to the configuration; "allow always" goes to `rules`.
+    session_rules: PermissionRules,
     system_prompt: String,
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
@@ -504,6 +508,7 @@ impl AgentPanel {
             provider_kind: setup.provider_kind,
             tools,
             rules: setup.rules,
+            session_rules: PermissionRules::default(),
             system_prompt,
             compaction: setup.compaction,
             compaction_prompts: setup.compaction_prompts,
@@ -590,7 +595,7 @@ impl AgentPanel {
             &model,
             &self.cwd,
             &system_prompt,
-            self.rules.clone(),
+            self.effective_rules(),
             self.compaction,
             &self.compaction_prompts,
             &self.plan_prompt,
@@ -1167,8 +1172,37 @@ impl AgentPanel {
         let Some(Pending::Permission { envelope, .. }) = self.pending.take() else {
             return false;
         };
+        // Mirror a lasting grant into the panel's own rules so rebuilding the
+        // agent (undo, a model or agent switch) carries it, not just the hooks
+        // on the worker thread. "Always" is also written to the configuration
+        // by the persist callback; "for this session" lives only here.
+        let request = &envelope.request;
+        match answer {
+            PermissionAnswer::AllowAlways => {
+                self.rules
+                    .add(&request.tool, &request.suggested_pattern, Decision::Allow);
+            }
+            PermissionAnswer::AllowSession => {
+                self.session_rules
+                    .add(&request.tool, &request.suggested_pattern, Decision::Allow);
+            }
+            _ => {}
+        }
         let _ = envelope.reply.send(answer);
         true
+    }
+
+    /// The rules the agent runs under: the configured and "always" rules, plus
+    /// this session's "allow for the session" grants. Rebuilt into every agent
+    /// the panel spawns so a grant survives a rebuild.
+    fn effective_rules(&self) -> PermissionRules {
+        let mut rules = self.rules.clone();
+        for (tool, patterns) in &self.session_rules.tools {
+            for (pattern, decision) in patterns {
+                rules.add(tool, pattern, *decision);
+            }
+        }
+        rules
     }
 
     /// The system prompt as the agent receives it, written next to the
@@ -4610,6 +4644,51 @@ mod tests {
         click(&mut panel, y);
         assert!(panel.pending.is_none());
         assert_eq!(worker.join().unwrap(), PermissionAnswer::AllowSession);
+    }
+
+    #[test]
+    fn a_grant_reaches_the_panel_rules_so_it_survives_a_rebuild() {
+        let pending = |panel: &mut AgentPanel| {
+            let (reply, _rx) = std::sync::mpsc::channel();
+            panel.pending = Some(Pending::Permission {
+                envelope: PermissionEnvelope {
+                    id: 1,
+                    request: termide_agent_core::PermissionRequest {
+                        tool: "bash".into(),
+                        subject: "cat notes.txt".into(),
+                        call: termide_agent_core::ToolCall {
+                            id: "c".into(),
+                            name: "bash".into(),
+                            arguments: serde_json::json!({ "command": "cat notes.txt" }),
+                        },
+                        suggested_pattern: "cat *".into(),
+                    },
+                    reply,
+                },
+                form: ChoiceForm::new("", vec![]),
+            });
+        };
+
+        // "Allow for the session" lands in the session rules, which
+        // `effective_rules` — what every rebuilt agent starts from — includes,
+        // but the persistent rules do not.
+        let mut session = panel(vec![]);
+        pending(&mut session);
+        assert!(session.answer_permission(PermissionAnswer::AllowSession));
+        assert_eq!(
+            session.effective_rules().evaluate("bash", "cat x"),
+            Some(Decision::Allow)
+        );
+        assert_eq!(session.rules.evaluate("bash", "cat x"), None);
+
+        // "Allow always" lands in the persistent rules.
+        let mut always = panel(vec![]);
+        pending(&mut always);
+        assert!(always.answer_permission(PermissionAnswer::AllowAlways));
+        assert_eq!(
+            always.rules.evaluate("bash", "cat x"),
+            Some(Decision::Allow)
+        );
     }
 
     #[test]

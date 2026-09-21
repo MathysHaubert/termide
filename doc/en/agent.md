@@ -249,20 +249,20 @@ Rules live per tool. Among the rules that match, the strictest wins, so a
 `deny` always beats an `allow`:
 
 ```toml
-[agent.permissions]
+[ai.permissions]
 mode = "ask"        # ask | accept-edits | auto | plan
 
-[agent.permissions.bash]
+[ai.permissions.bash]
 "cargo *"     = "allow"
 "git status*" = "allow"
 "git push*"   = "ask"
 "rm -rf *"    = "deny"
 
-[agent.permissions.edit]
+[ai.permissions.edit]
 "src/**" = "allow"
 ".env"   = "deny"
 
-[agent.permissions.read]
+[ai.permissions.read]
 "**/.env*" = "deny"
 ```
 
@@ -562,7 +562,7 @@ visible. A script that exits with an error, prints nothing or exceeds its
 timeout (60 s by default) sends nothing and reports why. Scripts from the
 configuration level are your own and run at once; one that came with the
 project or the directory asks first, in a card like a permission: run once,
-for this session, always (a rule `[agent.permissions.command]` is written)
+for this session, always (a rule `[ai.permissions.command]` is written)
 or not at all. Templates and scripts share the `/` names; when both exist
 at the same level, the template wins.
 
@@ -595,7 +595,7 @@ An MCP tool asks for permission like any other tool that no rule covers,
 except in `auto` mode. "Allow always" writes a rule for the tool name:
 
 ```toml
-[agent.permissions.github__search_issues]
+[ai.permissions.github__search_issues]
 "*" = "allow"
 ```
 

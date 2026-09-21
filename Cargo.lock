@@ -4970,6 +4970,7 @@ dependencies = [
  "termide-ui-render",
  "termide-vfs",
  "termide-watcher",
+ "toml_edit",
  "unicode-width",
 ]
 

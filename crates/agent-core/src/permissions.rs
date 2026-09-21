@@ -157,7 +157,7 @@ pub enum Decision {
     Deny,
 }
 
-/// `[agent.permissions]`: a mode plus one `pattern = decision` table per tool.
+/// `[ai.permissions]`: a mode plus one `pattern = decision` table per tool.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PermissionRules {
     #[serde(default)]

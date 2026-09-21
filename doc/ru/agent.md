@@ -246,20 +246,20 @@ prefill/генерации.
 поэтому `deny` всегда сильнее `allow`:
 
 ```toml
-[agent.permissions]
+[ai.permissions]
 mode = "ask"        # ask | accept-edits | auto | plan
 
-[agent.permissions.bash]
+[ai.permissions.bash]
 "cargo *"     = "allow"
 "git status*" = "allow"
 "git push*"   = "ask"
 "rm -rf *"    = "deny"
 
-[agent.permissions.edit]
+[ai.permissions.edit]
 "src/**" = "allow"
 ".env"   = "deny"
 
-[agent.permissions.read]
+[ai.permissions.read]
 "**/.env*" = "deny"
 ```
 
@@ -556,7 +556,7 @@ git diff --staged
 таймаут (по умолчанию 60 с), ничего не отправляет и сообщает причину. Скрипты
 уровня настроек — ваши собственные и запускаются сразу; пришедший с проектом
 или каталогом сначала спрашивает карточкой, как разрешение: запустить один
-раз, на сессию, всегда (пишется правило `[agent.permissions.command]`) или не
+раз, на сессию, всегда (пишется правило `[ai.permissions.command]`) или не
 запускать. Шаблоны и скрипты делят имена `/`; если на одном уровне есть оба,
 побеждает шаблон.
 
@@ -589,7 +589,7 @@ MCP-инструмент спрашивает разрешение, как лю�
 режима `auto`. «Разрешить всегда» пишет правило по имени инструмента:
 
 ```toml
-[agent.permissions.github__search_issues]
+[ai.permissions.github__search_issues]
 "*" = "allow"
 ```
 

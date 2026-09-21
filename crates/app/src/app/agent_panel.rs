@@ -788,10 +788,14 @@ fn default_openai_base_url() -> String {
     AiSettings::default().base_url
 }
 
-/// Append an "allow always" rule to the project's `.termide/config.toml`.
+/// Persist an "allow always" rule as `[ai.permissions.<tool>]` in the
+/// project's `.termide/config.toml`.
 ///
-/// Written as a plain TOML fragment rather than through the config writer:
-/// the file is user-owned, and appending keeps its comments and layout intact.
+/// The rule is merged into the document rather than appended, so a repeated
+/// grant updates it in place instead of writing a second `[ai.permissions.…]`
+/// table (two tables of the same name are invalid TOML and would break the
+/// whole file). `toml_edit` keeps the file's other settings, comments and
+/// layout intact.
 fn persist_rule(tool: &str, pattern: &str, decision: Decision) {
     let Ok(cwd) = std::env::current_dir() else {
         return;
@@ -801,35 +805,55 @@ fn persist_rule(tool: &str, pattern: &str, decision: Decision) {
         log::warn!("cannot create {}: {error}", dir.display());
         return;
     }
-    let value = match decision {
+    let path = dir.join("config.toml");
+    if let Err(error) = merge_permission_rule(&path, tool, pattern, decision) {
+        log::warn!(
+            "cannot record the permission rule in {}: {error}",
+            path.display()
+        );
+    }
+}
+
+/// Set `[ai.permissions.<tool>] <pattern> = <decision>` in the TOML document at
+/// `path`, creating the file and the tables as needed. A file that does not
+/// parse is left untouched (a hand-edit to fix) rather than appended to.
+fn merge_permission_rule(path: &Path, tool: &str, pattern: &str, decision: Decision) -> Result<()> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+
+    let value_str = match decision {
         Decision::Allow => "allow",
         Decision::Ask => "ask",
         Decision::Deny => "deny",
     };
-    let block = format!(
-        "\n# added by the agent panel\n[agent.permissions.{tool}]\n{} = \"{value}\"\n",
-        toml_key(pattern)
-    );
-    let path = dir.join("config.toml");
-    use std::io::Write;
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        Ok(mut file) => {
-            if let Err(error) = file.write_all(block.as_bytes()) {
-                log::warn!("cannot write {}: {error}", path.display());
-            }
-        }
-        Err(error) => log::warn!("cannot open {}: {error}", path.display()),
-    }
-}
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut doc: DocumentMut = text.parse()?;
 
-/// Quote a rule pattern as a TOML basic string.
-fn toml_key(pattern: &str) -> String {
-    let escaped = pattern.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    // Walk to `ai.permissions.<tool>`, creating implicit tables on the way so
+    // the sections merge with whatever the file already holds.
+    let permissions = doc
+        .entry("ai")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .and_then(|ai| {
+            ai.entry("permissions")
+                .or_insert_with(|| Item::Table(Table::new()))
+                .as_table_mut()
+        })
+        .ok_or_else(|| anyhow::anyhow!("[ai] or [ai.permissions] is not a table"))?;
+    permissions.set_implicit(true);
+    let table = permissions
+        .entry(tool)
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[ai.permissions.{tool}] is not a table"))?;
+    table.insert(pattern, value(value_str));
+
+    std::fs::write(path, doc.to_string())?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -837,10 +861,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn patterns_are_quoted_for_toml() {
-        assert_eq!(toml_key("git push *"), "\"git push *\"");
-        assert_eq!(toml_key("a\"b"), "\"a\\\"b\"");
-        assert_eq!(toml_key("c:\\tmp"), "\"c:\\\\tmp\"");
+    fn a_rule_is_merged_under_ai_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[ai]\nmodel = \"m\"  # keep me\n").unwrap();
+
+        merge_permission_rule(&path, "bash", "cat *", Decision::Allow).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        // Written under [ai.permissions.bash] (not the old [agent.…]), and the
+        // rest of the file is preserved.
+        assert!(text.contains("[ai.permissions.bash]"), "{text}");
+        assert!(text.contains("\"cat *\" = \"allow\""), "{text}");
+        assert!(text.contains("# keep me"), "{text}");
+        assert!(!text.contains("[agent"), "{text}");
+
+        // The document is valid and the config loader reads the rule back.
+        let config = termide_config::Config::load_from(&path).unwrap();
+        assert_eq!(
+            config.ai.permissions.evaluate("bash", "cat notes.txt"),
+            Some(Decision::Allow)
+        );
+
+        // A second grant updates in place — no duplicate table, still valid.
+        merge_permission_rule(&path, "bash", "python3 *", Decision::Allow).unwrap();
+        merge_permission_rule(&path, "bash", "cat *", Decision::Allow).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("[ai.permissions.bash]").count(), 1, "{text}");
+        let config = termide_config::Config::load_from(&path).unwrap();
+        assert_eq!(
+            config.ai.permissions.evaluate("bash", "python3 x.py"),
+            Some(Decision::Allow)
+        );
+    }
+
+    #[test]
+    fn a_broken_config_is_left_for_a_hand_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Two tables of the same name: invalid TOML.
+        let broken = "[ai.permissions.bash]\n\"cat *\" = \"allow\"\n[ai.permissions.bash]\n\"ls *\" = \"allow\"\n";
+        std::fs::write(&path, broken).unwrap();
+        assert!(merge_permission_rule(&path, "bash", "python3 *", Decision::Allow).is_err());
+        // The file is untouched, not appended to.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
     }
     #[test]
     fn restore_is_skipped_without_a_configured_model() {
