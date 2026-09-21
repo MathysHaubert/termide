@@ -2202,6 +2202,9 @@ impl AgentPanel {
             self.completion = None;
             return;
         }
+        // Prompts, command scripts and built-ins are gathered in different
+        // groups; show the whole `/` list in one alphabetical order.
+        items.sort_by(|a, b| a.value.cmp(&b.value));
         match &mut self.completion {
             Some(list) => list.set_items(items),
             None => self.completion = Some(CompletionList::new(items)),
@@ -5156,6 +5159,22 @@ mod tests {
         settle(&mut panel);
         panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
         assert!(panel.loop_task.is_none(), "Esc ended the loop");
+    }
+
+    #[test]
+    fn slash_completion_is_alphabetical() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        type_text(&mut panel, "/c");
+        let list = panel.completion.as_ref().expect("a completion popup");
+        let names: Vec<&str> = list.items().iter().map(|i| i.value.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted, "the /-command list should be alphabetical");
+        assert!(names.contains(&"clear") && names.contains(&"compact"));
     }
 
     #[test]
