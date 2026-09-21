@@ -2747,8 +2747,12 @@ impl AgentPanel {
         self.follow = self.top >= self.max_top();
     }
 
-    fn input_rows(&self, available: u16) -> u16 {
-        let rows = self.input_area().line_count().max(1) as u16;
+    fn input_rows(&self, available: u16, width: u16) -> u16 {
+        // Size by wrapped (visual) rows so a long prompt grows the box instead
+        // of being clipped; the `› ` prompt takes two columns.
+        let text_width = width.saturating_sub(2).max(1) as usize;
+        let rows =
+            termide_ui::input_bar::wrapped_row_count(&self.input_text(), text_width).max(1) as u16;
         rows.min(MAX_INPUT_ROWS)
             .min(available.saturating_sub(2).max(1))
     }
@@ -3536,7 +3540,7 @@ impl Panel for AgentPanel {
         }
         buf.set_style(area, Style::default().fg(self.colors.fg).bg(self.colors.bg));
 
-        let input_rows = self.input_rows(area.height);
+        let input_rows = self.input_rows(area.height, area.width);
         // The input bar carries its own titled top border, which divides it
         // from the content above, so the box is one row taller than its text.
         let bar_rows = input_rows + 1;

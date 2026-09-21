@@ -48,7 +48,8 @@ built in; set it only for a gateway) and point `api_key_env` at your
 
 The session fills the panel, the input box sits at the bottom, under a titled
 border that carries the agent's name (`─ default ─`) so parallel agent panels
-are easy to tell apart. Like a new
+are easy to tell apart. A long line wraps to the panel width and the box grows
+to fit — up to five rows — before it starts scrolling. Like a new
 terminal, the agent works in the directory of the panel that had focus when
 you opened it (a file manager's directory, an editor's file), or in the project
 root. The panel title is your first request, so several agent panels stay

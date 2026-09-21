@@ -782,45 +782,98 @@ fn render_multiline(
         return;
     }
 
+    // Keeps the logical scroll offset (used by click-to-position) roughly in
+    // step; the visual scroll below is what the wrapped render actually uses.
     ta.ensure_cursor_visible(area.height as usize);
-    let offset = ta.scroll_offset();
     let prompt_style = Style::default().fg(colors.fg);
     let text_style = Style::default().fg(colors.fg);
     let lines = ta.lines();
-    for r in 0..area.height as usize {
+    let tw = text_width as usize;
+
+    // Soft-wrap: each logical line becomes one or more visual rows, so a long
+    // prompt reflows instead of being clipped. `visual[i] = (row, start, end)`
+    // is the char range [start, end) of logical `row` shown on that visual row.
+    let mut visual: Vec<(usize, usize, usize)> = Vec::new();
+    for (r, line) in lines.iter().enumerate() {
+        for (start, end) in wrap_line(line, tw) {
+            visual.push((r, start, end));
+        }
+    }
+
+    // Scroll to keep the cursor's visual row on screen (bottom-anchored while
+    // typing at the end).
+    let cursor = ta.cursor();
+    let cursor_vi = visual
+        .iter()
+        .enumerate()
+        .filter(|(_, (row, start, _))| *row == cursor.row && *start <= cursor.col)
+        .next_back()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let height = area.height as usize;
+    let scroll = cursor_vi.saturating_sub(height.saturating_sub(1));
+
+    for r in 0..height {
         let y = area.y + r as u16;
         let prefix = if r == 0 { prompt } else { indent.as_str() };
         buf.set_string(area.x, y, prefix, prompt_style);
-        if let Some(line) = lines.get(r + offset) {
-            buf.set_stringn(text_x, y, line, text_width as usize, text_style);
+        if let Some(&(row, start, end)) = visual.get(scroll + r) {
+            let seg: String = lines[row].chars().skip(start).take(end - start).collect();
+            buf.set_stringn(text_x, y, &seg, tw, text_style);
         }
     }
 
     let empty = lines.len() <= 1 && lines.first().is_none_or(String::is_empty);
     if empty && !focused {
         if let Some(ph) = placeholder {
-            buf.set_stringn(
-                text_x,
-                area.y,
-                ph,
-                text_width as usize,
-                Style::default().fg(colors.disabled),
-            );
+            buf.set_stringn(text_x, area.y, ph, tw, Style::default().fg(colors.disabled));
         }
     }
 
     if focused {
-        let cursor = ta.cursor();
-        if cursor.row >= offset && cursor.row - offset < area.height as usize {
-            let line = lines.get(cursor.row).map(String::as_str).unwrap_or("");
-            let col: usize = line.chars().take(cursor.col).map(char_width).sum();
+        if let Some(vr) = cursor_vi.checked_sub(scroll).filter(|vr| *vr < height) {
+            let (row, start, _) = visual[cursor_vi];
+            let col: usize = lines[row]
+                .chars()
+                .skip(start)
+                .take(cursor.col - start)
+                .map(char_width)
+                .sum();
             if (col as u16) < text_width {
                 let x = text_x + col as u16;
-                let y = area.y + (cursor.row - offset) as u16;
+                let y = area.y + vr as u16;
                 buf[(x, y)].set_style(Style::default().fg(colors.bg).bg(colors.fg));
             }
         }
     }
+}
+
+/// Split `line` into visual segments no wider than `width` display columns,
+/// each a `[start, end)` char-index range. An empty line yields one empty
+/// segment so it still occupies a row.
+fn wrap_line(line: &str, width: usize) -> Vec<(usize, usize)> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut w = 0usize;
+    for (i, c) in line.chars().enumerate() {
+        let cw = char_width(c);
+        if w + cw > width && i > start {
+            out.push((start, i));
+            start = i;
+            w = 0;
+        }
+        w += cw;
+    }
+    out.push((start, line.chars().count()));
+    out
+}
+
+/// The number of visual rows the text occupies when soft-wrapped to `width`.
+pub fn wrapped_row_count(text: &str, width: usize) -> usize {
+    text.split('\n')
+        .map(|line| wrap_line(line, width).len())
+        .sum()
 }
 
 fn char_width(c: char) -> usize {
@@ -892,6 +945,29 @@ mod tests {
             .with_control(Control::Button {
                 label: "Next".into(),
             })
+    }
+
+    #[test]
+    fn wrap_line_splits_on_display_width() {
+        // Empty line still occupies one (empty) row.
+        assert_eq!(wrap_line("", 4), vec![(0, 0)]);
+        // Fits exactly, no split.
+        assert_eq!(wrap_line("abcd", 4), vec![(0, 4)]);
+        // One extra char spills onto a second row.
+        assert_eq!(wrap_line("abcde", 4), vec![(0, 4), (4, 5)]);
+        // A wide char (2 columns) wraps a char earlier.
+        assert_eq!(wrap_line("aaa世", 4), vec![(0, 3), (3, 4)]);
+    }
+
+    #[test]
+    fn wrapped_row_count_sums_logical_lines() {
+        assert_eq!(wrapped_row_count("", 4), 1);
+        assert_eq!(wrapped_row_count("abcd", 4), 1);
+        assert_eq!(wrapped_row_count("abcdef", 4), 2);
+        // Two logical lines, the second wraps once.
+        assert_eq!(wrapped_row_count("ab\nabcde", 4), 3);
+        // A trailing newline yields an extra empty row.
+        assert_eq!(wrapped_row_count("abcd\n", 4), 2);
     }
 
     #[test]
