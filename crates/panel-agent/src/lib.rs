@@ -1172,6 +1172,18 @@ impl AgentPanel {
         });
     }
 
+    /// Whether the session has no conversation yet — no request sent, so the
+    /// welcome banner is still showing. A model/agent switch then updates the
+    /// banner's values in place instead of pushing a notice that would replace
+    /// the banner with a near-empty transcript.
+    fn is_fresh(&self) -> bool {
+        !self
+            .transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::User { .. } | Item::Assistant { .. }))
+    }
+
     /// Apply one runtime event to the transcript and the session log.
     /// Note streamed output: enter the generating phase on the first token,
     /// then count characters for the live token estimate and speed.
@@ -1958,7 +1970,9 @@ impl AgentPanel {
             }
             let session = self.session.take();
             self.switch_session(session);
-            self.notice(format!("agent: {name}"), NoticeKind::Info);
+            if !self.is_fresh() {
+                self.notice(format!("agent: {name}"), NoticeKind::Info);
+            }
             return true;
         }
         let model = match profile.model {
@@ -2013,7 +2027,9 @@ impl AgentPanel {
             self.rules.mode = mode;
         }
         self.agent = name.to_string();
-        self.notice(format!("agent: {name}"), NoticeKind::Info);
+        if !self.is_fresh() {
+            self.notice(format!("agent: {name}"), NoticeKind::Info);
+        }
         true
     }
 
@@ -2059,8 +2075,9 @@ impl AgentPanel {
                 log::warn!("agent session write failed: {error}");
             }
         }
-        // A silent window adoption (same id) leaves no notice.
-        if id_changed {
+        // A silent window adoption (same id) leaves no notice; nor does a fresh
+        // session, where the banner shows the new model instead.
+        if id_changed && !self.is_fresh() {
             self.notice(format!("model: {id}"), NoticeKind::Info);
         }
         true
@@ -4405,7 +4422,9 @@ impl Panel for AgentPanel {
                     match self.runtime.select_model(model.id.clone()) {
                         Ok(()) => {
                             self.model.id = model.id.clone();
-                            self.notice(format!("model: {}", model.id), NoticeKind::Info);
+                            if !self.is_fresh() {
+                                self.notice(format!("model: {}", model.id), NoticeKind::Info);
+                            }
                         }
                         Err(error) => self.notice(
                             format!("cannot switch the model: {error}"),
@@ -5798,6 +5817,39 @@ mod tests {
     }
 
     #[test]
+    fn a_model_switch_in_a_fresh_session_updates_the_banner_not_the_transcript() {
+        let mut panel = panel(vec![]);
+        assert!(render_text(&mut panel, 60, 16)
+            .join("\n")
+            .contains("coding agent"));
+
+        // No prompt yet: switching the model updates the banner in place and
+        // pushes no notice, so the banner stays.
+        assert!(panel.switch_model("gpt-5-brand-new", None));
+        assert!(panel.is_fresh());
+        assert!(!panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Notice { .. })));
+        let all = render_text(&mut panel, 60, 16).join("\n");
+        assert!(all.contains("coding agent"), "banner stays: {all}");
+        assert!(all.contains("gpt-5-brand-new"), "banner shows it: {all}");
+
+        // Once the conversation has begun, a switch is announced as before.
+        type_text(&mut panel, "hi");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert!(!panel.is_fresh());
+        assert!(panel.switch_model("gpt-6-next", None));
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains("gpt-6-next"))));
+    }
+
+    #[test]
     fn clicking_a_banner_field_reopens_its_picker() {
         let mut panel = panel(vec![]);
         // Rendering the empty-state banner records its clickable fields.
@@ -6115,11 +6167,20 @@ mod tests {
         assert_eq!(chip(&panel, MODEL_ACTION), "big");
         // The endpoint's context window comes along with the id.
         assert_eq!(panel.model.context_window, 64_000);
-        assert!(panel
+        // A fresh session updates the banner in place: the switch leaves no
+        // notice, but it is still recorded in the session log.
+        assert!(!panel
             .transcript()
             .items()
             .iter()
-            .any(|item| matches!(item, Item::Notice { text, .. } if text == "model: big")));
+            .any(|item| matches!(item, Item::Notice { .. })));
+        assert_eq!(
+            Session::open(&first_path)
+                .unwrap()
+                .current_model()
+                .map(|m| m.id),
+            Some("big".to_string())
+        );
 
         // The next run goes to the new model.
         type_text(&mut panel, "go");
@@ -6355,11 +6416,13 @@ mod tests {
         assert_eq!(chip(&panel, MODEL_ACTION), "big");
         assert_eq!(chip(&panel, MODE_ACTION), "accept-edits");
         assert_eq!(panel.system_prompt, "You review diffs.");
-        assert!(panel
+        // A fresh session keeps its banner: the switch leaves no notice (it is
+        // still applied and recorded, checked below on resume).
+        assert!(!panel
             .transcript()
             .items()
             .iter()
-            .any(|item| matches!(item, Item::Notice { text, .. } if text == "agent: review")));
+            .any(|item| matches!(item, Item::Notice { .. })));
 
         // The next run goes to the reviewer's model, and the layout state
         // names the agent so a restore comes back as it.
