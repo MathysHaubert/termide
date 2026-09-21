@@ -90,6 +90,8 @@ you have named or sent even one message to is always kept.
 | `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `F2` | Rename this session (the same prompt as the `[≡]` menu) |
+| `F3` | Show a summary of this session (model, agent, directory, tokens) |
+| `F4` | Roll the session back to before a chosen checkpoint |
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |

@@ -172,6 +172,22 @@ impl CheckpointStore {
             .unwrap_or_default()
     }
 
+    /// The undoable checkpoints, newest first, each as the files it changed —
+    /// for offering a rollback target. The order matches repeated
+    /// [`CheckpointStore::undo_last`] calls: the in-progress run (when it has
+    /// changed files) first, then the finished runs from newest to oldest.
+    #[must_use]
+    pub fn checkpoints(&self) -> Vec<Vec<PathBuf>> {
+        let mut out: Vec<Vec<PathBuf>> = Vec::new();
+        if let Some((_, run)) = self.current.as_ref().filter(|(_, r)| !r.files.is_empty()) {
+            out.push(run.files.iter().map(|f| f.path.clone()).collect());
+        }
+        for (_, run) in self.runs.iter().rev() {
+            out.push(run.files.iter().map(|f| f.path.clone()).collect());
+        }
+        out
+    }
+
     /// Put the last request's files back and forget its checkpoint.
     pub fn undo_last(&mut self) -> Result<Undone, String> {
         let (index, run) = match self.current.take() {
@@ -291,5 +307,35 @@ mod tests {
         assert!(!created.exists());
         assert_eq!(reopened.undo_last().unwrap_err(), "nothing to undo");
         assert!(!tmp.path().join("checkpoints/s1/0").exists());
+    }
+
+    #[test]
+    fn checkpoints_lists_undoable_runs_newest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let mut store = CheckpointStore::for_session(tmp.path(), "s1");
+
+        store.begin_run(Some("leaf-0".into()));
+        store.save(&a).unwrap();
+        store.end_run();
+        store.begin_run(Some("leaf-1".into()));
+        store.save(&b).unwrap();
+        store.end_run();
+
+        // Newest run (b) first, then the older (a).
+        assert_eq!(store.checkpoints(), vec![vec![b.clone()], vec![a.clone()]]);
+        assert_eq!(store.checkpoints().len(), store.undoable());
+
+        // The in-progress run appears first once it has changed a file.
+        store.begin_run(Some("leaf-2".into()));
+        assert_eq!(store.checkpoints().len(), 2);
+        store.save(&a).unwrap();
+        assert_eq!(
+            store.checkpoints(),
+            vec![vec![a.clone()], vec![b.clone()], vec![a.clone()]]
+        );
     }
 }

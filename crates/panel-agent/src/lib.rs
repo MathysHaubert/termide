@@ -60,6 +60,8 @@ const PASTE_MAX_LINES: usize = 20;
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that deletes the session (behind a confirmation).
 const DELETE_SESSION_ACTION: &str = "agent_delete_session";
+/// Selection action for the F4 checkpoint-rollback picker.
+const ROLLBACK_ACTION: &str = "agent_rollback";
 /// Context-menu action that starts a fresh session.
 const NEW_SESSION_ACTION: &str = "agent_new_session";
 /// Context-menu action that opens the session picker.
@@ -2255,6 +2257,141 @@ impl AgentPanel {
         vec![PanelEvent::NeedsRedraw]
     }
 
+    /// A read-only summary of the current session (F3), shown as a message.
+    fn session_summary(&self) -> Vec<PanelEvent> {
+        let name = self
+            .session
+            .as_ref()
+            .and_then(Session::name)
+            .map(str::to_string)
+            .unwrap_or_else(|| "untitled".to_string());
+        let messages = self
+            .transcript
+            .items()
+            .iter()
+            .filter(|item| matches!(item, Item::User { .. } | Item::Assistant { .. }))
+            .count();
+        let mut lines = vec![
+            format!("Session: {name}"),
+            format!("Agent: {}", self.agent),
+            format!("Provider: {}", self.provider_kind),
+            format!("Model: {}", self.model.id),
+            format!("Directory: {}", shorten_path(&self.cwd, usize::MAX)),
+            format!("Messages: {messages}"),
+            format!(
+                "Tokens: ↑{} ↓{}",
+                format_tokens(self.session_input),
+                format_tokens(self.session_output)
+            ),
+            format!(
+                "Context: {} / {}",
+                format_tokens(self.context_tokens),
+                format_tokens(self.model.context_window)
+            ),
+        ];
+        if let Some(id) = self
+            .session
+            .as_ref()
+            .map(Session::path)
+            .and_then(Path::file_stem)
+            .and_then(|s| s.to_str())
+        {
+            lines.insert(1, format!("Log: {id}"));
+        }
+        vec![PanelEvent::ShowMessage(lines.join("\n"))]
+    }
+
+    /// Offer the undoable checkpoints (F4), newest first, to roll the session
+    /// back to before a chosen change.
+    fn ask_rollback(&mut self) -> Vec<PanelEvent> {
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let Some(store) = self.checkpoints.clone() else {
+            self.notice("nothing to roll back", NoticeKind::Info);
+            return vec![PanelEvent::NeedsRedraw];
+        };
+        let checkpoints = store.lock().unwrap().checkpoints();
+        if checkpoints.is_empty() {
+            self.notice("nothing to roll back", NoticeKind::Info);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let options = checkpoints
+            .iter()
+            .enumerate()
+            .map(|(i, files)| {
+                let names: Vec<String> = files
+                    .iter()
+                    .map(|p| p.strip_prefix(&self.cwd).unwrap_or(p).display().to_string())
+                    .collect();
+                let changed = if names.len() == 1 {
+                    names[0].clone()
+                } else {
+                    format!("{} files: {}", names.len(), names.join(", "))
+                };
+                let step = if i == 0 {
+                    "last request".to_string()
+                } else {
+                    format!("{} requests back", i + 1)
+                };
+                truncate_title(&format!("{step} — {changed}"))
+            })
+            .collect();
+        vec![PanelEvent::ShowSelect {
+            title: "Roll back to before…".to_string(),
+            options,
+            on_select: SelectAction::Custom(ROLLBACK_ACTION.to_string()),
+        }]
+    }
+
+    /// Undo every request from the newest down to the one the user picked
+    /// (`steps_from_newest` = 0 is the last request), putting the files back and
+    /// rewinding the conversation to before the oldest of them.
+    fn perform_rollback(&mut self, steps_from_newest: usize) -> Vec<PanelEvent> {
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let Some(store) = self.checkpoints.clone() else {
+            return vec![PanelEvent::NeedsRedraw];
+        };
+        let mut events = Vec::new();
+        let mut restored = 0usize;
+        let mut leaf = None;
+        {
+            let mut store = store.lock().unwrap();
+            for _ in 0..=steps_from_newest {
+                match store.undo_last() {
+                    Ok(undone) => {
+                        for path in &undone.files {
+                            events.push(PanelEvent::FileChangedOnDisk(path.clone()));
+                        }
+                        restored += undone.files.len();
+                        leaf = undone.leaf_before;
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        if let Some(session) = &mut self.session {
+            if let Err(error) = session.rewind_to(leaf.as_deref()) {
+                log::warn!("agent session rewind failed: {error}");
+            }
+        }
+        let session = self.session.take();
+        self.switch_session(session);
+        self.notice(
+            format!(
+                "rolled back: {restored} file{} restored, conversation rewound",
+                if restored == 1 { "" } else { "s" }
+            ),
+            NoticeKind::Info,
+        );
+        events.push(PanelEvent::NeedsRedraw);
+        events
+    }
+
     /// Put the last request's files back, rewind the session to before it
     /// and rebuild the agent from there.
     fn perform_undo(&mut self) -> Vec<PanelEvent> {
@@ -3379,6 +3516,14 @@ impl Panel for AgentPanel {
         if key.code == KeyCode::F(2) && !ctrl && !alt && !shift {
             return self.handle_status_action(RENAME_ACTION);
         }
+        // F3 shows a summary of the session, F4 offers a checkpoint to roll back
+        // to.
+        if key.code == KeyCode::F(3) && !ctrl && !alt && !shift {
+            return self.session_summary();
+        }
+        if key.code == KeyCode::F(4) && !ctrl && !alt && !shift {
+            return self.ask_rollback();
+        }
         // F6 switches session (the picker), F7 starts a new one, F8 deletes the
         // current one behind a confirmation card.
         if key.code == KeyCode::F(6) && !ctrl && !alt && !shift {
@@ -3709,6 +3854,11 @@ impl Panel for AgentPanel {
             },
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
+            }
+            PanelCommand::SelectionMade { action, index } if action == ROLLBACK_ACTION => {
+                let events = self.perform_rollback(index);
+                self.pending_events.extend(events);
+                CommandResult::Handled(true)
             }
             PanelCommand::SelectionMade { action, index } if action == PROMPTS_ACTION => {
                 let choice = self.prompt_choices.get(index).cloned();
@@ -4891,6 +5041,50 @@ mod tests {
 
         // F6 opens the session switcher.
         let events = panel.handle_key(chord(KeyCode::F(6), KeyModifiers::NONE));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, PanelEvent::ShowSelect { .. })));
+    }
+
+    #[test]
+    fn f3_shows_a_session_summary() {
+        let mut panel = panel(vec![]);
+        let events = panel.handle_key(chord(KeyCode::F(3), KeyModifiers::NONE));
+        let Some(PanelEvent::ShowMessage(text)) = events.first() else {
+            panic!("F3 should show a summary, got {events:?}");
+        };
+        for label in ["Provider", "Model", "Agent", "Directory", "Tokens"] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+        assert!(text.contains(panel.model.id.as_str()), "{text}");
+    }
+
+    #[test]
+    fn f4_offers_a_rollback_picker_when_there_is_a_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        // Nothing changed yet: F4 says there is nothing to roll back.
+        panel.handle_key(chord(KeyCode::F(4), KeyModifiers::NONE));
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains("roll back"))));
+
+        // Record a checkpoint, then F4 offers it in a picker.
+        let file = dir.path().join("x.txt");
+        std::fs::write(&file, "v1").unwrap();
+        {
+            let store = panel.checkpoints.clone().expect("a checkpoint store");
+            let mut store = store.lock().unwrap();
+            store.begin_run(None);
+            store.save(&file).unwrap();
+            store.end_run();
+        }
+        let events = panel.handle_key(chord(KeyCode::F(4), KeyModifiers::NONE));
         assert!(events
             .iter()
             .any(|e| matches!(e, PanelEvent::ShowSelect { .. })));
