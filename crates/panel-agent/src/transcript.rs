@@ -15,10 +15,28 @@ const EXPANDED_OUTPUT_LINES: usize = 60;
 /// A block whose foldable content is this many lines or fewer is shown in full,
 /// without a fold marker or fold logic — there is nothing to save by hiding it.
 const FOLD_THRESHOLD: usize = 5;
+/// A collapsed content block shows this many lines from the top, then the
+/// "… N more lines" marker, then [`FOLD_TAIL_LINES`] from the bottom — the
+/// ellipsis sits between the first line and the last few, as a tool call shows.
+const FOLD_HEAD_LINES: usize = 1;
+/// Lines shown from the bottom of a collapsed content block; with
+/// [`FOLD_HEAD_LINES`] they sum to [`FOLD_THRESHOLD`], so a foldable block
+/// (more than that many lines) always hides at least one.
+const FOLD_TAIL_LINES: usize = FOLD_THRESHOLD - FOLD_HEAD_LINES;
 /// Tail lines of a collapsed tool's output shown under its command line.
 const TOOL_PREVIEW_LINES: usize = FOLD_THRESHOLD;
 /// Lines of a collapsed user message shown before it is cut off.
 const USER_PREVIEW_LINES: usize = FOLD_THRESHOLD;
+
+/// The collapsed head/tail split every foldable content block shares: the
+/// index where the shown tail begins, and how many lines are hidden between
+/// the head and that tail. Only meaningful when the block is foldable
+/// (`total > FOLD_THRESHOLD`), where `hidden >= 1`.
+fn fold_split(total: usize) -> (usize, usize) {
+    let tail_start = total.saturating_sub(FOLD_TAIL_LINES);
+    let hidden = tail_start.saturating_sub(FOLD_HEAD_LINES);
+    (hidden, tail_start)
+}
 
 /// The body text a fold would hide for `item` (tool output, thinking, or a long
 /// user paste). The answer of an assistant turn is always shown, so it does not
@@ -668,38 +686,46 @@ fn render_item(
     match item {
         Item::User { text, at } => {
             let trimmed = text.trim();
-            let total = trimmed.lines().count();
-            // A long paste folds to its first lines; the model still gets the
-            // whole thing, this is only the transcript.
-            let shown: String = if collapsed && total > USER_PREVIEW_LINES {
-                trimmed
-                    .lines()
-                    .take(USER_PREVIEW_LINES)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                trimmed.to_string()
-            };
-            let mut builder = Builder::new(width, colors, is_light);
-            builder.styled(
-                "› ",
-                Style::default()
-                    .fg(colors.info)
-                    .add_modifier(Modifier::BOLD),
-            );
-            builder.push_style(Style::default().add_modifier(Modifier::BOLD));
-            builder.text(&shown);
-            builder.pop_style();
-            builder.end_paragraph();
+            let all: Vec<&str> = trimmed.lines().collect();
+            let mark = Style::default()
+                .fg(colors.info)
+                .add_modifier(Modifier::BOLD);
+            let bold = Style::default().add_modifier(Modifier::BOLD);
             // The plate is a blank line, the text, the time, and a blank line —
             // all on the faint background, with an even margin around them.
             let mut plate = vec![Line::default()];
-            plate.extend(builder.finish().lines);
-            if collapsed && total > USER_PREVIEW_LINES {
+            if collapsed && all.len() > USER_PREVIEW_LINES {
+                // A long paste folds to its first line, a "… N more lines"
+                // marker, then the last few — the ellipsis between first and
+                // last, like every other block. The model still gets the whole
+                // message; this is only the transcript.
+                let (hidden, tail_start) = fold_split(all.len());
+                let mut head = Builder::new(width, colors, is_light);
+                head.styled("› ", mark);
+                head.push_style(bold);
+                head.text(&all[..FOLD_HEAD_LINES].join("\n"));
+                head.pop_style();
+                head.end_paragraph();
+                plate.extend(head.finish().lines);
                 plate.push(Line::styled(
-                    format!("  {}", t.agent_more_lines(total - USER_PREVIEW_LINES)),
+                    format!("  {}", t.agent_more_lines(hidden)),
                     Style::default().fg(colors.fg),
                 ));
+                let mut tail = Builder::new(width, colors, is_light);
+                tail.styled("  ", bold);
+                tail.push_style(bold);
+                tail.text(&all[tail_start..].join("\n"));
+                tail.pop_style();
+                tail.end_paragraph();
+                plate.extend(tail.finish().lines);
+            } else {
+                let mut builder = Builder::new(width, colors, is_light);
+                builder.styled("› ", mark);
+                builder.push_style(bold);
+                builder.text(trimmed);
+                builder.pop_style();
+                builder.end_paragraph();
+                plate.extend(builder.finish().lines);
             }
             if !at.is_empty() {
                 plate.push(time_meta(width, at, true, colors.fg, colors));
@@ -735,15 +761,21 @@ fn render_item(
             };
             let mut lines: Vec<Line<'static>> = Vec::new();
             if foldable && collapsed {
-                for (i, line) in all.iter().take(FOLD_THRESHOLD).enumerate() {
+                let (hidden, tail_start) = fold_split(all.len());
+                for (i, line) in all[..FOLD_HEAD_LINES].iter().enumerate() {
                     let mut spans = head(i == 0);
                     spans.push(Span::styled((*line).to_string(), dim));
                     lines.push(Line::from(spans));
                 }
                 lines.push(Line::styled(
-                    format!("  {}", t.agent_more_lines(all.len() - FOLD_THRESHOLD)),
+                    format!("  {}", t.agent_more_lines(hidden)),
                     dim,
                 ));
+                for line in &all[tail_start..] {
+                    let mut spans = head(false);
+                    spans.push(Span::styled((*line).to_string(), dim));
+                    lines.push(Line::from(spans));
+                }
             } else {
                 let mut body = wrap_plain(prompt, width.saturating_sub(2), dim, colors, is_light);
                 for (i, line) in body.iter_mut().enumerate() {
@@ -784,15 +816,21 @@ fn render_item(
             };
             let mut lines: Vec<Line<'static>> = Vec::new();
             if foldable && collapsed {
-                for (i, line) in all.iter().take(FOLD_THRESHOLD).enumerate() {
+                let (hidden, tail_start) = fold_split(all.len());
+                for (i, line) in all[..FOLD_HEAD_LINES].iter().enumerate() {
                     let mut spans = head(i == 0);
                     spans.push(Span::styled((*line).to_string(), dim));
                     lines.push(Line::from(spans));
                 }
                 lines.push(Line::styled(
-                    format!("  {}", t.agent_more_lines(all.len() - FOLD_THRESHOLD)),
+                    format!("  {}", t.agent_more_lines(hidden)),
                     dim,
                 ));
+                for line in &all[tail_start..] {
+                    let mut spans = head(false);
+                    spans.push(Span::styled((*line).to_string(), dim));
+                    lines.push(Line::from(spans));
+                }
             } else {
                 // Expanded, or short enough to never fold: the reasoning wraps
                 // under the marker rather than being clipped.
@@ -1327,16 +1365,21 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         transcript.push(Item::System { text: prompt });
-        // Collapsed: a `▸` marker before the `#`, the first lines, and a note.
+        // Collapsed: a `▸` marker before the `#`, the first line, a note, then
+        // the last few — the ellipsis sits between the first and the last few.
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().any(|l| l.contains("▸ # rule 1")));
-        assert!(lines.iter().any(|l| l.contains("rule 5")));
         assert!(lines.iter().any(|l| l.contains("… 3 more lines")));
-        assert!(!lines.iter().any(|l| l.contains("rule 6")));
+        assert!(lines.iter().any(|l| l.contains("rule 5")));
+        assert!(lines.iter().any(|l| l.contains("rule 8")));
+        // The middle lines are the hidden ones.
+        assert!(!lines.iter().any(|l| l.contains("rule 2")));
+        assert!(!lines.iter().any(|l| l.contains("rule 4")));
         // Expanded: a `▾` marker and the whole prompt.
         assert!(transcript.toggle_expanded(0));
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().any(|l| l.contains("▾ # rule 1")));
+        assert!(lines.iter().any(|l| l.contains("rule 4")));
         assert!(lines.iter().any(|l| l.contains("rule 8")));
     }
 

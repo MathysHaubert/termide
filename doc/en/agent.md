@@ -105,10 +105,11 @@ you have named or sent even one message to is always kept.
 The conversation is a stack of blocks, each opened by an accent-coloured mark:
 `› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
 for a shell call, `# ` for the system prompt. The answer is shown in full;
-anything longer than five lines is folded to a preview — a user message, the
-system prompt and the reasoning to their first lines, a tool call to its command
-and the last few lines of output. A folded preview ends with a `… N more lines`
-note. A block of five lines or fewer has nothing worth
+anything longer than five lines is folded to a preview that keeps the first
+line and the last few, with a `… N more lines` note between them — a user
+message, the system prompt and the reasoning fold this way, and a tool call the
+same, keeping its command line and the last few lines of output. A block of
+five lines or fewer has nothing worth
 hiding, so it is shown in full with no fold marker. Your
 message reads as plain text on a faint background; the reasoning, the system
 prompt and a tool's output are dim text. A shell call reads as its command (dim)
