@@ -481,7 +481,7 @@ fn cost_lines(width: u16, cost: &Cost, colors: &ThemeColors) -> Vec<Line<'static
                 format!(
                     "⏫ {} (↑{}, {})",
                     fmt_dur(cost.prefill_ms),
-                    cost.input,
+                    crate::format_tokens(cost.input),
                     fmt_speed(cost.input, cost.prefill_ms)
                 ),
                 dim,
@@ -493,7 +493,7 @@ fn cost_lines(width: u16, cost: &Cost, colors: &ThemeColors) -> Vec<Line<'static
                 format!(
                     "✍\u{fe0f} {} (↓{}, {})",
                     fmt_dur(cost.gen_ms),
-                    cost.output,
+                    crate::format_tokens(cost.output),
                     fmt_speed(cost.output, cost.gen_ms)
                 ),
                 dim,
@@ -543,7 +543,11 @@ pub(crate) fn fmt_speed(tokens: u64, ms: u32) -> String {
     let t = termide_i18n::t();
     let secs = (ms as f32 / 1000.0).max(0.001);
     let rate = (tokens as f32 / secs).round() as u64;
-    format!("{rate} {}", t.agent_unit_tok_per_sec())
+    format!(
+        "{} {}",
+        crate::format_tokens(rate),
+        t.agent_unit_tok_per_sec()
+    )
 }
 
 /// Wrap plain text to `width` with a single style, using the rich-text builder
@@ -1017,8 +1021,8 @@ mod tests {
             cost: Some(Cost {
                 prefill_ms: 600,
                 gen_ms: 3600,
-                input: 10,
-                output: 1210,
+                input: 512,
+                output: 40000,
             }),
         });
         let lines = text_of(transcript.lines(60, &colors, false));
@@ -1031,11 +1035,12 @@ mod tests {
             "answer meta: {lines:?}"
         );
         assert!(
-            lines.iter().any(|l| l.contains("⏫") && l.contains("↑10")),
+            lines.iter().any(|l| l.contains("⏫") && l.contains("↑512")),
             "prefill line: {lines:?}"
         );
+        // Large token counts are abbreviated (40000 -> 40k).
         assert!(
-            lines.iter().any(|l| l.contains("✍") && l.contains("↓1210")),
+            lines.iter().any(|l| l.contains("✍") && l.contains("↓40k")),
             "generation line: {lines:?}"
         );
 

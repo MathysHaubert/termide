@@ -920,8 +920,9 @@ impl AgentPanel {
                 width,
                 vec![Span::styled(
                     format!(
-                        "✍\u{fe0f} {} (↓{tokens}, {})",
+                        "✍\u{fe0f} {} (↓{}, {})",
                         transcript::fmt_dur(gen_ms),
+                        format_tokens(tokens),
                         transcript::fmt_speed(tokens, gen_ms)
                     ),
                     dim,
@@ -2440,7 +2441,7 @@ fn context_bar(percent: u64) -> String {
     bar
 }
 
-fn format_tokens(tokens: u64) -> String {
+pub(crate) fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         let millions = tokens as f64 / 1_000_000.0;
         if millions.fract() < 0.05 {

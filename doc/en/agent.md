@@ -111,9 +111,10 @@ Your message and the agent's answer each end with a dim, right-aligned time and 
 `✓`/`✗` status (`18:34:01 ✓`); the reasoning and tool blocks carry only their
 work figures, no wall-clock. A tool call shows how long it took and its status
 (`🕒 6s ✓`). When a turn reasons, the reasoning block carries the turn's cost —
-the prefill phase (`⏫ 6s (↑1731, 270 tok/s)`) and the generation phase
-(`✍️ 2s (↓51, 24 tok/s)`), each with its duration (whole seconds), token count
-and average speed; a turn with no reasoning shows those on the answer instead.
+the prefill phase (`⏫ 6s (↑42k, 7k tok/s)`) and the generation phase
+(`✍️ 12s (↓5k, 420 tok/s)`), each with its duration (whole seconds), token count
+and average speed; large counts are abbreviated (`40k`, `1.2M`). A turn with no
+reasoning shows those on the answer instead.
 While a turn is still running, the same right-aligned meta zone shows the live
 figures: a `✍️` generation line with the running duration, estimated tokens and
 speed, and below it a `🕒` clock line with the turn's total elapsed time and an
