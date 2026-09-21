@@ -154,6 +154,15 @@ impl AiSettings {
     }
 }
 
+/// Whether an AI provider value names a CLI agent driven over ACP (Claude
+/// Code, Codex) rather than a wire protocol the built-in loop speaks. Such a
+/// provider brings its own endpoint, model and auth, so the endpoint/model/key
+/// settings do not apply to it.
+#[must_use]
+pub fn is_cli_provider(provider: &str) -> bool {
+    matches!(provider, "claude_code" | "codex")
+}
+
 impl Default for AiSettings {
     fn default() -> Self {
         Self {

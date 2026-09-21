@@ -17,7 +17,7 @@ vLLM, omlx) и большинство облачных шлюзов, включ�
 
 ```toml
 [ai]
-provider = "openai_compatible"   # "openai_compatible" (по умолчанию) или "anthropic_compatible"
+provider = "openai_compatible"   # openai_compatible (по умолчанию), anthropic_compatible, claude_code, codex
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
 # context_window_fallback = 32000   # только если сервер не сообщает окно
@@ -42,6 +42,16 @@ false` показывает все блоки развёрнутыми, а не 
 задавайте его только для шлюза) и укажите `api_key_env` с вашим
 `ANTHROPIC_API_KEY`; тогда `prefer_reasoning = true` включает расширенное мышление.
 Чип **Model** перечисляет модели каждого сервера.
+
+`provider = "claude_code"` и `provider = "codex"` — иного рода: вместо того чтобы
+встроенный цикл обращался к модельному эндпоинту, панель запускает CLI самого
+инструмента как [внешнего агента](#внешние-агенты) по ACP
+(`@zed-industries/claude-code-acp` / `@zed-industries/codex-acp` через `npx`).
+Модель, эндпоинт и вход (своя подписка или ключ) — целиком за CLI, поэтому
+`base_url`, `model` и `api_key_env` неактуальны: модал настроек прячет их для
+этих провайдеров и вычищает из файла. Инструмент должен быть заранее установлен
+и залогинен (`npx` в `PATH`). Это встроенный ярлык для того, что таблица `[acp]`
+у агента делает вручную.
 
 ## Работа с панелью
 

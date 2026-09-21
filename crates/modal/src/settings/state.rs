@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use termide_config::Config;
 use termide_i18n as i18n;
 
-use super::fields::{fields_for_tab, get_field_value, ContentRow, FieldType};
+use super::fields::{fields_for_tab, get_field_value, is_cli_provider, ContentRow, FieldType};
 use super::kb::KB_SECTIONS;
 use super::{
     FocusArea, KbMode, LspMode, SettingsModal, SettingsTab, SidebarRow, BUTTON_APPLY,
@@ -266,6 +266,16 @@ impl SettingsModal {
             }
             SettingsTab::Logging => vec![Field(0), Field(1)],
             SettingsTab::Vfs => vec![Field(0)],
+            SettingsTab::Ai if is_cli_provider(&self.config.ai.provider) => vec![
+                // A CLI adapter (Claude Code, Codex) brings its own endpoint,
+                // model and auth, so only the provider choice and the
+                // transcript display apply.
+                Header("Backend"),
+                Field(0), // provider
+                Spacer,
+                Header("Transcript"),
+                Field(7), // autofold
+            ],
             SettingsTab::Ai => vec![
                 Header("Endpoint"),
                 Field(0), // provider
@@ -532,6 +542,26 @@ mod content_row_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_cli_provider_hides_the_endpoint_and_model_fields() {
+        let mut config = Config::default();
+        config.ai.provider = "claude_code".to_string();
+        let mut modal = SettingsModal::new(config, false);
+        modal.active_tab = SettingsTab::Ai;
+
+        let rendered: Vec<usize> = modal
+            .content_rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                ContentRow::Field(i) => Some(i),
+                _ => None,
+            })
+            .collect();
+        // Only the provider (0) and the transcript autofold (7) apply; the
+        // endpoint/model/auth fields (1..=6) are hidden.
+        assert_eq!(rendered, vec![0, 7]);
     }
 }
 

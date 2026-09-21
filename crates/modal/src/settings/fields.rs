@@ -326,7 +326,45 @@ fn provider_label(value: &str) -> String {
     match value {
         "anthropic_compatible" | "anthropic" => "Anthropic compatible".to_string(),
         "openai_compatible" | "openai" => "OpenAI compatible".to_string(),
+        "claude_code" => "Claude Code".to_string(),
+        "codex" => "Codex".to_string(),
         other => other.to_string(),
+    }
+}
+
+/// The AI provider values offered in the dropdown, and their labels, sorted by
+/// label. `claude_code` and `codex` drive the matching CLI over ACP (they own
+/// their own model, endpoint and auth), so they are named after the tool, not
+/// "subscription" — the CLI may sign in with a subscription or an API key.
+pub(super) const PROVIDER_VALUES: [&str; 4] = [
+    "anthropic_compatible",
+    "claude_code",
+    "codex",
+    "openai_compatible",
+];
+
+pub(super) use termide_config::is_cli_provider;
+
+/// Reset the fields a CLI-adapter provider does not use back to their defaults,
+/// so they disappear from the transcript UI and from the saved config (only
+/// non-default values are written). The endpoint, model and auth all live in
+/// the CLI, not here.
+fn clear_cli_irrelevant_ai_fields(config: &mut Config) {
+    let defaults = termide_config::AiSettings::default();
+    config.ai.base_url = defaults.base_url;
+    config.ai.model = defaults.model;
+    config.ai.api_key_env = defaults.api_key_env;
+    config.ai.context_window_fallback = defaults.context_window_fallback;
+    config.ai.max_tokens_per_turn = defaults.max_tokens_per_turn;
+    config.ai.prefer_reasoning = defaults.prefer_reasoning;
+}
+
+/// Apply a provider change: store it, and when it is a CLI adapter, clear the
+/// fields it does not use.
+fn set_ai_provider(config: &mut Config, provider: &str) {
+    config.ai.provider = provider.to_string();
+    if is_cli_provider(provider) {
+        clear_cli_irrelevant_ai_fields(config);
     }
 }
 
@@ -428,16 +466,11 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
             (values.clone(), values, config.logging.min_level.clone())
         }
         (SettingsTab::Ai, 0) => {
-            // The value is the wire protocol; the label says it is a free-form
-            // endpoint, not the vendor (base_url picks the actual server).
-            let values: Vec<String> = ["openai_compatible", "anthropic_compatible"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            let labels: Vec<String> = ["OpenAI compatible", "Anthropic compatible"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            // OpenAI/Anthropic compatible are wire protocols the built-in loop
+            // speaks (base_url picks the actual server); Claude Code and Codex
+            // drive their CLI over ACP. Listed by label, alphabetically.
+            let values: Vec<String> = PROVIDER_VALUES.iter().map(|s| s.to_string()).collect();
+            let labels: Vec<String> = PROVIDER_VALUES.iter().map(|v| provider_label(v)).collect();
             (values, labels, config.ai.provider.clone())
         }
         _ => return None,
@@ -464,7 +497,7 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
             }
         }
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
-        (SettingsTab::Ai, 0) => config.ai.provider = value.to_string(),
+        (SettingsTab::Ai, 0) => set_ai_provider(config, value),
         _ => {}
     }
 }
@@ -510,14 +543,32 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
         }
         SettingsTab::Ai => {
             if index == 0 {
-                config.ai.provider = match config.ai.provider.as_str() {
-                    "anthropic_compatible" | "anthropic" => "openai_compatible".to_string(),
-                    _ => "anthropic_compatible".to_string(),
-                };
+                cycle_ai_provider(config, true);
             }
         }
         _ => {}
     }
+}
+
+/// Step the AI provider to the next (or previous) value in the dropdown order,
+/// wrapping, and clear the CLI-irrelevant fields when it lands on one.
+fn cycle_ai_provider(config: &mut Config, forward: bool) {
+    let pos = PROVIDER_VALUES
+        .iter()
+        .position(|v| *v == config.ai.provider)
+        // Legacy short names (`openai`, `anthropic`) map to their compatible
+        // value so the step lands somewhere sensible.
+        .unwrap_or_else(|| match config.ai.provider.as_str() {
+            "anthropic" => 0,
+            _ => PROVIDER_VALUES.len() - 1,
+        });
+    let len = PROVIDER_VALUES.len();
+    let next = if forward {
+        (pos + 1) % len
+    } else {
+        (pos + len - 1) % len
+    };
+    set_ai_provider(config, PROVIDER_VALUES[next]);
 }
 
 /// Cycle an enum field to the previous variant.
@@ -562,10 +613,7 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
         }
         SettingsTab::Ai => {
             if index == 0 {
-                config.ai.provider = match config.ai.provider.as_str() {
-                    "anthropic_compatible" | "anthropic" => "openai_compatible".to_string(),
-                    _ => "anthropic_compatible".to_string(),
-                };
+                cycle_ai_provider(config, false);
             }
         }
         _ => {}
@@ -655,6 +703,77 @@ mod enum_option_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn ai_provider_lists_all_four_sorted_by_label() {
+        let config = Config::default();
+        let options = enum_options(&config, SettingsTab::Ai, 0).unwrap();
+        assert_eq!(
+            options.values,
+            vec![
+                "anthropic_compatible",
+                "claude_code",
+                "codex",
+                "openai_compatible"
+            ]
+        );
+        assert_eq!(
+            options.labels,
+            vec![
+                "Anthropic compatible",
+                "Claude Code",
+                "Codex",
+                "OpenAI compatible"
+            ]
+        );
+        // Labels are in alphabetical order.
+        let mut sorted = options.labels.clone();
+        sorted.sort();
+        assert_eq!(options.labels, sorted);
+    }
+
+    #[test]
+    fn choosing_a_cli_provider_clears_the_unused_fields() {
+        let mut config = Config::default();
+        config.ai.base_url = "https://example/v1".into();
+        config.ai.model = "gpt-5".into();
+        config.ai.api_key_env = "MY_KEY".into();
+        config.ai.context_window_fallback = Some(123);
+        config.ai.max_tokens_per_turn = 999;
+        config.ai.prefer_reasoning = true;
+
+        apply_enum_value(&mut config, SettingsTab::Ai, 0, "claude_code");
+
+        assert_eq!(config.ai.provider, "claude_code");
+        let defaults = termide_config::AiSettings::default();
+        assert_eq!(config.ai.base_url, defaults.base_url);
+        assert_eq!(config.ai.model, defaults.model);
+        assert_eq!(config.ai.api_key_env, defaults.api_key_env);
+        assert_eq!(
+            config.ai.context_window_fallback,
+            defaults.context_window_fallback
+        );
+        assert_eq!(config.ai.max_tokens_per_turn, defaults.max_tokens_per_turn);
+        assert_eq!(config.ai.prefer_reasoning, defaults.prefer_reasoning);
+        // A wire-protocol provider leaves the fields alone.
+        config.ai.model = "gpt-5".into();
+        apply_enum_value(&mut config, SettingsTab::Ai, 0, "openai_compatible");
+        assert_eq!(config.ai.model, "gpt-5");
+    }
+
+    #[test]
+    fn cycling_the_provider_wraps_through_every_value() {
+        let mut config = Config::default();
+        config.ai.provider = "anthropic_compatible".into();
+        cycle_enum_backward(&mut config, SettingsTab::Ai, 0);
+        // Backward from the first wraps to the last.
+        assert_eq!(config.ai.provider, "openai_compatible");
+        cycle_enum_forward(&mut config, SettingsTab::Ai, 0);
+        assert_eq!(config.ai.provider, "anthropic_compatible");
+        cycle_enum_forward(&mut config, SettingsTab::Ai, 0);
+        // Landing on a CLI provider clears the unused fields.
+        assert_eq!(config.ai.provider, "claude_code");
     }
 
     /// Choosing from the dropdown and cycling with Left/Right must write the

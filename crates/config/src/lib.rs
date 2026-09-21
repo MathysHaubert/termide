@@ -25,6 +25,7 @@ pub use keybindings::{
     GitStatusKeybindings, GlobalKeybindings, KeyBinding, ParsedKeyBinding, TerminalKeybindings,
     ViewerKeybindings,
 };
+pub use settings::is_cli_provider;
 pub use settings::{
     AiSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
     GeneralSettings, GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings,

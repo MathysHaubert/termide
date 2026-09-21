@@ -17,7 +17,7 @@ configured model the panel refuses to open and says so.
 
 ```toml
 [ai]
-provider = "openai_compatible"   # "openai_compatible" (default) or "anthropic_compatible"
+provider = "openai_compatible"   # openai_compatible (default), anthropic_compatible, claude_code, codex
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
 # context_window_fallback = 32000   # used only when the server does not report a window
@@ -43,6 +43,16 @@ subscription set `provider = "anthropic_compatible"`, drop `base_url` (the API r
 built in; set it only for a gateway) and point `api_key_env` at your
 `ANTHROPIC_API_KEY`; `prefer_reasoning = true` then turns on extended thinking. The
 **Model** chip lists the endpoint's models for each.
+
+`provider = "claude_code"` and `provider = "codex"` are different in kind: instead
+of the built-in loop talking to a model endpoint, the panel drives that tool's
+own CLI as an [external agent](#external-agents) over ACP
+(`@zed-industries/claude-code-acp` / `@zed-industries/codex-acp`, run through
+`npx`). The CLI owns the model, the endpoint and the sign-in — its own
+subscription or API key — so `base_url`, `model` and `api_key_env` do not apply;
+the settings modal hides them for these providers and clears them from the file.
+The tool must be installed and signed in first (`npx` on `PATH`). This is the
+built-in shortcut for what an agent's own `[acp]` table does by hand.
 
 ## Using the panel
 
