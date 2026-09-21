@@ -719,6 +719,13 @@ pub enum ConfirmAction {
 
     /// Save the active binary (hex) editor's pending edits to disk.
     SaveBinary,
+
+    /// A confirmation a panel raised for itself. On accept the answer is
+    /// delivered back to the focused panel as
+    /// [`crate::PanelCommand::Confirmed`] with this action string; on cancel
+    /// nothing happens. The panel-side counterpart of
+    /// [`InputAction::Custom`] and [`SelectAction::Custom`].
+    Custom(String),
 }
 
 /// Input dialog actions.

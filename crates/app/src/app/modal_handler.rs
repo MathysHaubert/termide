@@ -272,6 +272,17 @@ impl App {
                         self.state.needs_redraw = true;
                     }
                 }
+                PendingAction::PanelConfirm { action } => {
+                    // Only an accepted confirmation reaches the panel; on cancel
+                    // it stays as it was. As with the input and selection
+                    // prompts, deliver to the focused panel that raised it.
+                    if value.downcast_ref::<bool>().copied().unwrap_or(false) {
+                        if let Some(panel) = self.layout_manager.active_panel_mut() {
+                            panel.handle_command(termide_core::PanelCommand::Confirmed { action });
+                        }
+                        self.state.needs_redraw = true;
+                    }
+                }
                 PendingAction::CreateFile { directory } => {
                     self.handle_create_file(directory, value)?;
                 }

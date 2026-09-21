@@ -31,8 +31,9 @@ use termide_agent_core::{
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
 use termide_core::{
-    CommandResult, InputAction, KeyChord, Panel, PanelCommand, PanelEvent, RenderContext,
-    ScrollAxis, ScrollBars, SegmentKind, SelectAction, StatusSegment, ThemeColors, WidthPreference,
+    CommandResult, ConfirmAction, InputAction, KeyChord, Panel, PanelCommand, PanelEvent,
+    RenderContext, ScrollAxis, ScrollBars, SegmentKind, SelectAction, StatusSegment, ThemeColors,
+    WidthPreference,
 };
 use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
@@ -125,11 +126,6 @@ enum Pending {
     Undo {
         form: ChoiceForm,
     },
-    /// Confirming a session delete (F8): remove the current session and start
-    /// fresh, or keep it.
-    DeleteSession {
-        form: ChoiceForm,
-    },
     /// Plan mode: the agent answered, carry the plan out or keep planning?
     Plan {
         form: ChoiceForm,
@@ -142,7 +138,6 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
-            | Pending::DeleteSession { form }
             | Pending::Plan { form } => form,
         }
     }
@@ -152,7 +147,6 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
-            | Pending::DeleteSession { form }
             | Pending::Plan { form } => form,
         }
     }
@@ -2490,17 +2484,6 @@ impl AgentPanel {
             (Some(Pending::Undo { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
-            (Some(Pending::DeleteSession { .. }), ChoiceAction::Chosen(_)) => {
-                self.pending = None;
-                let events = self.perform_delete_session();
-                self.pending_events.extend(events);
-            }
-            (
-                Some(Pending::DeleteSession { .. }),
-                ChoiceAction::Cancelled | ChoiceAction::Custom(_),
-            ) => {
-                self.pending = None;
-            }
             (Some(Pending::Plan { .. }), ChoiceAction::Chosen(index)) => {
                 self.pending = None;
                 let mode = if index == 0 {
@@ -2561,8 +2544,9 @@ impl AgentPanel {
         vec![PanelEvent::NeedsRedraw]
     }
 
-    /// Offer to delete the current session (F8): a confirmation card, since it
-    /// removes the log for good.
+    /// Offer to delete the current session (F8, or the panel's `[≡]` menu):
+    /// a confirmation modal, since it removes the log for good. The accepted
+    /// answer comes back as `PanelCommand::Confirmed(DELETE_SESSION_ACTION)`.
     fn ask_delete_session(&mut self) -> Vec<PanelEvent> {
         if self.is_busy() {
             self.notice("finish or stop the current task first", NoticeKind::Warn);
@@ -2574,13 +2558,22 @@ impl AgentPanel {
             .and_then(Session::name)
             .map(str::to_string)
             .unwrap_or_else(|| "this session".to_string());
-        let form = ChoiceForm::new(
-            format!("Delete {label}? This cannot be undone"),
-            vec!["Delete it and start fresh".into()],
-        )
-        .with_cancel("Keep it");
-        self.pending = Some(Pending::DeleteSession { form });
-        vec![PanelEvent::NeedsRedraw]
+        let id = self
+            .session
+            .as_ref()
+            .map(Session::path)
+            .and_then(Path::file_stem)
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let message = if id.is_empty() {
+            format!("Delete {label}? This cannot be undone.")
+        } else {
+            format!("Delete {label}? This cannot be undone.\n{label} · {id}")
+        };
+        vec![PanelEvent::ShowConfirm {
+            message,
+            on_confirm: ConfirmAction::Custom(DELETE_SESSION_ACTION.to_string()),
+        }]
     }
 
     /// Discard the current session and open a fresh one in its place — the
@@ -4324,6 +4317,10 @@ impl Panel for AgentPanel {
             PanelCommand::InputSubmitted { action, text } if action == RENAME_ACTION => {
                 CommandResult::Handled(self.rename_session(&text))
             }
+            PanelCommand::Confirmed { action } if action == DELETE_SESSION_ACTION => {
+                self.perform_delete_session();
+                CommandResult::Handled(true)
+            }
             PanelCommand::GetScrollBars => CommandResult::ScrollBars(self.scrollbars),
             PanelCommand::SetScrollOffset { axis, offset } => {
                 if axis == ScrollAxis::Vertical {
@@ -5536,7 +5533,7 @@ mod tests {
     }
 
     #[test]
-    fn f8_confirms_then_deletes_the_session() {
+    fn f8_confirms_in_a_modal_then_deletes_the_session() {
         let dir = tempfile::tempdir().unwrap();
         let mut panel = AgentPanel::new(AgentPanelSetup {
             session_dir: Some(dir.path().to_path_buf()),
@@ -5547,27 +5544,35 @@ mod tests {
         settle(&mut panel);
         let first_path = panel.session_path().unwrap().to_path_buf();
 
-        // F8 asks first — nothing is deleted yet.
-        panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
-        assert!(matches!(panel.pending, Some(Pending::DeleteSession { .. })));
+        // F8 asks through an app confirmation modal — nothing is deleted yet,
+        // and the panel raises no in-panel card of its own.
+        let events = panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
+        let Some(PanelEvent::ShowConfirm { on_confirm, .. }) = events.first() else {
+            panic!("F8 should raise a confirmation modal, got {events:?}");
+        };
+        assert!(
+            matches!(on_confirm, ConfirmAction::Custom(a) if a == DELETE_SESSION_ACTION),
+            "{on_confirm:?}"
+        );
+        assert!(panel.pending.is_none());
         assert!(first_path.exists());
 
-        // Confirming removes the log and starts a fresh session.
-        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        // The confirmed answer comes back as a Confirmed command: the log is
+        // removed and a fresh session starts.
+        panel.handle_command(PanelCommand::Confirmed {
+            action: DELETE_SESSION_ACTION.to_string(),
+        });
         settle(&mut panel);
-        assert!(panel.pending.is_none());
         assert!(!first_path.exists(), "the session log is removed");
         assert_ne!(panel.session_path().unwrap(), first_path);
         assert!(panel.transcript().items().is_empty());
 
-        // Cancelling F8 keeps the session.
+        // Cancelling the modal (no Confirmed command) keeps the session.
         type_text(&mut panel, "more");
         panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
         settle(&mut panel);
         let path = panel.session_path().unwrap().to_path_buf();
         panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
-        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(panel.pending.is_none());
         assert!(path.exists(), "cancelled delete keeps the log");
     }
 

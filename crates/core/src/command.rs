@@ -173,6 +173,15 @@ pub enum PanelCommand<'a> {
         text: String,
     },
 
+    /// The user accepted a confirmation modal the panel raised with
+    /// `ConfirmAction::Custom(action)`. Only the accepted case is delivered;
+    /// cancelling leaves the panel untouched. Same delivery rule as
+    /// [`PanelCommand::SelectionMade`].
+    Confirmed {
+        /// The `ConfirmAction::Custom` payload the panel emitted.
+        action: String,
+    },
+
     // === Scrollbar mouse interaction ===
     /// Request the geometry of the scrollbars drawn by the panel's last
     /// render. The mouse dispatcher uses it to route a thumb grab to the

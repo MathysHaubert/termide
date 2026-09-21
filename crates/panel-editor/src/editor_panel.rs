@@ -777,6 +777,7 @@ impl Panel for Editor {
             | PanelCommand::SetGitOperationInProgress { .. }
             | PanelCommand::SelectionMade { .. }
             | PanelCommand::InputSubmitted { .. }
+            | PanelCommand::Confirmed { .. }
             | PanelCommand::UpdateRepoPaths { .. } => CommandResult::None,
         }
     }

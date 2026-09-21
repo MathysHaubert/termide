@@ -185,13 +185,17 @@ impl App {
                 PendingAction::ReplaceInContent { replace_with }
             }
             termide_core::ConfirmAction::SaveBinary => PendingAction::SaveBinary,
+            termide_core::ConfirmAction::Custom(action) => PendingAction::PanelConfirm { action },
         };
 
         // Create confirmation modal. Deleting is destructive and cannot be
         // undone, so that prompt starts on "No" — every other confirmation
         // keeps "Yes" as the default answer.
         let modal = ConfirmModal::new(title, message);
-        let modal = if matches!(pending_action, PendingAction::DeletePath { .. }) {
+        let modal = if matches!(
+            pending_action,
+            PendingAction::DeletePath { .. } | PendingAction::PanelConfirm { .. }
+        ) {
             modal.defaulting_to_no()
         } else {
             modal

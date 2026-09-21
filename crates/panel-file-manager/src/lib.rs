@@ -847,6 +847,7 @@ impl Panel for FileManager {
             | PanelCommand::UpdateRepoPaths { .. }
             | PanelCommand::SelectionMade { .. }
             | PanelCommand::InputSubmitted { .. }
+            | PanelCommand::Confirmed { .. }
             | PanelCommand::PasteText { .. } => CommandResult::None,
         }
     }

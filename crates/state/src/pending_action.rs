@@ -61,6 +61,10 @@ pub enum PendingAction {
     /// Text a panel asked for with `InputAction::Custom`; delivered back as
     /// `PanelCommand::InputSubmitted`.
     PanelInput { action: String },
+    /// A confirmation a panel raised with `ConfirmAction::Custom`; on accept
+    /// it is delivered back as `PanelCommand::Confirmed` with this action
+    /// string.
+    PanelConfirm { action: String },
     /// Close editor with external changes (file changed on disk)
     CloseEditorExternal,
     /// Close editor with conflict (local changes + external changes)

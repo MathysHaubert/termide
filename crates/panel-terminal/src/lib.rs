@@ -1363,6 +1363,7 @@ impl Panel for Terminal {
             | PanelCommand::SetGitOperationInProgress { .. }
             | PanelCommand::SelectionMade { .. }
             | PanelCommand::InputSubmitted { .. }
+            | PanelCommand::Confirmed { .. }
             | PanelCommand::UpdateRepoPaths { .. } => CommandResult::None,
 
             PanelCommand::GetScrollBars => CommandResult::ScrollBars(self.scrollbars),
