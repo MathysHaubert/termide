@@ -847,10 +847,21 @@ fn render_item(
                 }
             }
             if let Some(error) = error {
-                lines.push(Line::styled(
-                    format!("✗ {error}"),
-                    Style::default().fg(colors.error),
-                ));
+                // Wrap the error under a `✗` marker, indenting continuation
+                // lines, so a long message reflows instead of being clipped.
+                let style = Style::default().fg(colors.error);
+                let mut body = wrap_plain(error, width.saturating_sub(2), style, colors, is_light);
+                for (i, line) in body.iter_mut().enumerate() {
+                    line.spans.insert(
+                        0,
+                        if i == 0 {
+                            Span::styled("✗ ", style)
+                        } else {
+                            Span::raw("  ")
+                        },
+                    );
+                }
+                lines.append(&mut body);
             }
             // An empty answer draws nothing at all — a bare turn (reasoning or
             // tools only) has no final message, and while streaming the live
@@ -1284,6 +1295,27 @@ mod tests {
         assert!(lines
             .iter()
             .any(|l| l.contains("12:00:01") && l.contains('✗')));
+    }
+
+    #[test]
+    fn a_long_error_wraps_to_the_width() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        let error = "the request failed because the endpoint is unreachable and \
+             the retries were exhausted after several attempts"
+            .to_string();
+        transcript.finish_assistant(String::new(), Some(error), None, "12:00:01".into(), true);
+        let width = 30;
+        let lines = text_of(transcript.lines(width, &colors, false));
+        // The error is marked with `✗` and reflows instead of spilling past the
+        // width; every wrapped row stays within it.
+        assert!(lines.iter().any(|l| l.contains('✗')));
+        let wrapped = lines
+            .iter()
+            .filter(|l| l.contains("request") || l.contains("retries"))
+            .count();
+        assert!(wrapped >= 2, "a long error should wrap to several rows");
+        assert!(lines.iter().all(|l| l.chars().count() <= width as usize));
     }
 
     #[test]
