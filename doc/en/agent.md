@@ -61,15 +61,18 @@ right, what the agent is set up with — its provider, model, agent name and the
 directory it works in. It gives way to the conversation as soon as you send
 your first message.
 
-The same menu has **New session**, which starts an empty one, and **Open
-session**, which lists the sessions of the directory the panel works in,
-newest first (the current one marked `●`), so you can pick up where you left
-off. Switching waits for the
-current task: stop it with `Esc` first if the agent is still working.
+The panel's `[≡]` menu is kept to the actions with no home elsewhere — **Rename
+session**, **Delete session** and **Show system prompt**. Managing sessions is
+on the F-keys and in the AI menu instead: `F7` starts a new session, `F6` opens
+the picker of this directory's sessions (newest first, the current one marked
+`●`), `F8` deletes the current one after a confirmation, and `F2` renames it.
+Switching waits for the current task: stop it with `Esc` first if the agent is
+still working.
 
-From the input, `/new` does what **New session** does, and `/clear` starts a
-fresh session too but deletes the current one first — use it when the work is
-done and you will not want to resume back to it.
+From the input, `/new` starts a fresh session (keeping the current one), and
+`/clear` starts one too but deletes the current one first; `/rename` (or
+`/name`) renames it. The model, agent and permission-mode pickers are the
+status-bar chips.
 
 A session you never send anything to is discarded when you switch away from it
 or close the panel, so opening a panel and closing it — or trying a couple of
@@ -87,6 +90,9 @@ you have named or sent even one message to is always kept.
 | `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `F2` | Rename this session (the same prompt as the `[≡]` menu) |
+| `F6` | Switch session — open the picker of this directory's sessions |
+| `F7` | Start a new session (the used one is kept in the list) |
+| `F8` | Delete this session (after a confirmation) and start a fresh one |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |

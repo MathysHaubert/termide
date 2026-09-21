@@ -58,6 +58,8 @@ const PASTE_MAX_CHARS: usize = 2000;
 const PASTE_MAX_LINES: usize = 20;
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
+/// Context-menu action that deletes the session (behind a confirmation).
+const DELETE_SESSION_ACTION: &str = "agent_delete_session";
 /// Context-menu action that starts a fresh session.
 const NEW_SESSION_ACTION: &str = "agent_new_session";
 /// Context-menu action that opens the session picker.
@@ -108,6 +110,11 @@ enum Pending {
     Undo {
         form: ChoiceForm,
     },
+    /// Confirming a session delete (F8): remove the current session and start
+    /// fresh, or keep it.
+    DeleteSession {
+        form: ChoiceForm,
+    },
     /// Plan mode: the agent answered, carry the plan out or keep planning?
     Plan {
         form: ChoiceForm,
@@ -120,6 +127,7 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
+            | Pending::DeleteSession { form }
             | Pending::Plan { form } => form,
         }
     }
@@ -129,6 +137,7 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
+            | Pending::DeleteSession { form }
             | Pending::Plan { form } => form,
         }
     }
@@ -2143,6 +2152,17 @@ impl AgentPanel {
             (Some(Pending::Undo { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
+            (Some(Pending::DeleteSession { .. }), ChoiceAction::Chosen(_)) => {
+                self.pending = None;
+                let events = self.perform_delete_session();
+                self.pending_events.extend(events);
+            }
+            (
+                Some(Pending::DeleteSession { .. }),
+                ChoiceAction::Cancelled | ChoiceAction::Custom(_),
+            ) => {
+                self.pending = None;
+            }
             (Some(Pending::Plan { .. }), ChoiceAction::Chosen(index)) => {
                 self.pending = None;
                 let mode = if index == 0 {
@@ -2200,6 +2220,38 @@ impl AgentPanel {
         )
         .with_cancel("Keep everything");
         self.pending = Some(Pending::Undo { form });
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Offer to delete the current session (F8): a confirmation card, since it
+    /// removes the log for good.
+    fn ask_delete_session(&mut self) -> Vec<PanelEvent> {
+        if self.is_busy() {
+            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let label = self
+            .session
+            .as_ref()
+            .and_then(Session::name)
+            .map(str::to_string)
+            .unwrap_or_else(|| "this session".to_string());
+        let form = ChoiceForm::new(
+            format!("Delete {label}? This cannot be undone"),
+            vec!["Delete it and start fresh".into()],
+        )
+        .with_cancel("Keep it");
+        self.pending = Some(Pending::DeleteSession { form });
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Discard the current session and open a fresh one in its place — the
+    /// confirmed F8 delete, the same effect as `/clear`.
+    fn perform_delete_session(&mut self) -> Vec<PanelEvent> {
+        if let Some(old) = self.session.take() {
+            discard(old);
+        }
+        self.switch_session(None);
         vec![PanelEvent::NeedsRedraw]
     }
 
@@ -3037,20 +3089,15 @@ impl Panel for AgentPanel {
 
     fn context_menu_items(&self) -> Vec<(String, &'static str)> {
         let t = termide_i18n::t();
-        let mut items = vec![(t.agent_rename().to_string(), RENAME_ACTION)];
-        if self.session_dir.is_some() {
-            items.push((t.agent_new_session().to_string(), NEW_SESSION_ACTION));
-            items.push((t.agent_resume().to_string(), RESUME_ACTION));
-        }
-        items.push((t.agent_prompts().to_string(), PROMPTS_ACTION));
-        items.push((t.agent_change_agent().to_string(), AGENT_ACTION));
-        items.push((t.agent_change_model().to_string(), MODEL_ACTION));
-        items.push((t.agent_change_mode().to_string(), MODE_ACTION));
-        items.push((t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION));
-        if !self.external {
-            items.push((t.agent_undo().to_string(), UNDO_ACTION));
-        }
-        items
+        // Only actions with no home elsewhere. New/switch/delete sessions also
+        // have F-keys, sessions/prompts/agents live in the AI menu, and the
+        // model/agent/mode pickers are status-bar chips — none is repeated here.
+        // Showing the assembled prompt has no other entry point, so it stays.
+        vec![
+            (t.agent_rename().to_string(), RENAME_ACTION),
+            (t.agent_delete_session().to_string(), DELETE_SESSION_ACTION),
+            (t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION),
+        ]
     }
 
     fn handle_status_action(&mut self, action: &str) -> Vec<PanelEvent> {
@@ -3066,6 +3113,7 @@ impl Panel for AgentPanel {
                     .to_string(),
                 on_submit: InputAction::Custom(RENAME_ACTION.to_string()),
             }],
+            DELETE_SESSION_ACTION => self.ask_delete_session(),
             NEW_SESSION_ACTION => {
                 self.switch_session(None);
                 vec![PanelEvent::NeedsRedraw]
@@ -3330,6 +3378,17 @@ impl Panel for AgentPanel {
         // same prompt as the `[≡]` menu's Rename.
         if key.code == KeyCode::F(2) && !ctrl && !alt && !shift {
             return self.handle_status_action(RENAME_ACTION);
+        }
+        // F6 switches session (the picker), F7 starts a new one, F8 deletes the
+        // current one behind a confirmation card.
+        if key.code == KeyCode::F(6) && !ctrl && !alt && !shift {
+            return self.handle_status_action(RESUME_ACTION);
+        }
+        if key.code == KeyCode::F(7) && !ctrl && !alt && !shift {
+            return self.handle_status_action(NEW_SESSION_ACTION);
+        }
+        if key.code == KeyCode::F(8) && !ctrl && !alt && !shift {
+            return self.ask_delete_session();
         }
 
         // The completion list gets the navigation keys while it is open.
@@ -4578,22 +4637,13 @@ mod tests {
         panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
         settle(&mut panel);
 
+        // The panel menu is trimmed to the actions with no home elsewhere;
         // "New session" starts an empty one and leaves the old log alone.
         let items = panel.context_menu_items();
         let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
         assert_eq!(
             labels,
-            vec![
-                "Rename session",
-                "New session",
-                "Open session",
-                "Insert prompt…",
-                "Change agent…",
-                "Change model…",
-                "Permission mode",
-                "Show system prompt",
-                "Undo last request"
-            ]
+            vec!["Rename session", "Delete session", "Show system prompt"]
         );
         panel.handle_status_action(NEW_SESSION_ACTION);
         assert!(panel.transcript().items().is_empty());
@@ -4784,6 +4834,66 @@ mod tests {
             matches!(on_submit, InputAction::Custom(a) if a == RENAME_ACTION),
             "{on_submit:?}"
         );
+    }
+
+    #[test]
+    fn f8_confirms_then_deletes_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        type_text(&mut panel, "first task");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let first_path = panel.session_path().unwrap().to_path_buf();
+
+        // F8 asks first — nothing is deleted yet.
+        panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
+        assert!(matches!(panel.pending, Some(Pending::DeleteSession { .. })));
+        assert!(first_path.exists());
+
+        // Confirming removes the log and starts a fresh session.
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        assert!(panel.pending.is_none());
+        assert!(!first_path.exists(), "the session log is removed");
+        assert_ne!(panel.session_path().unwrap(), first_path);
+        assert!(panel.transcript().items().is_empty());
+
+        // Cancelling F8 keeps the session.
+        type_text(&mut panel, "more");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let path = panel.session_path().unwrap().to_path_buf();
+        panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        assert!(path.exists(), "cancelled delete keeps the log");
+    }
+
+    #[test]
+    fn f7_starts_a_new_session_and_f6_opens_the_switcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        type_text(&mut panel, "task one");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let first = panel.session_path().unwrap().to_path_buf();
+
+        // F7 opens a fresh session, keeping the used one.
+        panel.handle_key(chord(KeyCode::F(7), KeyModifiers::NONE));
+        assert!(panel.transcript().items().is_empty());
+        assert_ne!(panel.session_path().unwrap(), first);
+
+        // F6 opens the session switcher.
+        let events = panel.handle_key(chord(KeyCode::F(6), KeyModifiers::NONE));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, PanelEvent::ShowSelect { .. })));
     }
 
     #[test]

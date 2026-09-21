@@ -359,6 +359,7 @@ impl Translation for RuntimeTranslation {
         tools_agent,
         panel_agent,
         agent_rename,
+        agent_delete_session,
         agent_rename_prompt,
         agent_new_session,
         agent_resume,

@@ -419,6 +419,7 @@ pub trait Translation: Send + Sync {
     fn panel_agent(&self) -> &str;
     /// Agent panel context menu: rename the conversation
     fn agent_rename(&self) -> &str;
+    fn agent_delete_session(&self) -> &str;
     /// Prompt shown when renaming an agent conversation
     fn agent_rename_prompt(&self) -> &str;
     /// Agent panel context menu: start a new session
