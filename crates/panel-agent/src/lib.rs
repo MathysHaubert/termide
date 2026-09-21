@@ -494,6 +494,10 @@ pub struct AgentPanel {
     transcript_area: Rect,
     input_area: Rect,
     scrollbars: ScrollBars,
+    /// Clickable fields drawn in the welcome banner, each with the status
+    /// action a click on it triggers (re-pick the model, the agent). Rebuilt
+    /// every render; empty once the session has content and the banner is gone.
+    banner_hits: Vec<(Rect, &'static str)>,
 }
 
 impl AgentPanel {
@@ -631,6 +635,7 @@ impl AgentPanel {
             transcript_area: Rect::default(),
             input_area: Rect::default(),
             scrollbars: ScrollBars::default(),
+            banner_hits: Vec::new(),
         }
     }
 
@@ -2925,7 +2930,7 @@ impl AgentPanel {
     /// and what the agent is set up with (provider, model, agent, directory) on
     /// the right, each column centred in the transcript area. On a narrow panel
     /// the logo is dropped and only the details show.
-    fn render_welcome(&self, area: Rect, buf: &mut Buffer, colors: &ThemeColors) {
+    fn render_welcome(&mut self, area: Rect, buf: &mut Buffer, colors: &ThemeColors) {
         const LOGO: [&str; 5] = [
             "╭───────╮",
             "│       │",
@@ -2933,6 +2938,7 @@ impl AgentPanel {
             "│       │",
             "╰───────╯",
         ];
+        self.banner_hits.clear();
         if area.width < 14 || area.height == 0 {
             return;
         }
@@ -2951,21 +2957,32 @@ impl AgentPanel {
             .add_modifier(Modifier::BOLD);
         let dim = Style::default().fg(colors.disabled);
         let fg = Style::default().fg(colors.fg);
-        let field = |name: &str, value: String| -> Line<'static> {
+        // A re-pickable value (model, agent) is drawn in the accent colour and
+        // underlined, so it reads as clickable; a fixed one (provider, cwd) is
+        // plain. The click itself is wired through `banner_hits` below.
+        let link = Style::default()
+            .fg(colors.info)
+            .add_modifier(Modifier::UNDERLINED);
+        let field = |name: &str, value: String, clickable: bool| -> Line<'static> {
             Line::from(vec![
                 Span::styled(format!("{name:<9}"), dim),
-                Span::styled(value, fg),
+                Span::styled(value, if clickable { link } else { fg }),
             ])
         };
         let cwd = shorten_path(&self.cwd, (info_w as usize).saturating_sub(9));
-        let info: Vec<Line<'static>> = vec![
-            Line::styled("termide", accent),
-            Line::styled("coding agent", dim),
-            Line::from(""),
-            field("provider", self.provider_kind.clone()),
-            field("model", self.model.id.clone()),
-            field("agent", self.agent.clone()),
-            field("cwd", cwd),
+        // Each entry is a line and, when it names a choice that can be re-picked
+        // by clicking, the status action that click triggers.
+        let info: Vec<(Line<'static>, Option<&'static str>)> = vec![
+            (Line::styled("termide", accent), None),
+            (Line::styled("coding agent", dim), None),
+            (Line::from(""), None),
+            (field("provider", self.provider_kind.clone(), false), None),
+            (
+                field("model", self.model.id.clone(), true),
+                Some(MODEL_ACTION),
+            ),
+            (field("agent", self.agent.clone(), true), Some(AGENT_ACTION)),
+            (field("cwd", cwd, false), None),
         ];
 
         let banner_h = info.len().max(LOGO.len()) as u16;
@@ -2988,12 +3005,26 @@ impl AgentPanel {
             }
         }
         let info_top = top + (banner_h - info.len() as u16) / 2;
-        for (i, line) in info.iter().enumerate() {
+        for (i, (line, action)) in info.iter().enumerate() {
             let y = info_top + i as u16;
             if y >= bottom {
                 break;
             }
             buf.set_line(info_x, y, line, info_w);
+            // The whole field row is the click target, so the label is as good
+            // as the value; an external agent still routes the click, and its
+            // action answers with the "unsupported" notice.
+            if let Some(action) = action {
+                self.banner_hits.push((
+                    Rect {
+                        x: info_x,
+                        y,
+                        width: info_w,
+                        height: 1,
+                    },
+                    action,
+                ));
+            }
         }
     }
 
@@ -3807,6 +3838,8 @@ impl Panel for AgentPanel {
             };
             self.render_welcome(welcome, buf, &colors);
         } else {
+            // No banner while the session has content, so its click targets go.
+            self.banner_hits.clear();
             for row in 0..transcript_height as usize {
                 let Some(line) = lines.get(self.top + row) else {
                     break;
@@ -4148,6 +4181,20 @@ impl Panel for AgentPanel {
                         self.accept_completion();
                         return vec![PanelEvent::NeedsRedraw];
                     }
+                }
+                // A click on a re-pickable field in the welcome banner opens its
+                // picker — the same one its status-bar chip opens.
+                let banner_hit = self
+                    .banner_hits
+                    .iter()
+                    .find(|(rect, _)| {
+                        event.column >= rect.x
+                            && event.column < rect.x + rect.width
+                            && event.row == rect.y
+                    })
+                    .map(|(_, action)| *action);
+                if let Some(action) = banner_hit {
+                    return self.handle_status_action(action);
                 }
                 let area = self.transcript_area;
                 let inside = event.column >= area.x
@@ -5660,6 +5707,40 @@ mod tests {
         assert!(
             !all.contains("coding agent"),
             "banner gone once used: {all}"
+        );
+        // Once the banner is gone it leaves no clickable fields behind.
+        assert!(panel.banner_hits.is_empty());
+    }
+
+    #[test]
+    fn clicking_a_banner_field_reopens_its_picker() {
+        let mut panel = panel(vec![]);
+        // Rendering the empty-state banner records its clickable fields.
+        let _ = render_text(&mut panel, 60, 16);
+        assert_eq!(
+            panel.banner_hits.len(),
+            2,
+            "the model and the agent are re-pickable"
+        );
+        let (rect, _) = panel
+            .banner_hits
+            .iter()
+            .find(|(_, action)| *action == AGENT_ACTION)
+            .copied()
+            .expect("the agent field is clickable");
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        let events = panel.handle_mouse(click, Rect::new(0, 0, 60, 16));
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                PanelEvent::ShowSelect { on_select: SelectAction::Custom(a), .. } if a == AGENT_ACTION
+            )),
+            "clicking the agent field opens the agent picker, got {events:?}"
         );
     }
 

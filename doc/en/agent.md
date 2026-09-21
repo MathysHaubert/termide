@@ -59,8 +59,10 @@ instead. Give a session a name of your own through the panel's `[≡]` menu →
 
 A fresh session greets you with a banner: a small logo on the left and, on the
 right, what the agent is set up with — its provider, model, agent name and the
-directory it works in. It gives way to the conversation as soon as you send
-your first message.
+directory it works in. The model and the agent are shown underlined in the
+accent colour: a click on either opens the same picker its status-bar chip
+does, so you can switch before you start. The banner gives way to the
+conversation as soon as you send your first message.
 
 The panel's `[≡]` menu is kept to the actions with no home elsewhere — **Rename
 session**, **Delete session** and **Show system prompt**. Managing sessions is
