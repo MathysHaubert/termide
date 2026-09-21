@@ -52,6 +52,10 @@ const PERMISSION_OPTIONS: [&str; 4] = [
 ];
 /// Longest input the panel grows to before it scrolls.
 const MAX_INPUT_ROWS: u16 = 5;
+/// A paste past either bound is held as a short placeholder rather than
+/// inlined, so a big block does not swamp the prompt box.
+const PASTE_MAX_CHARS: usize = 2000;
+const PASTE_MAX_LINES: usize = 20;
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that starts a fresh session.
@@ -297,6 +301,13 @@ impl Activity {
     }
 }
 
+/// A large paste kept out of the input: `placeholder` stands in the prompt
+/// box, `text` is the full content spliced back in on submit.
+struct Paste {
+    placeholder: String,
+    text: String,
+}
+
 pub struct AgentPanel {
     runtime: Box<dyn Backend>,
     /// The runtime is an external agent: model and mode are not ours to set.
@@ -387,6 +398,11 @@ pub struct AgentPanel {
     /// Consecutive clicks on a form row, so a single click selects and a
     /// double click confirms; keyed by the row index.
     form_clicks: ClickTracker<usize>,
+    /// Large pastes held out of the input as a short placeholder, expanded back
+    /// inline on submit, so a big block does not swamp the prompt box.
+    pastes: Vec<Paste>,
+    /// Serial number for the next paste placeholder.
+    paste_seq: usize,
     /// Keyboard focus is in the chat, not the input: `Tab` toggles it, then
     /// the arrows pick a block and Space/Enter fold it.
     chat_focus: bool,
@@ -527,6 +543,8 @@ impl AgentPanel {
             completion: None,
             completion_span: None,
             form_clicks: ClickTracker::new(),
+            pastes: Vec::new(),
+            paste_seq: 0,
             chat_focus: false,
             selected: 0,
             top: 0,
@@ -679,6 +697,41 @@ impl AgentPanel {
     /// Clear the prompt box.
     fn clear_input(&mut self) {
         self.input.set_field_text(0, "");
+        self.pastes.clear();
+        self.paste_seq = 0;
+    }
+
+    /// Insert pasted `text` at the cursor: a small paste inline, a large one as
+    /// a short `[#n pasted …]` placeholder whose full content is spliced back
+    /// in on [`AgentPanel::submit`].
+    fn paste(&mut self, text: &str) {
+        let lines = text.lines().count();
+        let large = text.chars().count() > PASTE_MAX_CHARS || lines > PASTE_MAX_LINES;
+        if !large {
+            self.input_area_mut().insert_str(text);
+            return;
+        }
+        self.paste_seq += 1;
+        let label = if lines > 1 {
+            format!("{lines} lines")
+        } else {
+            format!("{} chars", text.chars().count())
+        };
+        let placeholder = format!("[#{} pasted {label}]", self.paste_seq);
+        self.input_area_mut().insert_str(&placeholder);
+        self.pastes.push(Paste {
+            placeholder,
+            text: text.to_string(),
+        });
+    }
+
+    /// Splice every held paste's full content back in place of its placeholder.
+    fn expand_pastes(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for paste in &self.pastes {
+            out = out.replace(&paste.placeholder, &paste.text);
+        }
+        out
     }
 
     #[must_use]
@@ -689,7 +742,10 @@ impl AgentPanel {
     /// Send the input box: a new run when idle, a steering message while
     /// the agent works.
     pub fn submit(&mut self) -> Vec<PanelEvent> {
-        let text = self.input_area().text().trim().to_string();
+        // Held pastes are spliced back in before anything reads the message, so
+        // the full content is what a command, a template or the model sees.
+        let text = self.expand_pastes(&self.input_area().text());
+        let text = text.trim().to_string();
         if text.is_empty() {
             return vec![];
         }
@@ -3418,7 +3474,7 @@ impl Panel for AgentPanel {
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {
         match cmd {
             PanelCommand::PasteText { text } => {
-                self.input_area_mut().insert_str(&text);
+                self.paste(&text);
                 self.after_edit();
                 CommandResult::NeedsRedraw(true)
             }
@@ -4487,6 +4543,37 @@ mod tests {
         assert!(panel
             .handle_key(chord(KeyCode::Esc, KeyModifiers::NONE))
             .is_empty());
+    }
+
+    #[test]
+    fn a_large_paste_is_held_as_a_placeholder_and_expanded() {
+        let mut panel = panel(vec![]);
+        let big = (1..=40)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // A large paste shows a short placeholder, not the whole block.
+        panel.handle_command(PanelCommand::PasteText { text: big.clone() });
+        assert_eq!(panel.input_text(), "[#1 pasted 40 lines]");
+        // Its full text is spliced back for the message.
+        assert_eq!(panel.expand_pastes(&panel.input_text()), big);
+
+        // A small paste is inlined as-is, beside the placeholder.
+        panel.handle_command(PanelCommand::PasteText {
+            text: " review this".into(),
+        });
+        assert_eq!(panel.input_text(), "[#1 pasted 40 lines] review this");
+        assert_eq!(
+            panel.expand_pastes(&panel.input_text()),
+            format!("{big} review this")
+        );
+
+        // Submitting sends the expanded text and drops the held paste.
+        panel.submit();
+        assert!(panel.input_text().is_empty());
+        assert!(panel.pastes.is_empty());
+        assert_eq!(panel.paste_seq, 0);
     }
 
     #[test]
