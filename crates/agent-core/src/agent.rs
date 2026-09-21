@@ -37,6 +37,9 @@ pub struct AgentConfig {
 struct Queues {
     steering: VecDeque<UserMessage>,
     follow_up: VecDeque<UserMessage>,
+    /// A graceful pause was asked for: the loop stops at the next turn
+    /// boundary, leaving the run resumable, unlike an abrupt cancel.
+    paused: bool,
 }
 
 /// Thread-safe handle to the steering and follow-up queues.
@@ -78,6 +81,28 @@ impl QueueHandle {
     #[must_use]
     pub fn has_pending(&self) -> bool {
         self.lens() != (0, 0)
+    }
+
+    /// Ask the loop to pause at the next turn boundary — graceful, unlike a
+    /// cancel: the current step finishes and the run can be resumed.
+    pub fn pause(&self) {
+        self.lock().paused = true;
+    }
+
+    /// Whether a pause has been requested (without clearing it).
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.lock().paused
+    }
+
+    /// Take the pause request, clearing it.
+    fn take_pause(&self) -> bool {
+        std::mem::take(&mut self.lock().paused)
+    }
+
+    /// Clear any pause request before a run or resume starts.
+    pub fn clear_pause(&self) {
+        self.lock().paused = false;
     }
 
     fn take_steering(&self, mode: QueueMode) -> Vec<UserMessage> {
@@ -251,6 +276,9 @@ pub enum AgentEvent {
     CompactionFailed {
         error: String,
     },
+    /// The loop stopped early on a pause request with work still pending, so
+    /// the run can be resumed. Not emitted on a natural finish.
+    Paused,
     AgentEnd,
 }
 
@@ -412,10 +440,37 @@ impl Agent {
         cancel: &CancelToken,
         emit: &mut dyn FnMut(AgentEvent),
     ) {
-        emit(AgentEvent::AgentStart);
+        let mut initial = vec![prompt];
+        initial.extend(self.drain_steering(emit));
+        self.run_from(initial, hooks, cancel, emit);
+    }
 
-        let mut pending = vec![prompt];
-        pending.extend(self.drain_steering(emit));
+    /// Resume a paused run: continue the loop on the existing transcript with
+    /// no new user message, so the model answers the last tool results (or
+    /// carries on where it left off).
+    pub fn resume(
+        &mut self,
+        hooks: &mut dyn Hooks,
+        cancel: &CancelToken,
+        emit: &mut dyn FnMut(AgentEvent),
+    ) {
+        let initial = self.drain_steering(emit);
+        self.run_from(initial, hooks, cancel, emit);
+    }
+
+    /// The loop shared by [`Agent::run`] and [`Agent::resume`]: drive turns
+    /// until the work is done, cancelled, or a pause stops it between steps.
+    fn run_from(
+        &mut self,
+        mut pending: Vec<UserMessage>,
+        hooks: &mut dyn Hooks,
+        cancel: &CancelToken,
+        emit: &mut dyn FnMut(AgentEvent),
+    ) {
+        // A pause left over from a previous run must not stop this one before
+        // it starts.
+        self.queues.clear_pause();
+        emit(AgentEvent::AgentStart);
 
         'outer: loop {
             loop {
@@ -424,6 +479,14 @@ impl Agent {
                     TurnOutcome::Halt => break 'outer,
                     TurnOutcome::Continue { had_tool_calls } => {
                         pending.extend(self.drain_steering(emit));
+                        let more = had_tool_calls || !pending.is_empty();
+                        // A graceful pause stops between steps, but only when
+                        // there is still work to do — a finished turn ends on
+                        // its own and needs no pause.
+                        if more && self.queues.take_pause() {
+                            emit(AgentEvent::Paused);
+                            break 'outer;
+                        }
                         if !had_tool_calls && pending.is_empty() {
                             break;
                         }
@@ -437,6 +500,7 @@ impl Agent {
             }
         }
 
+        self.queues.clear_pause();
         emit(AgentEvent::AgentEnd);
     }
 
@@ -838,6 +902,8 @@ pub(crate) mod test_support {
     pub struct EchoTool {
         pub executed: Mutex<Vec<String>>,
         pub steer_on_execute: Option<(QueueHandle, String)>,
+        /// Requests a pause when executed, to exercise the mid-run pause.
+        pub pause_on_execute: Option<QueueHandle>,
     }
 
     impl Tool for EchoTool {
@@ -862,6 +928,9 @@ pub(crate) mod test_support {
             on_update(ToolUpdate::Output(text.clone()));
             if let Some((queues, message)) = &self.steer_on_execute {
                 queues.steer(UserMessage::text(message.clone()));
+            }
+            if let Some(queues) = &self.pause_on_execute {
+                queues.pause();
             }
             ToolResultMessage::text(call, format!("echo: {text}"))
         }
@@ -1114,6 +1183,7 @@ mod tests {
         let steering_echo = Arc::new(EchoTool {
             executed: Default::default(),
             steer_on_execute: Some((agent.queues(), "actually, stop after this".into())),
+            pause_on_execute: None,
         });
         registry.insert(steering_echo);
         *agent.tools_mut() = registry;
@@ -1134,6 +1204,47 @@ mod tests {
             steering: 0,
             follow_up: 0
         }));
+    }
+
+    #[test]
+    fn pause_stops_after_the_current_step_and_resume_continues() {
+        let mut registry = ToolRegistry::new();
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            tool_reply(
+                vec![("c1", "echo", json!({ "text": "x" }))],
+                StopReason::ToolUse,
+            ),
+            text_reply("done after resume"),
+        ]));
+        let mut agent = Agent::new(provider.clone(), registry.clone(), model(), "/tmp".into());
+        let echo = Arc::new(EchoTool {
+            executed: Default::default(),
+            steer_on_execute: None,
+            pause_on_execute: Some(agent.queues()),
+        });
+        registry.insert(echo);
+        *agent.tools_mut() = registry;
+
+        // The tool asks to pause: the loop runs that step, then stops before the
+        // next model call, emitting Paused.
+        let events = collect(&mut agent, "go", &mut NoHooks);
+        assert!(events.contains(&AgentEvent::Paused));
+        assert_eq!(
+            roles(agent.messages()),
+            vec!["user", "assistant", "tool_result"]
+        );
+        assert_eq!(provider.seen_requests().len(), 1);
+
+        // Resuming continues on the existing transcript — the model is called
+        // again with no new user message — and finishes.
+        let mut resumed = Vec::new();
+        agent.resume(&mut NoHooks, &CancelToken::new(), &mut |e| resumed.push(e));
+        assert!(!resumed.contains(&AgentEvent::Paused));
+        assert_eq!(provider.seen_requests().len(), 2);
+        assert_eq!(
+            roles(agent.messages()),
+            vec!["user", "assistant", "tool_result", "assistant"]
+        );
     }
 
     #[test]

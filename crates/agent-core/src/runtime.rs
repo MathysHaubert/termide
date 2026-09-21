@@ -44,6 +44,8 @@ impl std::error::Error for PromptError {}
 
 enum WorkerCommand {
     Prompt(UserMessage),
+    /// Continue a paused run on the existing transcript (no new message).
+    Resume,
     /// Applied to the agent between runs.
     Update(Box<dyn FnOnce(&mut Agent) + Send>),
     /// Summarise the older part of the transcript now, on the user's word.
@@ -72,6 +74,13 @@ pub trait Backend: Send {
     fn queue_lens(&self) -> (usize, usize);
     /// Ask the active run to stop.
     fn abort(&self);
+    /// Ask the active run to pause gracefully at the next step boundary; the
+    /// default is a no-op (an external agent has no such control).
+    fn pause(&self) {}
+    /// Continue a paused run; the default reports it is unsupported.
+    fn resume(&self) -> Result<(), PromptError> {
+        Err(PromptError::Unsupported)
+    }
     fn is_busy(&self) -> bool;
     /// Everything that happened since the last call, without blocking.
     fn drain(&self) -> Vec<AgentEvent>;
@@ -97,6 +106,12 @@ impl Backend for AgentRuntime {
     }
     fn abort(&self) {
         AgentRuntime::abort(self);
+    }
+    fn pause(&self) {
+        AgentRuntime::pause(self);
+    }
+    fn resume(&self) -> Result<(), PromptError> {
+        AgentRuntime::resume(self)
     }
     fn is_busy(&self) -> bool {
         AgentRuntime::is_busy(self)
@@ -156,6 +171,12 @@ impl AgentRuntime {
                             agent.run(prompt, hooks.as_mut(), &worker_cancel, &mut |event| {
                                 // A closed receiver means the UI dropped the
                                 // runtime; the run finishes on its own.
+                                let _ = event_tx.send(event);
+                            });
+                            worker_busy.store(false, Ordering::Release);
+                        }
+                        WorkerCommand::Resume => {
+                            agent.resume(hooks.as_mut(), &worker_cancel, &mut |event| {
                                 let _ = event_tx.send(event);
                             });
                             worker_busy.store(false, Ordering::Release);
@@ -269,6 +290,35 @@ impl AgentRuntime {
         if self.is_busy() {
             self.cancel.cancel();
         }
+    }
+
+    /// Ask the active run to pause gracefully at its next turn boundary — the
+    /// current step finishes and the run can be resumed. No-op while idle.
+    pub fn pause(&self) {
+        if self.is_busy() {
+            self.queues.pause();
+        }
+    }
+
+    /// Continue a paused run on the existing transcript. Fails with
+    /// [`PromptError::Busy`] while a run is active, [`PromptError::Stopped`]
+    /// once the worker is gone.
+    pub fn resume(&self) -> Result<(), PromptError> {
+        if self.worker.is_none() {
+            return Err(PromptError::Stopped);
+        }
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(PromptError::Busy);
+        }
+        self.cancel.reset();
+        self.commands.send(WorkerCommand::Resume).map_err(|_| {
+            self.busy.store(false, Ordering::Release);
+            PromptError::Stopped
+        })
     }
 
     #[must_use]

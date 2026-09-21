@@ -94,6 +94,10 @@ const CLEAR_COMMAND: &str = "clear";
 /// an argument or through the same prompt as the menu.
 const RENAME_COMMAND: &str = "rename";
 const NAME_COMMAND: &str = "name";
+/// The built-in `/pause` and `/continue` commands: stop the run gracefully
+/// after the current step, and resume it.
+const PAUSE_COMMAND: &str = "pause";
+const CONTINUE_COMMAND: &str = "continue";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -428,6 +432,9 @@ pub struct AgentPanel {
     /// Keep the view pinned to the newest line while true.
     follow: bool,
     busy: bool,
+    /// A run stopped early on `/pause` with work still pending, so `/continue`
+    /// can resume it.
+    paused: bool,
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
@@ -565,6 +572,7 @@ impl AgentPanel {
             top: 0,
             follow: true,
             busy: false,
+            paused: false,
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
@@ -817,6 +825,35 @@ impl AgentPanel {
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
+            Some((PAUSE_COMMAND, _)) => {
+                self.clear_input();
+                if self.is_busy() {
+                    self.runtime.pause();
+                    self.notice("will pause after the current step", NoticeKind::Info);
+                } else {
+                    self.notice("nothing is running to pause", NoticeKind::Info);
+                }
+                return vec![PanelEvent::NeedsRedraw];
+            }
+            Some((CONTINUE_COMMAND, _)) => {
+                self.clear_input();
+                if self.paused {
+                    match self.runtime.resume() {
+                        Ok(()) => {
+                            self.busy = true;
+                            self.paused = false;
+                        }
+                        Err(error) => {
+                            self.notice(format!("cannot continue: {error}"), NoticeKind::Warn)
+                        }
+                    }
+                } else if self.is_busy() {
+                    self.notice("already running", NoticeKind::Info);
+                } else {
+                    self.notice("nothing to continue", NoticeKind::Info);
+                }
+                return vec![PanelEvent::NeedsRedraw];
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -838,6 +875,12 @@ impl AgentPanel {
                         names.push(CLEAR_COMMAND.to_string());
                         names.push(RENAME_COMMAND.to_string());
                         names.push(NAME_COMMAND.to_string());
+                    }
+                    if self.is_busy() {
+                        names.push(PAUSE_COMMAND.to_string());
+                    }
+                    if self.paused {
+                        names.push(CONTINUE_COMMAND.to_string());
                     }
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
@@ -1012,7 +1055,17 @@ impl AgentPanel {
 
     fn apply(&mut self, event: AgentEvent) {
         match event {
-            AgentEvent::AgentStart => self.busy = true,
+            AgentEvent::AgentStart => {
+                self.busy = true;
+                self.paused = false;
+            }
+            AgentEvent::Paused => {
+                self.paused = true;
+                self.notice(
+                    "paused after the current step; /continue to resume",
+                    NoticeKind::Info,
+                );
+            }
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.activity = None;
@@ -2035,6 +2088,21 @@ impl AgentPanel {
                         .with_description("Rename this session"),
                 );
             }
+        }
+        // Run control is offered only when it applies.
+        if self.is_busy() && PAUSE_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(PAUSE_COMMAND)
+                    .with_label(format!("/{PAUSE_COMMAND}"))
+                    .with_description("Pause after the current step"),
+            );
+        }
+        if self.paused && CONTINUE_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(CONTINUE_COMMAND)
+                    .with_label(format!("/{CONTINUE_COMMAND}"))
+                    .with_description("Resume the paused run"),
+            );
         }
         if items.is_empty() {
             self.completion = None;
@@ -4906,6 +4974,21 @@ mod tests {
             .iter()
             .any(|e| matches!(e, PanelEvent::ShowInput { .. })));
         assert!(panel.transcript().items().is_empty(), "nothing was sent");
+    }
+
+    #[test]
+    fn slash_pause_and_continue_report_when_idle() {
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "/pause");
+        panel.submit();
+        assert!(panel.transcript().items().iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("nothing is running"))
+        ));
+        type_text(&mut panel, "/continue");
+        panel.submit();
+        assert!(panel.transcript().items().iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("nothing to continue"))
+        ));
     }
 
     fn roles(messages: &[Message]) -> Vec<&'static str> {
