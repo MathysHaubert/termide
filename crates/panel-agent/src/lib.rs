@@ -10,7 +10,7 @@ mod transcript;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2365,6 +2365,82 @@ impl AgentPanel {
             .min(available.saturating_sub(2).max(1))
     }
 
+    /// The welcome banner shown while the session is empty: a logo on the left
+    /// and what the agent is set up with (provider, model, agent, directory) on
+    /// the right, each column centred in the transcript area. On a narrow panel
+    /// the logo is dropped and only the details show.
+    fn render_welcome(&self, area: Rect, buf: &mut Buffer, colors: &ThemeColors) {
+        const LOGO: [&str; 5] = [
+            "╭───────╮",
+            "│       │",
+            "│  ›_   │",
+            "│       │",
+            "╰───────╯",
+        ];
+        if area.width < 14 || area.height == 0 {
+            return;
+        }
+        let logo_w = LOGO
+            .iter()
+            .map(|l| termide_ui::str_display_width(l))
+            .max()
+            .unwrap_or(0) as u16;
+        let gap = 3u16;
+        let show_logo = area.width >= logo_w + gap + 22;
+        let info_x = area.x + 2 + if show_logo { logo_w + gap } else { 0 };
+        let info_w = (area.x + area.width).saturating_sub(info_x + 1);
+
+        let accent = Style::default()
+            .fg(colors.info)
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::default().fg(colors.disabled);
+        let fg = Style::default().fg(colors.fg);
+        let field = |name: &str, value: String| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!("{name:<9}"), dim),
+                Span::styled(value, fg),
+            ])
+        };
+        let cwd = shorten_path(&self.cwd, (info_w as usize).saturating_sub(9));
+        let info: Vec<Line<'static>> = vec![
+            Line::styled("termide", accent),
+            Line::styled("coding agent", dim),
+            Line::from(""),
+            field("provider", self.provider_kind.clone()),
+            field("model", self.model.id.clone()),
+            field("agent", self.agent.clone()),
+            field("cwd", cwd),
+        ];
+
+        let banner_h = info.len().max(LOGO.len()) as u16;
+        let bottom = area.y + area.height;
+        let top = area.y + area.height.saturating_sub(banner_h) / 2;
+        if show_logo {
+            let logo_top = top + (banner_h - LOGO.len() as u16) / 2;
+            for (i, line) in LOGO.iter().enumerate() {
+                let y = logo_top + i as u16;
+                if y >= bottom {
+                    break;
+                }
+                buf.set_stringn(
+                    area.x + 2,
+                    y,
+                    line,
+                    logo_w as usize,
+                    Style::default().fg(colors.info),
+                );
+            }
+        }
+        let info_top = top + (banner_h - info.len() as u16) / 2;
+        for (i, line) in info.iter().enumerate() {
+            let y = info_top + i as u16;
+            if y >= bottom {
+                break;
+            }
+            buf.set_line(info_x, y, line, info_w);
+        }
+    }
+
     fn render_input(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         let colors = self.colors;
         // The bar's top border is the divider from the content above and
@@ -2446,6 +2522,30 @@ fn context_bar(percent: u64) -> String {
         bar.push(if i < filled { '▰' } else { '▱' });
     }
     bar
+}
+
+/// A path for the welcome banner: the home directory shown as `~`, and, when
+/// still wider than `max` columns, cut from the left so the tail (the part that
+/// tells directories apart) stays visible.
+fn shorten_path(path: &Path, max: usize) -> String {
+    let full = path.display().to_string();
+    let display = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_path_buf))
+        .map(|rest| {
+            if rest.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rest.display())
+            }
+        })
+        .unwrap_or(full);
+    let count = display.chars().count();
+    if max <= 1 || count <= max {
+        return display;
+    }
+    let tail: String = display.chars().skip(count - (max - 1)).collect();
+    format!("…{tail}")
 }
 
 pub(crate) fn format_tokens(tokens: u64) -> String {
@@ -3091,14 +3191,24 @@ impl Panel for AgentPanel {
         // The block under the chat cursor is shown inverted (text and
         // background swapped), so the selection reads as one solid block.
         let selected_style = Style::default().fg(colors.bg).bg(colors.fg);
-        for row in 0..transcript_height as usize {
-            let Some(line) = lines.get(self.top + row) else {
-                break;
+        if lines.is_empty() {
+            // A fresh session shows a welcome banner in place of the (empty)
+            // transcript: the logo and what the agent is set up with.
+            let welcome = Rect {
+                height: transcript_height,
+                ..area
             };
-            buf.set_line(area.x, area.y + row as u16, line, text_width);
-            if selected_range.is_some_and(|(f, l)| self.top + row >= f && self.top + row <= l) {
-                for dx in 0..text_width {
-                    buf[(area.x + dx, area.y + row as u16)].set_style(selected_style);
+            self.render_welcome(welcome, buf, &colors);
+        } else {
+            for row in 0..transcript_height as usize {
+                let Some(line) = lines.get(self.top + row) else {
+                    break;
+                };
+                buf.set_line(area.x, area.y + row as u16, line, text_width);
+                if selected_range.is_some_and(|(f, l)| self.top + row >= f && self.top + row <= l) {
+                    for dx in 0..text_width {
+                        buf[(area.x + dx, area.y + row as u16)].set_style(selected_style);
+                    }
                 }
             }
         }
@@ -4592,6 +4702,25 @@ mod tests {
         assert!(panel.input_text().is_empty());
         assert!(panel.pastes.is_empty());
         assert_eq!(panel.paste_seq, 0);
+    }
+
+    #[test]
+    fn an_empty_session_shows_a_welcome_banner() {
+        let mut panel = panel(vec![]);
+        let all = render_text(&mut panel, 60, 16).join("\n");
+        assert!(all.contains("termide"), "{all}");
+        for label in ["provider", "model", "agent", "cwd"] {
+            assert!(all.contains(label), "missing {label}: {all}");
+        }
+        // The banner is the empty-state: once a turn runs, real content shows.
+        type_text(&mut panel, "hello");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let all = render_text(&mut panel, 60, 16).join("\n");
+        assert!(
+            !all.contains("coding agent"),
+            "banner gone once used: {all}"
+        );
     }
 
     #[test]

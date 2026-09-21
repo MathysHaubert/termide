@@ -56,6 +56,11 @@ apart at a glance; before you ask anything it shows the working directory
 instead. Give a session a name of your own through the panel's `[≡]` menu →
 **Rename session**, and the title shows that name from then on.
 
+A fresh session greets you with a banner: a small logo on the left and, on the
+right, what the agent is set up with — its provider, model, agent name and the
+directory it works in. It gives way to the conversation as soon as you send
+your first message.
+
 The same menu has **New session**, which starts an empty one, and **Open
 session**, which lists the sessions of the directory the panel works in,
 newest first (the current one marked `●`), so you can pick up where you left
