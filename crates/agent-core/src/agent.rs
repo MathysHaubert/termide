@@ -11,6 +11,7 @@ use crate::compaction::{
     context_tokens, is_context_overflow_error, should_compact, split_point, CompactionPolicy,
     CompactionPrompts, CompactionReason, MIN_SUMMARY_CHARS,
 };
+use crate::goal::{parse_verdict, GoalPrompt, GoalVerdict};
 use crate::message::{
     AssistantMessage, Message, StopReason, ToolCall, ToolResultMessage, UserMessage,
 };
@@ -276,6 +277,16 @@ pub enum AgentEvent {
     CompactionFailed {
         error: String,
     },
+    /// The autonomous-goal judge ran (`/goal`) and returned its verdict: the
+    /// goal is reached, or more work is needed, with a one-line reason.
+    GoalJudged {
+        done: bool,
+        reason: String,
+    },
+    /// The judge call did not succeed; the goal loop stops.
+    GoalJudgeFailed {
+        error: String,
+    },
     /// The loop stopped early on a pause request with work still pending, so
     /// the run can be resumed. Not emitted on a natural finish.
     Paused,
@@ -297,6 +308,7 @@ pub struct Agent {
     config: AgentConfig,
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
+    goal_prompt: GoalPrompt,
 }
 
 impl Agent {
@@ -319,6 +331,7 @@ impl Agent {
             config: AgentConfig::default(),
             compaction: CompactionPolicy::default(),
             compaction_prompts: CompactionPrompts::default(),
+            goal_prompt: GoalPrompt::default(),
         }
     }
 
@@ -346,6 +359,17 @@ impl Agent {
     #[must_use]
     pub fn compaction_prompts(&self) -> &CompactionPrompts {
         &self.compaction_prompts
+    }
+
+    #[must_use]
+    pub fn with_goal_prompt(mut self, prompt: GoalPrompt) -> Self {
+        self.goal_prompt = prompt;
+        self
+    }
+
+    #[must_use]
+    pub fn goal_prompt(&self) -> &GoalPrompt {
+        &self.goal_prompt
     }
 
     #[must_use]
@@ -718,6 +742,47 @@ impl Agent {
         Ok(())
     }
 
+    /// Ask the judge whether `goal` is reached, given the work so far. A
+    /// read-only call on a copy of the transcript with the goal prompts and no
+    /// tools; the transcript is untouched. Emits [`AgentEvent::GoalJudged`]
+    /// with the verdict, or [`AgentEvent::GoalJudgeFailed`] and an `Err` when
+    /// the call does not succeed.
+    pub fn judge(
+        &self,
+        goal: &str,
+        cancel: &CancelToken,
+        emit: &mut dyn FnMut(AgentEvent),
+    ) -> Result<GoalVerdict, String> {
+        let mut messages = self.messages.clone();
+        messages.push(Message::User(UserMessage::text(
+            self.goal_prompt.request.clone(),
+        )));
+        let system_prompt = self.goal_prompt.system_prompt(goal);
+        let request = Request {
+            model: &self.model,
+            system_prompt: &system_prompt,
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        };
+        let reply = self.provider.stream(&request, &mut |_| {}, cancel);
+        if matches!(reply.stop_reason, StopReason::Error | StopReason::Aborted) {
+            let error = reply
+                .error_message
+                .unwrap_or_else(|| "the judge call did not complete".to_string());
+            emit(AgentEvent::GoalJudgeFailed {
+                error: error.clone(),
+            });
+            return Err(error);
+        }
+        let verdict = parse_verdict(&reply.plain_text());
+        emit(AgentEvent::GoalJudged {
+            done: verdict.done,
+            reason: verdict.reason.clone(),
+        });
+        Ok(verdict)
+    }
+
     fn push(&mut self, message: Message, emit: &mut dyn FnMut(AgentEvent)) {
         emit(AgentEvent::MessageEnd(message.clone()));
         self.messages.push(message);
@@ -1004,6 +1069,54 @@ mod tests {
                 "hello".into()
             )))
         );
+    }
+
+    #[test]
+    fn the_judge_reports_a_verdict_and_leaves_the_transcript_alone() {
+        // A "not done" verdict, with the reason on the second line.
+        let (agent, provider) = agent(
+            ScriptedProvider::new(vec![text_reply("CONTINUE\nthe build still fails")]),
+            ToolRegistry::new(),
+        );
+        let mut events = Vec::new();
+        let verdict = agent
+            .judge("get the build green", &CancelToken::new(), &mut |e| {
+                events.push(e)
+            })
+            .expect("judge succeeds");
+        assert_eq!(
+            verdict,
+            GoalVerdict {
+                done: false,
+                reason: "the build still fails".into(),
+            }
+        );
+        assert_eq!(
+            events,
+            vec![AgentEvent::GoalJudged {
+                done: false,
+                reason: "the build still fails".into(),
+            }]
+        );
+        // The judge is a read-only call: the transcript is untouched, and the
+        // request carried only the appended verdict question.
+        assert!(agent.messages().is_empty());
+        let seen = provider.seen_requests();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(roles(&seen[0]), vec!["user"]);
+    }
+
+    #[test]
+    fn a_done_verdict_ends_the_goal() {
+        let (agent, _provider) = agent(
+            ScriptedProvider::new(vec![text_reply("DONE: everything compiles and tests pass")]),
+            ToolRegistry::new(),
+        );
+        let verdict = agent
+            .judge("ship it", &CancelToken::new(), &mut |_| {})
+            .expect("judge succeeds");
+        assert!(verdict.done);
+        assert_eq!(verdict.reason, "everything compiles and tests pass");
     }
 
     #[test]

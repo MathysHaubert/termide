@@ -16,6 +16,7 @@ use crate::acp::AcpConfig;
 use crate::commands::{CommandScript, COMMANDS_DIR};
 use crate::compaction::{CompactionPrompts, SEED_COMPACT, SEED_COMPACTED};
 use crate::context::SEED_TEMPLATE;
+use crate::goal::{GoalPrompt, SEED_GOAL};
 use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
 use crate::permissions::Mode;
@@ -157,6 +158,7 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
         (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
         (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
         (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
+        (format!("{SYSTEM_DIR}/goal.md"), SEED_GOAL),
     ] {
         let path = global.join(relative);
         if !path.exists() {
@@ -269,6 +271,13 @@ impl AgentDirs {
     #[must_use]
     pub fn plan_prompt(&self) -> PlanPrompt {
         PlanPrompt::from_file(&self.system_file("plan.md", SEED_PLAN))
+    }
+
+    /// The goal-judge texts: `system/goal.md` from the first level that has
+    /// it, the seed otherwise.
+    #[must_use]
+    pub fn goal_prompt(&self) -> GoalPrompt {
+        GoalPrompt::from_file(&self.system_file("goal.md", SEED_GOAL))
     }
 
     /// `system/<name>` from the first level that has a non-empty one, else

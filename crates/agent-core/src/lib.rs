@@ -25,6 +25,7 @@ pub mod checkpoints;
 pub mod commands;
 pub mod compaction;
 pub mod context;
+pub mod goal;
 pub mod hooks;
 pub mod layers;
 pub mod mcp;
@@ -49,6 +50,7 @@ pub use context::{
     build_system_prompt, civil_date, discover_context_files, ContextFile, PromptOptions,
     SEED_TEMPLATE,
 };
+pub use goal::{parse_verdict, GoalPrompt, GoalVerdict, SEED_GOAL};
 pub use hooks::{HookConfig, HookEvent, HOOKS_FILE};
 pub use layers::{
     ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,

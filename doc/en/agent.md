@@ -96,7 +96,7 @@ you have named or sent even one message to is always kept.
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -390,10 +390,11 @@ ai/
   system/compact.md        how the agent summarises a long session
   system/compacted.md      how the summary is worded in the context
   system/plan.md           what plan mode tells the agent, and what accepting a plan sends
+  system/goal.md           how the judge decides whether a /goal is reached
 ```
 
 The first time the panel opens, the configuration level is laid out:
-`AGENTS.md` and the two `system/` files receive the shipped texts, `agents/`,
+`AGENTS.md` and the `system/` files receive the shipped texts, `agents/`,
 `skills/`, `prompts/` and `commands/` are created empty. Nothing there is ever overwritten; delete
 `AGENTS.md` to get the shipped template back.
 
@@ -530,6 +531,21 @@ the session approaches the context window, uses the same files.
 prompt while the mode is on, and `request:` in its front matter is the
 message sent when you accept the plan. Reword the body to change what a plan
 must contain, or the request to change how the agent is told to go ahead.
+
+`/goal <what to achieve>` uses `goal.md`: the agent works toward the goal, and
+after each turn a judge — a separate, read-only model call — decides whether it
+is reached. `goal.md` is that judge's system prompt, with `{{goal}}` for the
+goal text and the verdict question in its front matter (`request:`). The judge
+answers `DONE` or `CONTINUE` with a one-line reason; on `CONTINUE` the agent is
+sent back to work with what is still missing, until the judge says done, a turn
+errors, or the safety cap of fifty turns is hit. `/goal stop`, `Esc`, or
+stopping the run ends it. Reword `goal.md` to change how strictly the goal is
+judged.
+
+```
+/goal get the test suite green    work until the judge agrees it is done
+/goal stop                        end the active goal
+```
 
 ### Skills
 

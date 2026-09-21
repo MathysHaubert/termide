@@ -438,6 +438,7 @@ fn agent_setup(
     }));
     let compaction_prompts = catalog.dirs.compaction_prompts();
     let plan_prompt = catalog.dirs.plan_prompt();
+    let goal_prompt = catalog.dirs.goal_prompt();
     let hooks: Option<HooksFactory> = {
         let configs = catalog.dirs.hooks();
         let hook_cwd = cwd.clone();
@@ -494,6 +495,7 @@ fn agent_setup(
         compaction: settings.compaction,
         compaction_prompts,
         plan_prompt,
+        goal_prompt,
         autofold: settings.autofold,
         persist_rule: Some(persist_rule),
         session_dir,

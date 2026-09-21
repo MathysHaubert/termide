@@ -50,6 +50,8 @@ enum WorkerCommand {
     Update(Box<dyn FnOnce(&mut Agent) + Send>),
     /// Summarise the older part of the transcript now, on the user's word.
     Compact(Option<String>),
+    /// Judge whether the autonomous goal is reached (`/goal`), read-only.
+    Judge(String),
     Shutdown,
 }
 
@@ -90,6 +92,11 @@ pub trait Backend: Send {
     /// Summarise the older part of the transcript now (`/compact`), with an
     /// optional focus; [`PromptError::Unsupported`] for an external agent.
     fn compact(&self, focus: Option<String>) -> Result<(), PromptError>;
+    /// Judge whether the autonomous goal is reached (`/goal`); the default
+    /// reports it is unsupported (an external agent has no such call).
+    fn judge(&self, _goal: String) -> Result<(), PromptError> {
+        Err(PromptError::Unsupported)
+    }
     /// Stop and hand the built-in agent back, when there is one.
     fn into_agent(self: Box<Self>) -> Option<Agent>;
 }
@@ -124,6 +131,9 @@ impl Backend for AgentRuntime {
     }
     fn compact(&self, focus: Option<String>) -> Result<(), PromptError> {
         AgentRuntime::compact(self, focus)
+    }
+    fn judge(&self, goal: String) -> Result<(), PromptError> {
+        AgentRuntime::judge(self, goal)
     }
     fn into_agent(self: Box<Self>) -> Option<Agent> {
         (*self).shutdown()
@@ -191,6 +201,11 @@ impl AgentRuntime {
                                     let _ = event_tx.send(event);
                                 },
                             );
+                        }
+                        WorkerCommand::Judge(goal) => {
+                            let _ = agent.judge(&goal, &worker_cancel, &mut |event| {
+                                let _ = event_tx.send(event);
+                            });
                         }
                         WorkerCommand::Shutdown => break,
                     }
@@ -262,6 +277,21 @@ impl AgentRuntime {
         }
         self.commands
             .send(WorkerCommand::Compact(focus))
+            .map_err(|_| PromptError::Stopped)
+    }
+
+    /// Judge whether the autonomous goal is reached, between runs; refused
+    /// while a run is active, like [`AgentRuntime::compact`]. The verdict
+    /// arrives as a `GoalJudged` or `GoalJudgeFailed` event.
+    pub fn judge(&self, goal: String) -> Result<(), PromptError> {
+        if self.worker.is_none() {
+            return Err(PromptError::Stopped);
+        }
+        if self.is_busy() {
+            return Err(PromptError::Busy);
+        }
+        self.commands
+            .send(WorkerCommand::Judge(goal))
             .map_err(|_| PromptError::Stopped)
     }
 

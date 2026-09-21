@@ -23,10 +23,10 @@ use ratatui::text::{Line, Span};
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendSetup,
     CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript, CompactionPolicy,
-    CompactionPrompts, Decision, Hooks, LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
-    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard,
-    PlanPrompt, PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
-    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    CompactionPrompts, Decision, GoalPrompt, Hooks, LateTools, Message, Mode, ModeHandle,
+    ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules,
+    PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session, SessionSummary,
+    StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -102,6 +102,11 @@ const CONTINUE_COMMAND: &str = "continue";
 const LOOP_COMMAND: &str = "loop";
 /// A `/loop` stops itself after this many iterations, so it cannot run away.
 const LOOP_MAX_ITERATIONS: usize = 100;
+/// The built-in `/goal` command: work autonomously toward a goal, a judge
+/// deciding after each turn whether it is reached.
+const GOAL_COMMAND: &str = "goal";
+/// A `/goal` stops itself after this many work turns, so it cannot run away.
+const GOAL_MAX_ITERATIONS: usize = 50;
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -183,6 +188,8 @@ pub struct AgentPanelSetup {
     pub compaction_prompts: CompactionPrompts,
     /// Plan mode's instructions and the request that carries a plan out.
     pub plan_prompt: PlanPrompt,
+    /// The goal-judge texts, from the agent directory's `system/goal.md`.
+    pub goal_prompt: GoalPrompt,
     /// Where "allow always" rules go; a plain function so it survives a
     /// session switch. `None` keeps such rules in memory only.
     pub persist_rule: Option<PersistFn>,
@@ -341,6 +348,21 @@ struct LoopTask {
     iterations: usize,
 }
 
+/// A running `/goal`: work autonomously toward `goal`. After each work turn a
+/// judge decides whether the goal is reached; if not, the panel sends the next
+/// continuation turn. Stops when the judge says done, on an error, or at the
+/// iteration cap.
+struct GoalTask {
+    goal: String,
+    /// Work turns sent so far.
+    iterations: usize,
+    /// When the judge call is due (a work turn has finished); `None` while a
+    /// work turn or the judge call is in flight.
+    judge_at: Option<Instant>,
+    /// A judge call is in flight; its verdict arrives as a `GoalJudged` event.
+    judging: bool,
+}
+
 pub struct AgentPanel {
     runtime: Box<dyn Backend>,
     /// The runtime is an external agent: model and mode are not ours to set.
@@ -404,6 +426,9 @@ pub struct AgentPanel {
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
     plan_prompt: PlanPrompt,
+    /// The goal-judge texts, kept so `/goal` can start a judge call; passed to
+    /// the agent so the judge prompt comes from the `system/` files.
+    goal_prompt: GoalPrompt,
     /// Fold blocks to a preview by default; passed to each transcript.
     autofold: bool,
     /// The worker still has the prompt of the other plan-ness: a mode
@@ -451,6 +476,12 @@ pub struct AgentPanel {
     paused: bool,
     /// An active `/loop`: re-runs its prompt after each turn until stopped.
     loop_task: Option<LoopTask>,
+    /// A running `/goal`: autonomous work toward a goal with a judge; `None`
+    /// when no goal is active.
+    goal_task: Option<GoalTask>,
+    /// The current goal work turn ended in an error, so the goal loop stops
+    /// instead of judging and retrying. Reset at the start of each work turn.
+    goal_errored: bool,
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
@@ -520,6 +551,7 @@ impl AgentPanel {
             setup.compaction,
             &setup.compaction_prompts,
             &setup.plan_prompt,
+            &setup.goal_prompt,
             setup.persist_rule,
             setup.hooks.as_ref(),
             backend.as_ref(),
@@ -567,6 +599,7 @@ impl AgentPanel {
             compaction: setup.compaction,
             compaction_prompts: setup.compaction_prompts,
             plan_prompt: setup.plan_prompt,
+            goal_prompt: setup.goal_prompt,
             autofold: setup.autofold,
             prompt_stale: false,
             shown_system: String::new(),
@@ -590,6 +623,8 @@ impl AgentPanel {
             busy: false,
             paused: false,
             loop_task: None,
+            goal_task: None,
+            goal_errored: false,
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
@@ -657,6 +692,7 @@ impl AgentPanel {
             self.compaction,
             &self.compaction_prompts,
             &self.plan_prompt,
+            &self.goal_prompt,
             self.persist_rule,
             self.hooks.as_ref(),
             self.backend.as_ref(),
@@ -905,6 +941,23 @@ impl AgentPanel {
                 });
                 return self.loop_step();
             }
+            Some((GOAL_COMMAND, args)) => {
+                self.clear_input();
+                let args = args.trim();
+                if args.is_empty() || args == "stop" || args == "off" {
+                    if self.goal_task.take().is_some() {
+                        self.notice("goal stopped", NoticeKind::Info);
+                    } else {
+                        self.notice("usage: /goal <what to achieve>", NoticeKind::Info);
+                    }
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                if self.is_busy() {
+                    self.notice("finish or stop the current task first", NoticeKind::Warn);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                return self.start_goal(args.to_string());
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -934,6 +987,7 @@ impl AgentPanel {
                         names.push(CONTINUE_COMMAND.to_string());
                     }
                     names.push(LOOP_COMMAND.to_string());
+                    names.push(GOAL_COMMAND.to_string());
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
@@ -1009,9 +1063,95 @@ impl AgentPanel {
         self.send(prompt)
     }
 
+    /// Start a `/goal`: work autonomously toward `goal`, a judge deciding after
+    /// each turn whether it is reached. The first work turn is the goal itself.
+    fn start_goal(&mut self, goal: String) -> Vec<PanelEvent> {
+        self.notice(
+            format!("working toward the goal — /goal stop to end:\n{goal}"),
+            NoticeKind::Info,
+        );
+        self.goal_task = Some(GoalTask {
+            goal: goal.clone(),
+            iterations: 0,
+            judge_at: None,
+            judging: false,
+        });
+        self.send_goal_turn(goal)
+    }
+
+    /// Send one work turn of the active goal as a fresh run and count it;
+    /// stops the goal when the safety cap is reached.
+    fn send_goal_turn(&mut self, prompt: String) -> Vec<PanelEvent> {
+        let over_cap = match self.goal_task.as_mut() {
+            Some(task) => {
+                task.iterations += 1;
+                task.judge_at = None;
+                task.iterations > GOAL_MAX_ITERATIONS
+            }
+            None => return vec![PanelEvent::NeedsRedraw],
+        };
+        if over_cap {
+            self.goal_task = None;
+            self.notice(
+                format!("goal stopped after {GOAL_MAX_ITERATIONS} turns"),
+                NoticeKind::Warn,
+            );
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        self.goal_errored = false;
+        self.send(prompt)
+    }
+
+    /// Ask the judge whether the active goal is reached; the verdict arrives as
+    /// a `GoalJudged` event, applied in [`AgentPanel::on_goal_verdict`].
+    fn run_goal_judge(&mut self) -> Vec<PanelEvent> {
+        let goal = match self.goal_task.as_mut() {
+            Some(task) => {
+                task.judge_at = None;
+                task.judging = true;
+                task.goal.clone()
+            }
+            None => return vec![PanelEvent::NeedsRedraw],
+        };
+        match self.runtime.judge(goal) {
+            Ok(()) => self.notice("checking whether the goal is reached…", NoticeKind::Info),
+            Err(error) => {
+                self.goal_task = None;
+                self.notice(format!("cannot check the goal: {error}"), NoticeKind::Warn);
+            }
+        }
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Apply the judge's verdict: finish when the goal is reached, otherwise
+    /// send the next work turn with what is still missing.
+    fn on_goal_verdict(&mut self, done: bool, reason: &str) {
+        let goal = match self.goal_task.as_mut() {
+            Some(task) => {
+                task.judging = false;
+                task.goal.clone()
+            }
+            None => return,
+        };
+        if done {
+            self.goal_task = None;
+            let reason = reason.trim();
+            let msg = if reason.is_empty() {
+                "goal reached".to_string()
+            } else {
+                format!("goal reached: {reason}")
+            };
+            self.notice(msg, NoticeKind::Info);
+            return;
+        }
+        let prompt = goal_continuation(&goal, reason);
+        let _ = self.send_goal_turn(prompt);
+    }
+
     pub fn abort(&mut self) {
-        // Stopping also ends any running loop.
+        // Stopping also ends any running loop or goal.
         self.loop_task = None;
+        self.goal_task = None;
         if self.is_busy() {
             self.runtime.abort();
             self.notice("stopping…", NoticeKind::Warn);
@@ -1163,6 +1303,17 @@ impl AgentPanel {
                             Some(Instant::now() + task.interval.unwrap_or(Duration::ZERO));
                     }
                 }
+                // A goal judges the finished work turn next, unless it was
+                // paused or a card is up; a turn that errored stops the goal
+                // rather than looping on the failure.
+                if self.goal_task.is_some() && self.goal_errored {
+                    self.goal_task = None;
+                    self.notice("goal stopped after a failed turn", NoticeKind::Warn);
+                } else if !self.paused && self.pending.is_none() {
+                    if let Some(task) = self.goal_task.as_mut() {
+                        task.judge_at = Some(Instant::now());
+                    }
+                }
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => {
@@ -1207,6 +1358,11 @@ impl AgentPanel {
                             .map(|a| a.cost(assistant.usage.input, assistant.usage.output));
                         let at = now_hms();
                         let error = assistant.error_message.clone();
+                        // A goal work turn that errored must not be judged and
+                        // retried on the failure; note it for `AgentEnd`.
+                        if error.is_some() && self.goal_task.is_some() {
+                            self.goal_errored = true;
+                        }
                         // The answer always carries the wall-clock time; a
                         // reasoning block, if any, carries the prefill/generation
                         // indicators (else the answer does). A tool-only turn
@@ -1302,6 +1458,11 @@ impl AgentPanel {
             }
             AgentEvent::CompactionFailed { error } => {
                 self.notice(format!("compaction failed: {error}"), NoticeKind::Warn)
+            }
+            AgentEvent::GoalJudged { done, reason } => self.on_goal_verdict(done, &reason),
+            AgentEvent::GoalJudgeFailed { error } => {
+                self.goal_task = None;
+                self.notice(format!("goal check failed: {error}"), NoticeKind::Warn);
             }
         }
     }
@@ -2198,6 +2359,16 @@ impl AgentPanel {
                     .with_description("Re-run a prompt on an interval, or stop the loop"),
             );
         }
+        if GOAL_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(GOAL_COMMAND)
+                    .with_label(format!("/{GOAL_COMMAND}"))
+                    .with_hint("<what to achieve>")
+                    .with_description(
+                        "Work autonomously toward a goal until a judge says it is reached",
+                    ),
+            );
+        }
         if items.is_empty() {
             self.completion = None;
             return;
@@ -2940,6 +3111,20 @@ fn shorten_path(path: &Path, max: usize) -> String {
     format!("…{tail}")
 }
 
+/// The work turn a `/goal` sends when the judge says the goal is not yet
+/// reached: the goal restated, plus the one thing the judge found still
+/// missing, so the agent keeps working from where it fell short.
+fn goal_continuation(goal: &str, reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        format!("The goal is not reached yet. Keep working toward it.\nGoal: {goal}")
+    } else {
+        format!(
+            "The goal is not reached yet. Keep working toward it.\nGoal: {goal}\nStill missing: {reason}"
+        )
+    }
+}
+
 /// Split `/loop` arguments into an optional interval and the prompt. When the
 /// first word is a duration (`30s`, `5m`, `2h`, or a bare count of seconds) it
 /// is the interval and the rest is the prompt; otherwise the whole thing is the
@@ -3224,6 +3409,7 @@ fn spawn_runtime(
     compaction: CompactionPolicy,
     compaction_prompts: &CompactionPrompts,
     plan_prompt: &PlanPrompt,
+    goal_prompt: &GoalPrompt,
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
@@ -3296,6 +3482,7 @@ fn spawn_runtime(
     .with_system_prompt(system_prompt)
     .with_compaction(compaction)
     .with_compaction_prompts(compaction_prompts.clone())
+    .with_goal_prompt(goal_prompt.clone())
     .with_messages(messages);
     // Plan mode's guard goes first: nothing, not even a hook's approval,
     // changes a file while it is on. Then the checkpoint recorder, so no
@@ -3835,6 +4022,8 @@ impl Panel for AgentPanel {
             KeyCode::Esc => {
                 if self.is_busy() {
                     self.abort();
+                } else if self.goal_task.take().is_some() {
+                    self.notice("goal stopped", NoticeKind::Info);
                 } else if self.loop_task.take().is_some() {
                     self.notice("loop stopped", NoticeKind::Info);
                 } else if !self.input_area().is_empty() {
@@ -3912,6 +4101,7 @@ impl Panel for AgentPanel {
             || self.completion.is_some()
             || self.is_busy()
             || self.loop_task.is_some()
+            || self.goal_task.is_some()
             || !self.input_area().is_empty()
     }
 
@@ -4041,6 +4231,16 @@ impl Panel for AgentPanel {
             .is_some_and(|at| at <= Instant::now());
         if due && !self.is_busy() && self.pending.is_none() {
             events.extend(self.loop_step());
+            changed = true;
+        }
+        // A goal whose work turn has finished runs the judge once the panel is
+        // free and no judge call is already in flight.
+        let judge_due = self
+            .goal_task
+            .as_ref()
+            .is_some_and(|t| !t.judging && t.judge_at.is_some_and(|at| at <= Instant::now()));
+        if judge_due && !self.is_busy() && self.pending.is_none() {
+            events.extend(self.run_goal_judge());
             changed = true;
         }
         // While the agent works, keep the ticking timer and the block's
@@ -4451,6 +4651,7 @@ mod tests {
             compaction: CompactionPolicy::default(),
             compaction_prompts: CompactionPrompts::default(),
             plan_prompt: PlanPrompt::default(),
+            goal_prompt: GoalPrompt::default(),
             persist_rule: None,
             session_dir: None,
             session: None,
@@ -5194,6 +5395,66 @@ mod tests {
         assert!(panel.transcript().items().iter().any(
             |i| matches!(i, Item::Notice { text, .. } if text.contains("nothing to continue"))
         ));
+    }
+
+    /// Drive the panel until the active goal finishes, or fail on a deadline.
+    fn settle_goal(panel: &mut AgentPanel) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while panel.goal_task.is_some() {
+            panel.tick();
+            assert!(Instant::now() < deadline, "goal did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn goal_works_turn_by_turn_until_the_judge_says_done() {
+        // Provider calls, in order: work turn, judge (continue), work turn,
+        // judge (done).
+        let mut panel = panel(vec![
+            reply("starting the work"),
+            reply("CONTINUE\ntests are still red"),
+            reply("more work done"),
+            reply("DONE\neverything is green"),
+        ]);
+        type_text(&mut panel, "/goal get the build green");
+        panel.submit();
+        assert!(panel.goal_task.is_some());
+        settle_goal(&mut panel);
+
+        // Two work turns were sent (the goal, then a continuation).
+        let users = panel
+            .transcript()
+            .items()
+            .iter()
+            .filter(|i| matches!(i, Item::User { .. }))
+            .count();
+        assert_eq!(users, 2);
+        // The judge ran and the goal ended with the success reason.
+        assert!(panel.transcript().items().iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("checking whether the goal"))
+        ));
+        assert!(panel.transcript().items().iter().any(
+            |i| matches!(i, Item::Notice { text, .. } if text.contains("goal reached: everything is green"))
+        ));
+    }
+
+    #[test]
+    fn goal_stop_ends_an_active_goal() {
+        let mut panel = panel(vec![reply("working")]);
+        type_text(&mut panel, "/goal do the thing");
+        panel.submit();
+        settle(&mut panel);
+        assert!(panel.goal_task.is_some());
+        // Stop it before the judge would send another turn.
+        type_text(&mut panel, "/goal stop");
+        panel.submit();
+        assert!(panel.goal_task.is_none());
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains("goal stopped"))));
     }
 
     fn roles(messages: &[Message]) -> Vec<&'static str> {
