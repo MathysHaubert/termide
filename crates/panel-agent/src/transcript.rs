@@ -249,6 +249,26 @@ impl Transcript {
         });
     }
 
+    /// Whether the last block is still streaming, so the live footer is that
+    /// block's own meta and should sit under it without a dividing rule. When
+    /// it is not (a finished tool, say), the footer is a fresh in-progress
+    /// section and wants a rule above it.
+    #[must_use]
+    pub fn tail_is_streaming(&self) -> bool {
+        matches!(
+            self.items.last(),
+            Some(
+                Item::Thinking {
+                    streaming: true,
+                    ..
+                } | Item::Assistant {
+                    streaming: true,
+                    ..
+                }
+            )
+        )
+    }
+
     fn last_streaming(&self, is_thinking: bool) -> Option<usize> {
         self.items.iter().rposition(|item| match item {
             Item::Thinking { streaming, .. } => is_thinking && *streaming,
@@ -462,7 +482,7 @@ pub(crate) fn right_meta(width: u16, spans: Vec<Span<'static>>) -> Line<'static>
 }
 
 /// A dim dashed rule drawn above a block to set it apart from the one before.
-fn separator(width: u16, colors: &ThemeColors) -> Line<'static> {
+pub(crate) fn separator(width: u16, colors: &ThemeColors) -> Line<'static> {
     Line::styled(
         "╌".repeat(width.saturating_sub(1) as usize),
         Style::default().fg(colors.disabled),

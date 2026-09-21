@@ -909,6 +909,13 @@ impl AgentPanel {
         };
         let dim = Style::default().fg(self.colors.disabled);
         let mut lines: Vec<Line<'static>> = Vec::new();
+        // When the footer stands on its own — a fresh turn's prefill, or the gap
+        // after a finished tool — a dividing rule sets it apart from the block
+        // above, so its clock does not stack under that block's own meta. While
+        // a block is streaming the footer is its live meta and needs no rule.
+        if !self.transcript.tail_is_streaming() {
+            lines.push(transcript::separator(width, &self.colors));
+        }
         // While tokens stream (an answer or reasoning), a generation line in the
         // same shape as a finished block's `✍️` meta, with the live estimate.
         // Input tokens are only known once the turn ends, so the `⏫` prefill
@@ -4153,20 +4160,30 @@ mod tests {
         let mut panel = panel(vec![]);
         panel.apply(AgentEvent::AgentStart);
         panel.apply(AgentEvent::MessageStart);
-        // Prefill: no first token yet — only the clock line, with the spinner.
+        // Prefill: no block is streaming yet, so a dividing rule sets the clock
+        // apart from whatever sits above it (a finished tool, say), and there is
+        // no generation line yet.
         let lines = text_of(&panel);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("🕒"));
-        assert!(!lines[0].contains('✍'));
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines[0].contains('╌'),
+            "a divider above the standalone footer"
+        );
+        assert!(lines[1].contains("🕒"));
+        assert!(!lines[1].contains('✍'));
 
-        // Once tokens stream, the `✍️` generation line joins the clock, in the
-        // same shape as a finished block's meta; the `⏫` prefill line does not
-        // appear live (input tokens are only known at the end).
+        // Once tokens stream, the footer is the streaming block's own meta: no
+        // divider, the `✍️` generation line joins the clock. The `⏫` prefill
+        // line does not appear live (input tokens are only known at the end).
         panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
             "hello there".into(),
         )));
         let lines = text_of(&panel);
         assert_eq!(lines.len(), 2);
+        assert!(
+            lines.iter().all(|l| !l.contains('╌')),
+            "no divider while streaming"
+        );
         assert!(lines[0].contains('✍') && lines[0].contains('↓'));
         assert!(lines[1].contains("🕒"));
         assert!(lines.iter().all(|l| !l.contains('⏫')));
