@@ -95,7 +95,7 @@ you have named or sent even one message to is always kept.
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |

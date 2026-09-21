@@ -98,6 +98,10 @@ const NAME_COMMAND: &str = "name";
 /// after the current step, and resume it.
 const PAUSE_COMMAND: &str = "pause";
 const CONTINUE_COMMAND: &str = "continue";
+/// The built-in `/loop` command: re-run a prompt on an interval or back-to-back.
+const LOOP_COMMAND: &str = "loop";
+/// A `/loop` stops itself after this many iterations, so it cannot run away.
+const LOOP_MAX_ITERATIONS: usize = 100;
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -327,6 +331,16 @@ struct Paste {
     text: String,
 }
 
+/// A running `/loop`: re-submit `prompt` after each run finishes — on
+/// `interval`, or back-to-back when `None` — until stopped or the cap is hit.
+struct LoopTask {
+    prompt: String,
+    interval: Option<Duration>,
+    /// When the next iteration is due; `None` while a run is in flight.
+    next_at: Option<Instant>,
+    iterations: usize,
+}
+
 pub struct AgentPanel {
     runtime: Box<dyn Backend>,
     /// The runtime is an external agent: model and mode are not ours to set.
@@ -435,6 +449,8 @@ pub struct AgentPanel {
     /// A run stopped early on `/pause` with work still pending, so `/continue`
     /// can resume it.
     paused: bool,
+    /// An active `/loop`: re-runs its prompt after each turn until stopped.
+    loop_task: Option<LoopTask>,
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
@@ -573,6 +589,7 @@ impl AgentPanel {
             follow: true,
             busy: false,
             paused: false,
+            loop_task: None,
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
@@ -854,6 +871,40 @@ impl AgentPanel {
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
+            Some((LOOP_COMMAND, args)) => {
+                self.clear_input();
+                let args = args.trim();
+                if args.is_empty() || args == "stop" || args == "off" {
+                    if self.loop_task.take().is_some() {
+                        self.notice("loop stopped", NoticeKind::Info);
+                    } else {
+                        self.notice("usage: /loop [interval] <prompt>", NoticeKind::Info);
+                    }
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                let (interval, prompt) = parse_loop_args(args);
+                if prompt.is_empty() {
+                    self.notice("usage: /loop [interval] <prompt>", NoticeKind::Info);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                self.notice(
+                    match interval {
+                        Some(d) => format!(
+                            "looping every {} — /loop stop to end",
+                            fmt_secs(d.as_secs())
+                        ),
+                        None => "looping — /loop stop to end".to_string(),
+                    },
+                    NoticeKind::Info,
+                );
+                self.loop_task = Some(LoopTask {
+                    prompt: prompt.to_string(),
+                    interval,
+                    next_at: None,
+                    iterations: 0,
+                });
+                return self.loop_step();
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -882,6 +933,7 @@ impl AgentPanel {
                     if self.paused {
                         names.push(CONTINUE_COMMAND.to_string());
                     }
+                    names.push(LOOP_COMMAND.to_string());
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
@@ -933,7 +985,33 @@ impl AgentPanel {
         vec![PanelEvent::NeedsRedraw]
     }
 
+    /// Run the next `/loop` iteration: send the loop's prompt as a fresh run,
+    /// unless the safety cap has been reached.
+    fn loop_step(&mut self) -> Vec<PanelEvent> {
+        if self
+            .loop_task
+            .as_ref()
+            .is_some_and(|t| t.iterations >= LOOP_MAX_ITERATIONS)
+        {
+            self.loop_task = None;
+            self.notice(
+                format!("loop stopped after {LOOP_MAX_ITERATIONS} iterations"),
+                NoticeKind::Warn,
+            );
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let Some(task) = self.loop_task.as_mut() else {
+            return vec![PanelEvent::NeedsRedraw];
+        };
+        task.iterations += 1;
+        task.next_at = None;
+        let prompt = task.prompt.clone();
+        self.send(prompt)
+    }
+
     pub fn abort(&mut self) {
+        // Stopping also ends any running loop.
+        self.loop_task = None;
         if self.is_busy() {
             self.runtime.abort();
             self.notice("stopping…", NoticeKind::Warn);
@@ -1077,6 +1155,14 @@ impl AgentPanel {
                     self.sync_system_prompt();
                 }
                 self.offer_plan();
+                // A loop schedules its next iteration once the run ends, unless
+                // it was paused (then it waits for `/continue`) or a card is up.
+                if !self.paused && self.pending.is_none() {
+                    if let Some(task) = self.loop_task.as_mut() {
+                        task.next_at =
+                            Some(Instant::now() + task.interval.unwrap_or(Duration::ZERO));
+                    }
+                }
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
             AgentEvent::MessageStart => {
@@ -2104,6 +2190,14 @@ impl AgentPanel {
                     .with_description("Resume the paused run"),
             );
         }
+        if LOOP_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(LOOP_COMMAND)
+                    .with_label(format!("/{LOOP_COMMAND}"))
+                    .with_hint("[interval] <prompt>")
+                    .with_description("Re-run a prompt on an interval, or stop the loop"),
+            );
+        }
         if items.is_empty() {
             self.completion = None;
             return;
@@ -2837,6 +2931,45 @@ fn shorten_path(path: &Path, max: usize) -> String {
     }
     let tail: String = display.chars().skip(count - (max - 1)).collect();
     format!("…{tail}")
+}
+
+/// Split `/loop` arguments into an optional interval and the prompt. When the
+/// first word is a duration (`30s`, `5m`, `2h`, or a bare count of seconds) it
+/// is the interval and the rest is the prompt; otherwise the whole thing is the
+/// prompt (a self-paced loop).
+fn parse_loop_args(args: &str) -> (Option<Duration>, &str) {
+    match args.split_once(char::is_whitespace) {
+        // A duration as the first word is the interval; the rest is the prompt.
+        Some((first, rest)) if parse_duration(first).is_some() => {
+            (parse_duration(first), rest.trim())
+        }
+        // No interval (a lone word, or the first word is not a duration): the
+        // whole thing is the prompt, a self-paced loop.
+        _ => (None, args),
+    }
+}
+
+/// Parse a duration like `30s`, `5m`, `2h`, or a bare count of seconds.
+fn parse_duration(token: &str) -> Option<Duration> {
+    let (digits, unit) = match token.chars().last() {
+        Some('s') => (&token[..token.len() - 1], 1),
+        Some('m') => (&token[..token.len() - 1], 60),
+        Some('h') => (&token[..token.len() - 1], 3600),
+        _ => (token, 1),
+    };
+    let n: u64 = digits.parse().ok()?;
+    (n > 0).then(|| Duration::from_secs(n * unit))
+}
+
+/// A short human duration for the loop notice: `45s`, `5m`, `1m30s`.
+fn fmt_secs(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}m{}s", secs / 60, secs % 60)
+    }
 }
 
 pub(crate) fn format_tokens(tokens: u64) -> String {
@@ -3695,6 +3828,8 @@ impl Panel for AgentPanel {
             KeyCode::Esc => {
                 if self.is_busy() {
                     self.abort();
+                } else if self.loop_task.take().is_some() {
+                    self.notice("loop stopped", NoticeKind::Info);
                 } else if !self.input_area().is_empty() {
                     self.clear_input();
                     self.after_edit();
@@ -3769,6 +3904,7 @@ impl Panel for AgentPanel {
         self.pending.is_some()
             || self.completion.is_some()
             || self.is_busy()
+            || self.loop_task.is_some()
             || !self.input_area().is_empty()
     }
 
@@ -3888,6 +4024,17 @@ impl Panel for AgentPanel {
                 self.context_probe = None;
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
+        }
+        // A loop whose wait has elapsed starts its next iteration once the
+        // panel is free (no run in flight, no card waiting for an answer).
+        let due = self
+            .loop_task
+            .as_ref()
+            .and_then(|t| t.next_at)
+            .is_some_and(|at| at <= Instant::now());
+        if due && !self.is_busy() && self.pending.is_none() {
+            events.extend(self.loop_step());
+            changed = true;
         }
         // While the agent works, keep the ticking timer and the block's
         // spinner moving without waiting for an event (throttled to ~10 fps).
@@ -4974,6 +5121,41 @@ mod tests {
             .iter()
             .any(|e| matches!(e, PanelEvent::ShowInput { .. })));
         assert!(panel.transcript().items().is_empty(), "nothing was sent");
+    }
+
+    #[test]
+    fn loop_args_split_interval_from_prompt() {
+        assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
+        assert_eq!(parse_duration("5m"), Some(Duration::from_secs(300)));
+        assert_eq!(parse_duration("2h"), Some(Duration::from_secs(7200)));
+        assert_eq!(parse_duration("90"), Some(Duration::from_secs(90)));
+        assert_eq!(parse_duration("x"), None);
+        assert_eq!(parse_duration("0"), None);
+        assert_eq!(
+            parse_loop_args("5m run the tests"),
+            (Some(Duration::from_secs(300)), "run the tests")
+        );
+        assert_eq!(parse_loop_args("keep improving"), (None, "keep improving"));
+    }
+
+    #[test]
+    fn slash_loop_starts_and_stops() {
+        let mut panel = panel(vec![reply("a")]);
+        type_text(&mut panel, "/loop keep going");
+        panel.submit();
+        assert!(panel.loop_task.is_some(), "the loop started");
+
+        type_text(&mut panel, "/loop stop");
+        panel.submit();
+        assert!(panel.loop_task.is_none(), "/loop stop ended it");
+
+        // Esc also ends a waiting loop.
+        type_text(&mut panel, "/loop 5m again");
+        panel.submit();
+        assert!(panel.loop_task.is_some());
+        settle(&mut panel);
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(panel.loop_task.is_none(), "Esc ended the loop");
     }
 
     #[test]
