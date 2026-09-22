@@ -376,6 +376,27 @@ impl Translation for RuntimeTranslation {
         agent_mode_plan,
         agent_show_prompt,
         agent_session_info,
+        agent_perm_allow_once,
+        agent_perm_allow_session,
+        agent_perm_allow_always,
+        agent_perm_deny,
+        agent_perm_deny_reason,
+        agent_perm_stop,
+        agent_undo_restore,
+        agent_undo_keep,
+        agent_rollback_title,
+        agent_plan_carry_title,
+        agent_plan_accept_edits,
+        agent_plan_ask_each,
+        agent_plan_keep,
+        agent_handoff_ready_title,
+        agent_handoff_save,
+        agent_handoff_new_session,
+        agent_handoff_dismiss,
+        agent_cmd_run_once,
+        agent_cmd_run_session,
+        agent_cmd_run_always,
+        agent_cmd_dont_run,
         agent_change_agent,
         agent_prompts,
         agent_no_prompts,
@@ -419,6 +440,16 @@ impl Translation for RuntimeTranslation {
         preferences_language,
         preferences_edit,
         settings_tab_keybindings,
+        settings_title,
+        settings_kb_global,
+        settings_kb_editor,
+        settings_kb_file_manager,
+        settings_kb_git_status,
+        settings_kb_git_diff,
+        settings_kb_git_log,
+        settings_kb_terminal,
+        settings_kb_database,
+        settings_kb_viewer,
         settings_btn_cancel,
         settings_general_resource_interval,
         settings_editor_large_file_threshold,
@@ -670,6 +701,32 @@ impl Translation for RuntimeTranslation {
         db_filter_apply,
         db_filter_clear,
         db_filter_cancel,
+    }
+
+    fn agent_permission_run_fmt(&self, tool: &str) -> String {
+        self.format("agent_permission_run_fmt", &[("tool", tool)])
+    }
+
+    fn agent_delete_confirm_fmt(&self, label: &str) -> String {
+        self.format("agent_delete_confirm_fmt", &[("label", label)])
+    }
+
+    fn agent_undo_confirm_fmt(&self, changed: &str) -> String {
+        self.format("agent_undo_confirm_fmt", &[("changed", changed)])
+    }
+
+    fn agent_undo_changed_files_fmt(&self, count: usize, files: &str) -> String {
+        self.format(
+            "agent_undo_changed_files_fmt",
+            &[("count", &count.to_string()), ("files", files)],
+        )
+    }
+
+    fn agent_command_run_title_fmt(&self, name: &str, path: &str) -> String {
+        self.format(
+            "agent_command_run_title_fmt",
+            &[("name", name), ("path", path)],
+        )
     }
 
     fn db_status_connecting_fmt(&self, label: &str) -> String {

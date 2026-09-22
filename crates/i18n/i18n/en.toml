@@ -273,6 +273,9 @@ preferences_edit = "Settings"
 preferences_language = "Language"
 preferences_themes = "Themes"
 
+# Settings modal — window title
+settings_title = "Settings"
+
 # Settings modal — tabs
 settings_tab_general = "General"
 settings_tab_editor = "Editor"
@@ -283,6 +286,17 @@ settings_tab_logging = "Logging"
 settings_tab_vfs = "VFS"
 settings_tab_keybindings = "Keybindings"
 settings_tab_agent = "AI"
+
+# Settings modal — keybindings subsections
+settings_kb_global = "Global"
+settings_kb_editor = "Editor"
+settings_kb_file_manager = "File Manager"
+settings_kb_git_status = "Git Status"
+settings_kb_git_diff = "Git Diff"
+settings_kb_git_log = "Git Log"
+settings_kb_terminal = "Terminal"
+settings_kb_database = "Database"
+settings_kb_viewer = "Viewer"
 settings_agent_provider = "Provider"
 settings_agent_base_url = "Base URL"
 settings_agent_model = "Model"
@@ -371,6 +385,33 @@ agent_mode_auto = "auto — allow everything"
 agent_mode_plan = "plan — read only, propose a plan first"
 agent_show_prompt = "Show system prompt"
 agent_session_info = "Session info"
+# Agent panel — permission card
+agent_perm_allow_once = "Allow once"
+agent_perm_allow_session = "Allow for this session"
+agent_perm_allow_always = "Allow always"
+agent_perm_deny = "Deny"
+agent_perm_deny_reason = "Deny and tell the agent why"
+agent_perm_stop = "Stop the run"
+# Agent panel — undo card
+agent_undo_restore = "Restore the files and rewind the conversation"
+agent_undo_keep = "Keep everything"
+# Agent panel — rollback picker
+agent_rollback_title = "Roll back to before…"
+# Agent panel — plan-mode card
+agent_plan_carry_title = "Plan mode: carry the plan out?"
+agent_plan_accept_edits = "Yes, accepting edits"
+agent_plan_ask_each = "Yes, asking before each change"
+agent_plan_keep = "Keep planning"
+# Agent panel — handoff card
+agent_handoff_ready_title = "Handoff brief ready"
+agent_handoff_save = "Save to HANDOFF.md and stop"
+agent_handoff_new_session = "Start a new session from it"
+agent_handoff_dismiss = "Dismiss"
+# Agent panel — project command card
+agent_cmd_run_once = "Run once"
+agent_cmd_run_session = "Run for this session"
+agent_cmd_run_always = "Run always"
+agent_cmd_dont_run = "Don't run"
 agent_change_agent = "Change agent…"
 agent_prompts = "Insert prompt…"
 agent_no_prompts = "No prompt templates: add prompts/<name>.md to the ai directory"
@@ -692,6 +733,11 @@ image_error_fmt = "Failed to load image: {error}"
 lsp_rename_result_fmt = "Renamed in {count} file{plural}"
 
 # Database viewer
+agent_permission_run_fmt = "Agent wants to run {tool}"
+agent_delete_confirm_fmt = "Delete {label}? This cannot be undone."
+agent_undo_confirm_fmt = "Undo the last request? It changed {changed}"
+agent_undo_changed_files_fmt = "{count} files: {files}"
+agent_command_run_title_fmt = "Run the project command /{name} ({path})?"
 db_status_connecting_fmt = "{label}: connecting…"
 db_status_failed_fmt = "{label}: {error}"
 db_rows_range_fmt = "rows {start}–{end}"

@@ -280,6 +280,9 @@ preferences_edit = "Настройки"
 preferences_language = "Язык"
 preferences_themes = "Темы"
 
+# Settings modal — window title
+settings_title = "Настройки"
+
 # Settings modal — tabs
 settings_tab_general = "Общие"
 settings_tab_editor = "Редактор"
@@ -290,6 +293,17 @@ settings_tab_logging = "Логирование"
 settings_tab_vfs = "VFS"
 settings_tab_keybindings = "Клавиши"
 settings_tab_agent = "AI"
+
+# Settings modal — keybindings subsections
+settings_kb_global = "Глобальные"
+settings_kb_editor = "Редактор"
+settings_kb_file_manager = "Файловый менеджер"
+settings_kb_git_status = "Git: статус"
+settings_kb_git_diff = "Git: diff"
+settings_kb_git_log = "Git: log"
+settings_kb_terminal = "Терминал"
+settings_kb_database = "База данных"
+settings_kb_viewer = "Просмотрщик"
 settings_agent_provider = "Провайдер"
 settings_agent_base_url = "Базовый URL"
 settings_agent_model = "Модель"
@@ -378,6 +392,33 @@ agent_mode_auto = "auto — разрешать всё"
 agent_mode_plan = "plan — только чтение, сначала план"
 agent_show_prompt = "Показать системный промпт"
 agent_session_info = "Сведения о сессии"
+# Agent panel — permission card
+agent_perm_allow_once = "Разрешить один раз"
+agent_perm_allow_session = "Разрешить на эту сессию"
+agent_perm_allow_always = "Разрешать всегда"
+agent_perm_deny = "Отклонить"
+agent_perm_deny_reason = "Отклонить и указать причину агенту"
+agent_perm_stop = "Остановить выполнение"
+# Agent panel — undo card
+agent_undo_restore = "Восстановить файлы и отмотать разговор"
+agent_undo_keep = "Оставить всё как есть"
+# Agent panel — rollback picker
+agent_rollback_title = "Откатить до состояния перед…"
+# Agent panel — plan-mode card
+agent_plan_carry_title = "Режим плана: выполнить план?"
+agent_plan_accept_edits = "Да, принимая правки"
+agent_plan_ask_each = "Да, спрашивая перед каждым изменением"
+agent_plan_keep = "Продолжить планирование"
+# Agent panel — handoff card
+agent_handoff_ready_title = "Бриф передачи готов"
+agent_handoff_save = "Сохранить в HANDOFF.md и остановиться"
+agent_handoff_new_session = "Начать из него новую сессию"
+agent_handoff_dismiss = "Закрыть"
+# Agent panel — project command card
+agent_cmd_run_once = "Запустить один раз"
+agent_cmd_run_session = "Запускать в этой сессии"
+agent_cmd_run_always = "Запускать всегда"
+agent_cmd_dont_run = "Не запускать"
 agent_change_agent = "Сменить агента…"
 agent_prompts = "Вставить промпт…"
 agent_no_prompts = "Промптов нет: добавьте prompts/<имя>.md в каталог ai"
@@ -692,6 +733,11 @@ image_error_fmt = "Ошибка загрузки изображения: {error}
 lsp_rename_result_fmt = "Переименовано в {count} файл{plural}"
 
 # Просмотр баз данных
+agent_permission_run_fmt = "Агент хочет выполнить {tool}"
+agent_delete_confirm_fmt = "Удалить {label}? Это нельзя отменить."
+agent_undo_confirm_fmt = "Отменить последний запрос? Он изменил {changed}"
+agent_undo_changed_files_fmt = "файлов: {count} — {files}"
+agent_command_run_title_fmt = "Запустить команду проекта /{name} ({path})?"
 db_status_connecting_fmt = "{label}: подключение…"
 db_status_failed_fmt = "{label}: {error}"
 db_rows_range_fmt = "строки {start}–{end}"

@@ -45,13 +45,6 @@ use termide_ui::{
 
 pub use transcript::{Item, NoticeKind, Transcript};
 
-/// Labels of the four permission answers, in the order the form shows them.
-const PERMISSION_OPTIONS: [&str; 4] = [
-    "Allow once",
-    "Allow for this session",
-    "Allow always",
-    "Deny",
-];
 /// Longest input the panel grows to before it scrolls.
 const MAX_INPUT_ROWS: u16 = 5;
 /// A paste past either bound is held as a short placeholder rather than
@@ -1597,15 +1590,16 @@ impl AgentPanel {
                 Ok(text) => {
                     // Offer the brief, with what to do with it; the text is kept
                     // on the card until the choice is made.
+                    let t = termide_i18n::t();
                     let form = ChoiceForm::new(
-                        "Handoff brief ready",
+                        t.agent_handoff_ready_title(),
                         vec![
-                            "Save to HANDOFF.md and stop".into(),
-                            "Start a new session from it".into(),
+                            t.agent_handoff_save().to_string(),
+                            t.agent_handoff_new_session().to_string(),
                         ],
                     )
                     .with_detail(text.clone())
-                    .with_cancel("Dismiss");
+                    .with_cancel(t.agent_handoff_dismiss());
                     self.pending = Some(Pending::Handoff { form, brief: text });
                 }
                 Err(error) => self.notice(format!("handoff failed: {error}"), NoticeKind::Warn),
@@ -1630,31 +1624,41 @@ impl AgentPanel {
             // wants to do in the detail block below. MCP tools and others
             // without a path or command have no subject, so no detail.
             let has_subject = !request.subject.is_empty();
+            let t = termide_i18n::t();
+            let base = t.agent_permission_run_fmt(&request.tool);
             let title = if has_subject {
-                format!("Agent wants to run {}:", request.tool)
+                format!("{base}:")
             } else {
-                format!("Agent wants to run {}", request.tool)
+                base.clone()
             };
             // The status line, for an unfocused panel, still names the subject.
             let status = if has_subject {
-                format!("Agent wants to run {}: {}", request.tool, request.subject)
+                format!("{base}: {}", request.subject)
             } else {
-                title.clone()
+                base
             };
-            let options = PERMISSION_OPTIONS
+            // The four answers in the order the form shows them; `permission_answer`
+            // maps the chosen index back, so the order here is load-bearing.
+            let labels = [
+                t.agent_perm_allow_once(),
+                t.agent_perm_allow_session(),
+                t.agent_perm_allow_always(),
+                t.agent_perm_deny(),
+            ];
+            let options = labels
                 .iter()
                 .enumerate()
                 .map(|(index, label)| {
                     if index == 2 {
                         format!("{label} ({})", request.suggested_pattern)
                     } else {
-                        label.to_string()
+                        (*label).to_string()
                     }
                 })
                 .collect();
             let mut form = ChoiceForm::new(title, options)
-                .with_custom("Deny and tell the agent why")
-                .with_cancel("Stop the run");
+                .with_custom(t.agent_perm_deny_reason())
+                .with_cancel(t.agent_perm_stop());
             if has_subject {
                 form = form.with_detail(request.subject.clone());
             }
@@ -1923,14 +1927,15 @@ impl AgentPanel {
         if !answered {
             return;
         }
+        let t = termide_i18n::t();
         let form = ChoiceForm::new(
-            "Plan mode: carry the plan out?",
+            t.agent_plan_carry_title(),
             vec![
-                "Yes, accepting edits".into(),
-                "Yes, asking before each change".into(),
+                t.agent_plan_accept_edits().to_string(),
+                t.agent_plan_ask_each().to_string(),
             ],
         )
-        .with_cancel("Keep planning");
+        .with_cancel(t.agent_plan_keep());
         self.pending = Some(Pending::Plan { form });
     }
 
@@ -2752,16 +2757,17 @@ impl AgentPanel {
                     .to_string()
             })
             .collect();
+        let t = termide_i18n::t();
         let changed = if names.len() == 1 {
             names[0].clone()
         } else {
-            format!("{} files: {}", names.len(), names.join(", "))
+            t.agent_undo_changed_files_fmt(names.len(), &names.join(", "))
         };
         let form = ChoiceForm::new(
-            format!("Undo the last request? It changed {changed}"),
-            vec!["Restore the files and rewind the conversation".into()],
+            t.agent_undo_confirm_fmt(&changed),
+            vec![t.agent_undo_restore().to_string()],
         )
-        .with_cancel("Keep everything");
+        .with_cancel(t.agent_undo_keep());
         self.pending = Some(Pending::Undo { form });
         vec![PanelEvent::NeedsRedraw]
     }
@@ -2787,10 +2793,11 @@ impl AgentPanel {
             .and_then(Path::file_stem)
             .and_then(|s| s.to_str())
             .unwrap_or_default();
+        let confirm = termide_i18n::t().agent_delete_confirm_fmt(&label);
         let message = if id.is_empty() {
-            format!("Delete {label}? This cannot be undone.")
+            confirm
         } else {
-            format!("Delete {label}? This cannot be undone.\n{label} · {id}")
+            format!("{confirm}\n{label} · {id}")
         };
         vec![PanelEvent::ShowConfirm {
             message,
@@ -2927,7 +2934,7 @@ impl AgentPanel {
             })
             .collect();
         vec![PanelEvent::ShowSelect {
-            title: "Roll back to before…".to_string(),
+            title: termide_i18n::t().agent_rollback_title().to_string(),
             options,
             on_select: SelectAction::Custom(ROLLBACK_ACTION.to_string()),
         }]
@@ -3036,18 +3043,15 @@ impl AgentPanel {
             self.start_command(script, args);
             return;
         }
-        let title = format!(
-            "Run the project command /{} ({})?",
-            script.name,
-            script.path.display()
-        );
+        let t = termide_i18n::t();
+        let title = t.agent_command_run_title_fmt(&script.name, &script.path.display().to_string());
         let form = ChoiceForm::new(
             title.clone(),
             vec![
-                "Run once".into(),
-                "Run for this session".into(),
-                "Run always".into(),
-                "Don't run".into(),
+                t.agent_cmd_run_once().to_string(),
+                t.agent_cmd_run_session().to_string(),
+                t.agent_cmd_run_always().to_string(),
+                t.agent_cmd_dont_run().to_string(),
             ],
         );
         self.pending_events.push(PanelEvent::SetStatusMessage {

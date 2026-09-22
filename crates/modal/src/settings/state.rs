@@ -212,6 +212,26 @@ impl SettingsModal {
         i18n::t().settings_tab_keybindings().to_string()
     }
 
+    /// Localized label for a Keybindings subsection (index into `KB_SECTIONS`).
+    /// `KB_SECTIONS` itself stays the stable identifier the config uses; this
+    /// is only for display.
+    pub(super) fn kb_section_label(section: usize) -> String {
+        let t = i18n::t();
+        match section {
+            0 => t.settings_kb_global(),
+            1 => t.settings_kb_editor(),
+            2 => t.settings_kb_file_manager(),
+            3 => t.settings_kb_git_status(),
+            4 => t.settings_kb_git_diff(),
+            5 => t.settings_kb_git_log(),
+            6 => t.settings_kb_terminal(),
+            7 => t.settings_kb_database(),
+            8 => t.settings_kb_viewer(),
+            _ => "",
+        }
+        .to_string()
+    }
+
     // ---- Content-row helpers ----
 
     /// Build the list of rows rendered in the content area for the active tab.

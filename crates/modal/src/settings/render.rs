@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::base::button_style;
 
 use super::fields::{fields_for_tab, get_field_value, ContentRow, FieldDescriptor, FieldType};
-use super::kb::{get_kb_value, kb_binding_names, KB_SECTIONS};
+use super::kb::{get_kb_value, kb_binding_names};
 use super::{
     button_labels, button_spans, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab,
     SidebarRow, BUTTON_RESET, ENUM_PICKER_MAX_VISIBLE,
@@ -109,7 +109,7 @@ impl SettingsModal {
                     .to_string(),
                     kb_label.clone(),
                 ),
-                SidebarRow::KbChild(i) => ("   ".to_string(), KB_SECTIONS[i].to_string()),
+                SidebarRow::KbChild(i) => ("   ".to_string(), Self::kb_section_label(i)),
             };
 
             let style = if is_selected {
@@ -216,7 +216,7 @@ impl SettingsModal {
 
         // Keybindings tab — dedicated renderer (renders its own title).
         if self.active_tab == SettingsTab::Keybindings {
-            let section_name = KB_SECTIONS.get(self.kb_section).copied().unwrap_or("");
+            let section_name = Self::kb_section_label(self.kb_section);
             let title = format!("{} › {}", Self::kb_group_label(), section_name);
             let inner = Self::render_section_title(area, buf, theme, &title);
             self.render_keybindings(inner, buf, theme);

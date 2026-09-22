@@ -311,7 +311,11 @@ impl Modal for SettingsModal {
         // Clear and draw outer frame
         Clear.render(modal_rect, buf);
         let block = Block::default()
-            .title(format!(" Settings{} ", if self.dirty { " *" } else { "" }))
+            .title(format!(
+                " {}{} ",
+                i18n::t().settings_title(),
+                if self.dirty { " *" } else { "" }
+            ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.accented_fg))
             .style(Style::default().bg(theme.bg));

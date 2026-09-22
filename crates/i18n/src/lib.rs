@@ -452,6 +452,73 @@ pub trait Translation: Send + Sync {
     fn agent_show_prompt(&self) -> &str;
     /// Agent panel context menu and `/usage`: the session-info modal title
     fn agent_session_info(&self) -> &str;
+
+    // Agent panel — permission card
+    /// The permission card's title: what the agent wants to run (`{tool}`)
+    fn agent_permission_run_fmt(&self, tool: &str) -> String;
+    /// Permission answer: allow this one call
+    fn agent_perm_allow_once(&self) -> &str;
+    /// Permission answer: allow it for the rest of the session
+    fn agent_perm_allow_session(&self) -> &str;
+    /// Permission answer: allow it always (a rule is saved)
+    fn agent_perm_allow_always(&self) -> &str;
+    /// Permission answer: refuse this call
+    fn agent_perm_deny(&self) -> &str;
+    /// Permission card: refuse and give the agent a reason
+    fn agent_perm_deny_reason(&self) -> &str;
+    /// Permission card: cancel and stop the run
+    fn agent_perm_stop(&self) -> &str;
+
+    // Agent panel — delete-session confirmation
+    /// The delete-session card's question (`{label}` is the session)
+    fn agent_delete_confirm_fmt(&self, label: &str) -> String;
+
+    // Agent panel — undo confirmation
+    /// The undo card's question (`{changed}` names the changed files)
+    fn agent_undo_confirm_fmt(&self, changed: &str) -> String;
+    /// The undo card's summary of several changed files (`{count}`, `{files}`)
+    fn agent_undo_changed_files_fmt(&self, count: usize, files: &str) -> String;
+    /// Undo card: confirm restoring the files and rewinding
+    fn agent_undo_restore(&self) -> &str;
+    /// Undo card: cancel, keeping everything
+    fn agent_undo_keep(&self) -> &str;
+
+    // Agent panel — rollback picker
+    /// The F4 checkpoint-rollback picker title
+    fn agent_rollback_title(&self) -> &str;
+
+    // Agent panel — plan-mode carry-out card
+    /// The plan card's question when the plan is ready
+    fn agent_plan_carry_title(&self) -> &str;
+    /// Plan card: carry it out, accepting edits
+    fn agent_plan_accept_edits(&self) -> &str;
+    /// Plan card: carry it out, asking before each change
+    fn agent_plan_ask_each(&self) -> &str;
+    /// Plan card: cancel and keep planning
+    fn agent_plan_keep(&self) -> &str;
+
+    // Agent panel — handoff-ready card
+    /// The handoff card's title once the brief is ready
+    fn agent_handoff_ready_title(&self) -> &str;
+    /// Handoff card: save the brief to HANDOFF.md and stop
+    fn agent_handoff_save(&self) -> &str;
+    /// Handoff card: start a new session from the brief
+    fn agent_handoff_new_session(&self) -> &str;
+    /// Handoff card: dismiss without saving
+    fn agent_handoff_dismiss(&self) -> &str;
+
+    // Agent panel — project command confirmation
+    /// The card's question before running a project command (`{name}`, `{path}`)
+    fn agent_command_run_title_fmt(&self, name: &str, path: &str) -> String;
+    /// Command card: run this one time
+    fn agent_cmd_run_once(&self) -> &str;
+    /// Command card: run for the rest of the session
+    fn agent_cmd_run_session(&self) -> &str;
+    /// Command card: run always (a rule is saved)
+    fn agent_cmd_run_always(&self) -> &str;
+    /// Command card: do not run
+    fn agent_cmd_dont_run(&self) -> &str;
+
     /// Agent panel: open the agent picker
     fn agent_change_agent(&self) -> &str;
     /// Agent panel: open the prompt-template picker
@@ -545,6 +612,9 @@ pub trait Translation: Send + Sync {
     fn theme_changed(&self, name: &str) -> String;
     fn language_changed(&self, name: &str) -> String;
 
+    // Settings modal — window title
+    fn settings_title(&self) -> &str;
+
     // Settings modal — tabs
     fn settings_tab_general(&self) -> &str;
     fn settings_tab_editor(&self) -> &str;
@@ -554,6 +624,17 @@ pub trait Translation: Send + Sync {
     fn settings_tab_logging(&self) -> &str;
     fn settings_tab_vfs(&self) -> &str;
     fn settings_tab_keybindings(&self) -> &str;
+
+    // Settings modal — keybindings subsections
+    fn settings_kb_global(&self) -> &str;
+    fn settings_kb_editor(&self) -> &str;
+    fn settings_kb_file_manager(&self) -> &str;
+    fn settings_kb_git_status(&self) -> &str;
+    fn settings_kb_git_diff(&self) -> &str;
+    fn settings_kb_git_log(&self) -> &str;
+    fn settings_kb_terminal(&self) -> &str;
+    fn settings_kb_database(&self) -> &str;
+    fn settings_kb_viewer(&self) -> &str;
 
     // Settings modal — buttons
     fn settings_btn_apply(&self) -> &str;
