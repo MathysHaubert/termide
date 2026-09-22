@@ -23,11 +23,11 @@ use ratatui::text::{Line, Span};
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendModel,
     BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript,
-    CompactionPolicy, CompactionPrompts, Decision, GoalPrompt, Hooks, LateTools, Message, Mode,
-    ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks,
-    PermissionRules, PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session,
-    SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage,
-    DEFAULT_AGENT,
+    CompactionPolicy, CompactionPrompts, Decision, GoalPrompt, HandoffPrompt, Hooks, LateTools,
+    Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope,
+    PermissionHooks, PermissionRules, PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider,
+    Session, SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate,
+    UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -109,6 +109,9 @@ const LOOP_MAX_ITERATIONS: usize = 100;
 const GOAL_COMMAND: &str = "goal";
 /// A `/goal` stops itself after this many work turns, so it cannot run away.
 const GOAL_MAX_ITERATIONS: usize = 50;
+/// The built-in `/handoff` command: distil the unfinished work into a brief for
+/// a fresh session or another agent.
+const HANDOFF_COMMAND: &str = "handoff";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -131,6 +134,12 @@ enum Pending {
     Plan {
         form: ChoiceForm,
     },
+    /// A `/handoff` brief is ready: save it to a file, or start a new session
+    /// from it. The brief is kept until the choice is made.
+    Handoff {
+        form: ChoiceForm,
+        brief: String,
+    },
 }
 
 impl Pending {
@@ -139,7 +148,8 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
-            | Pending::Plan { form } => form,
+            | Pending::Plan { form }
+            | Pending::Handoff { form, .. } => form,
         }
     }
 
@@ -148,7 +158,8 @@ impl Pending {
             Pending::Permission { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
-            | Pending::Plan { form } => form,
+            | Pending::Plan { form }
+            | Pending::Handoff { form, .. } => form,
         }
     }
 }
@@ -185,6 +196,8 @@ pub struct AgentPanelSetup {
     pub plan_prompt: PlanPrompt,
     /// The goal-judge texts, from the agent directory's `system/goal.md`.
     pub goal_prompt: GoalPrompt,
+    /// The handoff-brief texts, from the agent directory's `system/handoff.md`.
+    pub handoff_prompt: HandoffPrompt,
     /// Where "allow always" rules go; a plain function so it survives a
     /// session switch. `None` keeps such rules in memory only.
     pub persist_rule: Option<PersistFn>,
@@ -433,6 +446,8 @@ pub struct AgentPanel {
     /// The goal-judge texts, kept so `/goal` can start a judge call; passed to
     /// the agent so the judge prompt comes from the `system/` files.
     goal_prompt: GoalPrompt,
+    /// The handoff-brief texts, passed to the agent for `/handoff`.
+    handoff_prompt: HandoffPrompt,
     /// Fold blocks to a preview by default; passed to each transcript.
     autofold: bool,
     /// The worker still has the prompt of the other plan-ness: a mode
@@ -564,6 +579,7 @@ impl AgentPanel {
             &setup.compaction_prompts,
             &setup.plan_prompt,
             &setup.goal_prompt,
+            &setup.handoff_prompt,
             setup.persist_rule,
             setup.hooks.as_ref(),
             backend.as_ref(),
@@ -621,6 +637,7 @@ impl AgentPanel {
             compaction_prompts: setup.compaction_prompts,
             plan_prompt: setup.plan_prompt,
             goal_prompt: setup.goal_prompt,
+            handoff_prompt: setup.handoff_prompt,
             autofold: setup.autofold,
             prompt_stale: false,
             shown_system: String::new(),
@@ -717,6 +734,7 @@ impl AgentPanel {
             &self.compaction_prompts,
             &self.plan_prompt,
             &self.goal_prompt,
+            &self.handoff_prompt,
             self.persist_rule,
             self.hooks.as_ref(),
             self.backend.as_ref(),
@@ -982,6 +1000,10 @@ impl AgentPanel {
                 }
                 return self.start_goal(args.to_string());
             }
+            Some((HANDOFF_COMMAND, _)) => {
+                self.clear_input();
+                return self.start_handoff();
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -1012,6 +1034,7 @@ impl AgentPanel {
                     }
                     names.push(LOOP_COMMAND.to_string());
                     names.push(GOAL_COMMAND.to_string());
+                    names.push(HANDOFF_COMMAND.to_string());
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
@@ -1170,6 +1193,49 @@ impl AgentPanel {
         }
         let prompt = goal_continuation(&goal, reason);
         let _ = self.send_goal_turn(prompt);
+    }
+
+    /// Start a `/handoff`: a read-only model call that distils the unfinished
+    /// work into a brief; the verdict arrives as an `AgentEvent::Handoff`.
+    fn start_handoff(&mut self) -> Vec<PanelEvent> {
+        match self.runtime.handoff() {
+            Ok(()) => self.notice("preparing a handoff brief…", NoticeKind::Info),
+            Err(PromptError::Busy) => {
+                self.notice("finish or stop the current task first", NoticeKind::Warn)
+            }
+            Err(error) => self.notice(format!("cannot hand off: {error}"), NoticeKind::Warn),
+        }
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Write the handoff brief to `HANDOFF.md` in the panel's working directory,
+    /// where a fresh session or another agent (including an external one that
+    /// reads files) can pick it up.
+    fn save_handoff(&mut self, brief: &str) {
+        let path = self.cwd.join("HANDOFF.md");
+        match std::fs::write(&path, brief) {
+            Ok(()) => {
+                self.notice(
+                    format!("handoff written to {}", path.display()),
+                    NoticeKind::Info,
+                );
+                self.pending_events
+                    .push(PanelEvent::FileChangedOnDisk(path));
+            }
+            Err(error) => self.notice(format!("cannot write handoff: {error}"), NoticeKind::Warn),
+        }
+    }
+
+    /// Discard the current session and start a fresh one seeded with the
+    /// handoff brief as its first request, so work continues from it.
+    fn handoff_to_new_session(&mut self, brief: String) -> Vec<PanelEvent> {
+        if let Some(old) = self.session.take() {
+            discard(old);
+        }
+        self.switch_session(None);
+        self.send(format!(
+            "Continue the work described in this handoff brief:\n\n{brief}"
+        ))
     }
 
     pub fn abort(&mut self) {
@@ -1511,6 +1577,23 @@ impl AgentPanel {
                 self.goal_task = None;
                 self.notice(format!("goal check failed: {error}"), NoticeKind::Warn);
             }
+            AgentEvent::Handoff { brief } => match brief {
+                Ok(text) => {
+                    // Offer the brief, with what to do with it; the text is kept
+                    // on the card until the choice is made.
+                    let form = ChoiceForm::new(
+                        "Handoff brief ready",
+                        vec![
+                            "Save to HANDOFF.md and stop".into(),
+                            "Start a new session from it".into(),
+                        ],
+                    )
+                    .with_detail(text.clone())
+                    .with_cancel("Dismiss");
+                    self.pending = Some(Pending::Handoff { form, brief: text });
+                }
+                Err(error) => self.notice(format!("handoff failed: {error}"), NoticeKind::Warn),
+            },
         }
     }
 
@@ -2450,6 +2533,13 @@ impl AgentPanel {
                     ),
             );
         }
+        if HANDOFF_COMMAND.starts_with(prefix) && !self.external {
+            items.push(
+                CompletionItem::new(HANDOFF_COMMAND)
+                    .with_label(format!("/{HANDOFF_COMMAND}"))
+                    .with_description("Brief the unfinished work for a new session or agent"),
+            );
+        }
         if items.is_empty() {
             self.completion = None;
             return;
@@ -2582,6 +2672,21 @@ impl AgentPanel {
                 self.pending_events.extend(events);
             }
             (Some(Pending::Plan { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (Some(Pending::Handoff { .. }), ChoiceAction::Chosen(index)) => {
+                let brief = match self.pending.take() {
+                    Some(Pending::Handoff { brief, .. }) => brief,
+                    _ => return true,
+                };
+                if index == 0 {
+                    self.save_handoff(&brief);
+                } else {
+                    let events = self.handoff_to_new_session(brief);
+                    self.pending_events.extend(events);
+                }
+            }
+            (Some(Pending::Handoff { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
             (None, _) => {}
@@ -3537,6 +3642,7 @@ fn spawn_runtime(
     compaction_prompts: &CompactionPrompts,
     plan_prompt: &PlanPrompt,
     goal_prompt: &GoalPrompt,
+    handoff_prompt: &HandoffPrompt,
     persist_rule: Option<PersistFn>,
     extra_hooks: Option<&HooksFactory>,
     backend: Option<&BackendFactory>,
@@ -3610,6 +3716,7 @@ fn spawn_runtime(
     .with_compaction(compaction)
     .with_compaction_prompts(compaction_prompts.clone())
     .with_goal_prompt(goal_prompt.clone())
+    .with_handoff_prompt(handoff_prompt.clone())
     .with_messages(messages);
     // Plan mode's guard goes first: nothing, not even a hook's approval,
     // changes a file while it is on. Then the checkpoint recorder, so no
@@ -4861,6 +4968,7 @@ mod tests {
             compaction_prompts: CompactionPrompts::default(),
             plan_prompt: PlanPrompt::default(),
             goal_prompt: GoalPrompt::default(),
+            handoff_prompt: HandoffPrompt::default(),
             persist_rule: None,
             session_dir: None,
             session: None,
@@ -5898,6 +6006,32 @@ mod tests {
         };
         assert!(text.contains("Output cleaned:"), "{text}");
         assert!(text.contains("−75%"), "{text}");
+    }
+
+    #[test]
+    fn handoff_offers_to_save_or_start_a_new_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            cwd: dir.path().to_path_buf(),
+            ..setup(vec![reply("# Handoff\n\n## Remaining\nFinish the parser.")])
+        });
+        type_text(&mut panel, "/handoff");
+        panel.submit();
+
+        // The brief is produced off-thread; a card offers what to do with it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while panel.pending.is_none() {
+            panel.tick();
+            assert!(Instant::now() < deadline, "no handoff card");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(panel.pending, Some(Pending::Handoff { .. })));
+
+        // Choosing "Save to HANDOFF.md" writes the brief to the panel's dir.
+        panel.apply_form_action(ChoiceAction::Chosen(0));
+        let written = std::fs::read_to_string(dir.path().join("HANDOFF.md")).unwrap();
+        assert!(written.contains("Finish the parser."), "{written}");
+        assert!(panel.pending.is_none());
     }
 
     #[test]

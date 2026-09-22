@@ -114,7 +114,7 @@ you have named or sent even one message to is always kept.
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -414,6 +414,7 @@ ai/
   system/compacted.md      how the summary is worded in the context
   system/plan.md           what plan mode tells the agent, and what accepting a plan sends
   system/goal.md           how the judge decides whether a /goal is reached
+  system/handoff.md        how /handoff briefs the unfinished work
 ```
 
 The first time the panel opens, the configuration level is laid out:
@@ -575,6 +576,17 @@ judged.
 /goal get the test suite green    work until the judge agrees it is done
 /goal stop                        end the active goal
 ```
+
+`/handoff` uses `handoff.md`: a read-only model call distils the transcript into
+a forward-looking brief — the goal, what is done, what remains, key decisions,
+files and how to verify — for a fresh session or another agent to pick up cold,
+unlike `/compact`, which summarises the whole conversation to keep going in
+place. `handoff.md` is that call's system prompt, with the request in its front
+matter. When the brief is ready a card offers to **save it to `HANDOFF.md`** in
+the panel's directory (where another agent, even an external one that reads
+files, can pick it up — add it to `.gitignore`) or to **start a new session
+from it**, seeding the fresh session with the brief. Reword `handoff.md` to
+change what a brief contains.
 
 ### Skills
 

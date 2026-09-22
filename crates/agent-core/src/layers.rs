@@ -17,6 +17,7 @@ use crate::commands::{CommandScript, COMMANDS_DIR};
 use crate::compaction::{CompactionPrompts, SEED_COMPACT, SEED_COMPACTED};
 use crate::context::SEED_TEMPLATE;
 use crate::goal::{GoalPrompt, SEED_GOAL};
+use crate::handoff::{HandoffPrompt, SEED_HANDOFF};
 use crate::hooks::{HookConfig, HOOKS_FILE};
 use crate::mcp::{McpServerConfig, MCP_FILE};
 use crate::permissions::Mode;
@@ -153,13 +154,14 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
 /// The shipped assets written into the configuration's `ai` directory, as
 /// `(relative path, contents)`. The single source of truth for what
 /// [`ensure_global_layout`] seeds and keeps up to date.
-fn shipped_assets() -> [(String, &'static str); 5] {
+fn shipped_assets() -> [(String, &'static str); 6] {
     [
         (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
         (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
         (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
         (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
         (format!("{SYSTEM_DIR}/goal.md"), SEED_GOAL),
+        (format!("{SYSTEM_DIR}/handoff.md"), SEED_HANDOFF),
     ]
 }
 
@@ -365,6 +367,13 @@ impl AgentDirs {
     #[must_use]
     pub fn goal_prompt(&self) -> GoalPrompt {
         GoalPrompt::from_file(&self.system_file("goal.md", SEED_GOAL))
+    }
+
+    /// The handoff-brief texts: `system/handoff.md` from the first level that
+    /// has it, the seed otherwise.
+    #[must_use]
+    pub fn handoff_prompt(&self) -> HandoffPrompt {
+        HandoffPrompt::from_file(&self.system_file("handoff.md", SEED_HANDOFF))
     }
 
     /// The command-shim directory (`shims/`), from the configuration level

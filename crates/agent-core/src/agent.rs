@@ -12,6 +12,7 @@ use crate::compaction::{
     CompactionPrompts, CompactionReason, MIN_SUMMARY_CHARS,
 };
 use crate::goal::{parse_verdict, GoalPrompt, GoalVerdict};
+use crate::handoff::HandoffPrompt;
 use crate::message::{
     AssistantMessage, Message, StopReason, ToolCall, ToolResultMessage, UserMessage,
 };
@@ -287,6 +288,11 @@ pub enum AgentEvent {
     GoalJudgeFailed {
         error: String,
     },
+    /// A `/handoff` brief was produced (or the call failed): the forward-looking
+    /// brief for a fresh session, or an error to report.
+    Handoff {
+        brief: Result<String, String>,
+    },
     /// The loop stopped early on a pause request with work still pending, so
     /// the run can be resumed. Not emitted on a natural finish.
     Paused,
@@ -309,6 +315,7 @@ pub struct Agent {
     compaction: CompactionPolicy,
     compaction_prompts: CompactionPrompts,
     goal_prompt: GoalPrompt,
+    handoff_prompt: HandoffPrompt,
 }
 
 impl Agent {
@@ -332,6 +339,7 @@ impl Agent {
             compaction: CompactionPolicy::default(),
             compaction_prompts: CompactionPrompts::default(),
             goal_prompt: GoalPrompt::default(),
+            handoff_prompt: HandoffPrompt::default(),
         }
     }
 
@@ -370,6 +378,12 @@ impl Agent {
     #[must_use]
     pub fn goal_prompt(&self) -> &GoalPrompt {
         &self.goal_prompt
+    }
+
+    #[must_use]
+    pub fn with_handoff_prompt(mut self, prompt: HandoffPrompt) -> Self {
+        self.handoff_prompt = prompt;
+        self
     }
 
     #[must_use]
@@ -781,6 +795,36 @@ impl Agent {
             reason: verdict.reason.clone(),
         });
         Ok(verdict)
+    }
+
+    /// Write a handoff brief: a forward-looking summary of the unfinished work
+    /// for a fresh session or another agent. A read-only call on a copy of the
+    /// transcript with the handoff prompts and no tools; the transcript is
+    /// untouched. Emits [`AgentEvent::Handoff`] with the brief, or an error.
+    pub fn handoff(&self, cancel: &CancelToken, emit: &mut dyn FnMut(AgentEvent)) {
+        let mut messages = self.messages.clone();
+        messages.push(Message::User(UserMessage::text(
+            self.handoff_prompt.request.clone(),
+        )));
+        let request = Request {
+            model: &self.model,
+            system_prompt: &self.handoff_prompt.instructions,
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        };
+        let reply = self.provider.stream(&request, &mut |_| {}, cancel);
+        let brief = reply.plain_text();
+        let result = if matches!(reply.stop_reason, StopReason::Error | StopReason::Aborted)
+            || brief.trim().is_empty()
+        {
+            Err(reply
+                .error_message
+                .unwrap_or_else(|| "the handoff call did not produce a brief".to_string()))
+        } else {
+            Ok(brief.trim().to_string())
+        };
+        emit(AgentEvent::Handoff { brief: result });
     }
 
     fn push(&mut self, message: Message, emit: &mut dyn FnMut(AgentEvent)) {

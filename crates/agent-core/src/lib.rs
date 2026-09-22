@@ -26,6 +26,7 @@ pub mod commands;
 pub mod compaction;
 pub mod context;
 pub mod goal;
+pub mod handoff;
 pub mod hooks;
 pub mod layers;
 pub mod mcp;
@@ -51,6 +52,7 @@ pub use context::{
     SEED_TEMPLATE,
 };
 pub use goal::{parse_verdict, GoalPrompt, GoalVerdict, SEED_GOAL};
+pub use handoff::{HandoffPrompt, SEED_HANDOFF};
 pub use hooks::{HookConfig, HookEvent, HOOKS_FILE};
 pub use layers::{
     ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,

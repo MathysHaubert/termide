@@ -52,6 +52,8 @@ enum WorkerCommand {
     Compact(Option<String>),
     /// Judge whether the autonomous goal is reached (`/goal`), read-only.
     Judge(String),
+    /// Write a handoff brief of the unfinished work (`/handoff`), read-only.
+    Handoff,
     Shutdown,
 }
 
@@ -108,6 +110,11 @@ pub trait Backend: Send {
     fn judge(&self, _goal: String) -> Result<(), PromptError> {
         Err(PromptError::Unsupported)
     }
+    /// Write a handoff brief of the unfinished work (`/handoff`); the default
+    /// reports it is unsupported (an external agent has no such call).
+    fn handoff(&self) -> Result<(), PromptError> {
+        Err(PromptError::Unsupported)
+    }
     /// Models the backend offers for a picker, current first when known. Empty
     /// means it cannot enumerate them (the built-in loop lists via its
     /// provider instead); an ACP agent that advertises models returns them.
@@ -161,6 +168,9 @@ impl Backend for AgentRuntime {
     }
     fn judge(&self, goal: String) -> Result<(), PromptError> {
         AgentRuntime::judge(self, goal)
+    }
+    fn handoff(&self) -> Result<(), PromptError> {
+        AgentRuntime::handoff(self)
     }
     fn into_agent(self: Box<Self>) -> Option<Agent> {
         (*self).shutdown()
@@ -231,6 +241,11 @@ impl AgentRuntime {
                         }
                         WorkerCommand::Judge(goal) => {
                             let _ = agent.judge(&goal, &worker_cancel, &mut |event| {
+                                let _ = event_tx.send(event);
+                            });
+                        }
+                        WorkerCommand::Handoff => {
+                            agent.handoff(&worker_cancel, &mut |event| {
                                 let _ = event_tx.send(event);
                             });
                         }
@@ -319,6 +334,20 @@ impl AgentRuntime {
         }
         self.commands
             .send(WorkerCommand::Judge(goal))
+            .map_err(|_| PromptError::Stopped)
+    }
+
+    /// Write a handoff brief between runs; refused while a run is active, like
+    /// [`AgentRuntime::compact`]. The brief arrives as a `Handoff` event.
+    pub fn handoff(&self) -> Result<(), PromptError> {
+        if self.worker.is_none() {
+            return Err(PromptError::Stopped);
+        }
+        if self.is_busy() {
+            return Err(PromptError::Busy);
+        }
+        self.commands
+            .send(WorkerCommand::Handoff)
             .map_err(|_| PromptError::Stopped)
     }
 
