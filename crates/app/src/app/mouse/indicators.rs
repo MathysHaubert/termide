@@ -234,25 +234,43 @@ impl App {
     }
 
     /// Build disk space modal lines (header + data rows).
+    ///
+    /// Columns: type | free | used | total. One row per space pool: APFS
+    /// volumes of one container share their free space and are listed once.
     pub(in crate::app) fn build_disk_modal_lines(
         &self,
     ) -> Vec<(String, termide_modal::info::ModalValue)> {
         use termide_modal::info::{ModalValue, SegmentStyle, StyledSegment};
         use termide_system_monitor::format_bytes;
 
+        use unicode_width::UnicodeWidthStr;
+
         let t = i18n::t();
         let disks = self.state.system_monitor.get_all_disk_space_info_cached();
 
-        // Header row: free | used | total
+        // Filesystem type column: as wide as the localized header or the
+        // longest label ("MS-DOS"), so the columns never collide.
+        let type_col = disks
+            .iter()
+            .map(|d| d.fs_type_label().map(|s| s.width()).unwrap_or(0))
+            .max()
+            .unwrap_or(0)
+            .max(t.resource_disk_type().width());
+
+        // Header row: type | free | used | total
         let mut lines: Vec<(String, ModalValue)> = vec![(
             String::new(),
             ModalValue::Segments(vec![
                 StyledSegment {
-                    text: format!("{:>14}", t.resource_disk_free()),
+                    text: format!("{:<w$} ", t.resource_disk_type(), w = type_col),
                     style: SegmentStyle::Default,
                 },
                 StyledSegment {
-                    text: format!("{:>14}", t.resource_disk_used()),
+                    text: format!("{:>13}", t.resource_disk_free()),
+                    style: SegmentStyle::Default,
+                },
+                StyledSegment {
+                    text: format!("{:>13}", t.resource_disk_used()),
                     style: SegmentStyle::Default,
                 },
                 StyledSegment {
@@ -270,11 +288,19 @@ impl App {
             let used_color = pct_to_style(usage, self.state.theme);
             let segments = vec![
                 StyledSegment {
-                    text: format!("{:>4}% {:>8}", avail_pct, format_bytes(d.available)),
+                    text: format!(
+                        "{:<w$} ",
+                        d.fs_type_label().unwrap_or_default(),
+                        w = type_col
+                    ),
                     style: SegmentStyle::Default,
                 },
                 StyledSegment {
-                    text: format!("{:>4}% {:>8}", usage, format_bytes(d.used())),
+                    text: format!("{:>3}% {:>8}", avail_pct, format_bytes(d.available)),
+                    style: SegmentStyle::Default,
+                },
+                StyledSegment {
+                    text: format!("{:>3}% {:>8}", usage, format_bytes(d.used())),
                     style: used_color,
                 },
                 StyledSegment {

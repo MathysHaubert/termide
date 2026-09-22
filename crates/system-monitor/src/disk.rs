@@ -31,12 +31,13 @@ fn resolve_dm_device(device: &str) -> Option<String> {
     None
 }
 
-/// One entry of the system mount table: a backing device and where it is
-/// mounted.
+/// One entry of the system mount table: a backing device, its filesystem
+/// type and where it is mounted.
 #[cfg(unix)]
 pub(crate) struct MountEntry {
     pub device: String,
     pub mount_point: String,
+    pub fs_type: String,
 }
 
 /// Read the system mount table.
@@ -58,6 +59,7 @@ fn read_mounts() -> Vec<MountEntry> {
             Some(MountEntry {
                 device: parts.next()?.to_string(),
                 mount_point: parts.next()?.to_string(),
+                fs_type: parts.next().unwrap_or_default().to_string(),
             })
         })
         .collect()
@@ -92,6 +94,7 @@ fn read_mounts() -> Vec<MountEntry> {
             Some(MountEntry {
                 device: c_chars_to_string(&fs.f_mntfromname)?,
                 mount_point: c_chars_to_string(&fs.f_mntonname)?,
+                fs_type: c_chars_to_string(&fs.f_fstypename).unwrap_or_default(),
             })
         })
         .collect()
@@ -118,42 +121,106 @@ fn c_chars_to_string(field: &[libc::c_char]) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Get the device backing a given path, by longest matching mount point.
+/// Whole-disk device behind an APFS volume BSD name.
+///
+/// macOS puts several volumes (`/`, `/System/Volumes/Data`, `Recovery`, …)
+/// inside one APFS container. They share a single space pool and `statvfs`
+/// reports identical numbers for every one of them, so the container device is
+/// what those numbers actually describe: `/dev/disk3s1s1` -> `/dev/disk3`.
+///
+/// Returns `None` for names that carry no volume suffix (already a whole disk)
+/// and for anything that is not a `disk<N>…` BSD name, so Linux partition
+/// names (`/dev/nvme0n1p2`) stay untouched.
 #[cfg(unix)]
-pub(crate) fn get_device_for_path(path: &Path) -> Option<String> {
-    let mut best_match: Option<(String, usize)> = None;
+fn apfs_container_device(device: &str) -> Option<&str> {
+    let name_start = device.rfind('/')? + 1;
+    let name = &device[name_start..];
+    let after_prefix = name.strip_prefix("disk")?;
+    let digits = after_prefix.bytes().take_while(u8::is_ascii_digit).count();
+    // No digits, or nothing but digits: not a volume slice.
+    if digits == 0 || digits == after_prefix.len() {
+        return None;
+    }
+    Some(&device[..name_start + "disk".len() + digits])
+}
 
+/// Space-pool identity for a mount: the APFS container for `apfs` volumes,
+/// the device itself otherwise. Two mounts sharing a key report the same free
+/// and total space and should be listed once.
+#[cfg(unix)]
+fn space_pool(device: &str, fs_type: &str) -> String {
+    if fs_type == "apfs" {
+        if let Some(container) = apfs_container_device(device) {
+            return container.to_string();
+        }
+    }
+    device.to_string()
+}
+
+/// Resolve a mount-table device: follow symlinks (e.g.
+/// `/dev/disk/by-uuid/...` -> `/dev/nvme0n1p2`) and map device-mapper targets
+/// to their physical partition.
+#[cfg(unix)]
+fn resolve_device_path(device: &str) -> String {
+    let resolved = Path::new(device)
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| device.to_string());
+
+    if resolved.contains("/dm-") {
+        resolve_dm_device(&resolved).unwrap_or(resolved)
+    } else {
+        resolved
+    }
+}
+
+/// Space pool of a mount table entry, with the device fully resolved.
+#[cfg(unix)]
+fn pool_for_entry(entry: &MountEntry) -> String {
+    space_pool(&resolve_device_path(&entry.device), &entry.fs_type)
+}
+
+/// Backing device of a mount point, collapsed to its APFS container, together
+/// with the filesystem type.
+#[cfg(unix)]
+pub(crate) struct MountInfo {
+    pub device: String,
+    pub fs_type: Option<String>,
+}
+
+/// Resolve the mount backing a path by longest matching mount point.
+///
+/// Devices are collapsed to their APFS container so the reported device matches
+/// the free/total space `statvfs` returns: every volume of a container shares
+/// one space pool and reports identical numbers.
+#[cfg(unix)]
+pub(crate) fn resolve_mount_for_path(path: &Path) -> Option<MountInfo> {
     // Canonicalized once: it does not change across mount entries, and the
     // syscall used to run per entry.
     let canonical_path = path.canonicalize().ok()?;
+    let mounts = read_mounts();
 
-    for entry in read_mounts() {
+    let mut best_match: Option<(usize, usize)> = None; // (mount index, mount path len)
+
+    for (idx, entry) in mounts.iter().enumerate() {
         // Check if this mount point is a prefix of our path
         if let Ok(canonical_mount) = Path::new(&entry.mount_point).canonicalize() {
             if canonical_path.starts_with(&canonical_mount) {
                 let mount_len = canonical_mount.as_os_str().len();
                 // Keep track of the longest matching mount point
-                if best_match.as_ref().is_none_or(|b| mount_len > b.1) {
-                    best_match = Some((entry.device.clone(), mount_len));
+                if best_match.as_ref().is_none_or(|(_, len)| mount_len > *len) {
+                    best_match = Some((idx, mount_len));
                 }
             }
         }
     }
 
-    best_match.and_then(|(device, _)| {
-        // First try to resolve symlink (e.g., /dev/disk/by-uuid/... -> /dev/nvme0n1p2)
-        let resolved = Path::new(&device)
-            .canonicalize()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| device.clone());
+    let entry = &mounts[best_match?.0];
 
-        // If it's a dm device, resolve to physical partition
-        if resolved.contains("/dm-") {
-            resolve_dm_device(&resolved).or(Some(resolved))
-        } else {
-            Some(resolved)
-        }
+    Some(MountInfo {
+        device: pool_for_entry(entry),
+        fs_type: (!entry.fs_type.is_empty()).then(|| entry.fs_type.clone()),
     })
 }
 
@@ -202,16 +269,18 @@ pub(crate) fn statvfs_bytes(path: &Path) -> Option<(u64, u64)> {
 
 /// Get disk space information for a given path.
 ///
-/// Returns `DiskSpaceInfo` with device name, available and total space.
+/// Returns `DiskSpaceInfo` with device name, filesystem type, available and
+/// total space.
 #[cfg(unix)]
 pub fn get_disk_space_info(path: &Path) -> Option<DiskSpaceInfo> {
-    // Get device name for this path
-    let device = get_device_for_path(path);
+    // Get device name and filesystem type for this path
+    let mount = resolve_mount_for_path(path);
 
     let (available, total) = statvfs_bytes(path)?;
 
     Some(DiskSpaceInfo {
-        device,
+        device: mount.as_ref().map(|m| m.device.clone()),
+        fs_type: mount.and_then(|m| m.fs_type),
         available,
         total,
     })
@@ -219,11 +288,15 @@ pub fn get_disk_space_info(path: &Path) -> Option<DiskSpaceInfo> {
 
 /// Get disk space information for all real mounted devices.
 ///
-/// Reads the system mount table, filters for real devices (`/dev/`),
-/// deduplicates by device path, and calls `statvfs` for each.
+/// Reads the system mount table, filters for real devices (`/dev/`), and calls
+/// `statvfs` once per *space pool*: every APFS volume of one container reports
+/// the container's identical free/total, so those volumes collapse into a single
+/// row labelled with the container device. The representative mount of a pool is
+/// the root-most (shortest) mount point, ties broken lexicographically.
 #[cfg(unix)]
 pub fn get_all_disk_space_info() -> Vec<DiskSpaceInfo> {
-    let mut seen_devices: HashMap<String, String> = HashMap::new(); // device -> mount_point
+    // pool device -> (representative mount point, fs type)
+    let mut seen_pools: HashMap<String, (String, Option<String>)> = HashMap::new();
 
     for entry in read_mounts() {
         let device = entry.device.as_str();
@@ -239,31 +312,34 @@ pub fn get_all_disk_space_info() -> Vec<DiskSpaceInfo> {
             continue;
         }
 
-        // Resolve device symlinks/dm
-        let resolved = Path::new(device)
-            .canonicalize()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| device.to_string());
+        let pool = pool_for_entry(&entry);
+        let fs_type = (!entry.fs_type.is_empty()).then(|| entry.fs_type.clone());
 
-        let resolved = if resolved.contains("/dm-") {
-            resolve_dm_device(&resolved).unwrap_or(resolved)
-        } else {
-            resolved
+        // Keep the root-most mount point per pool: it is the mount whose
+        // numbers the user cares about, and statvfs of any volume in the pool
+        // returns the same figures anyway. Ties break lexicographically so the
+        // choice does not depend on mount-table order.
+        let replace = match seen_pools.get(&pool) {
+            None => true,
+            Some((mount_point, _)) => match entry.mount_point.len().cmp(&mount_point.len()) {
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Equal => entry.mount_point < *mount_point,
+                std::cmp::Ordering::Greater => false,
+            },
         };
-
-        // Keep only first mount point per device (usually the most relevant)
-        seen_devices
-            .entry(resolved)
-            .or_insert_with(|| entry.mount_point.clone());
+        if replace {
+            seen_pools.insert(pool, (entry.mount_point.clone(), fs_type));
+        }
     }
 
     let mut result = Vec::new();
-    for (device, mount_point) in &seen_devices {
-        if let Some(info) = get_disk_space_info(Path::new(mount_point)) {
+    for (device, (mount_point, fs_type)) in &seen_pools {
+        if let Some((available, total)) = statvfs_bytes(Path::new(mount_point)) {
             result.push(DiskSpaceInfo {
                 device: Some(device.clone()),
-                ..info
+                fs_type: fs_type.clone(),
+                available,
+                total,
             });
         }
     }
@@ -302,6 +378,7 @@ pub fn get_disk_space_info(path: &std::path::Path) -> Option<DiskSpaceInfo> {
     if success != 0 {
         Some(DiskSpaceInfo {
             device: Some(root_str.trim_end_matches('\\').to_string()),
+            fs_type: None,
             available: free_bytes_available,
             total: total_bytes,
         })
@@ -340,6 +417,7 @@ pub fn get_all_disk_space_info() -> Vec<DiskSpaceInfo> {
         if success != 0 && total_bytes > 0 {
             result.push(DiskSpaceInfo {
                 device: Some(format!("{}:", letter as char)),
+                fs_type: None,
                 available: free_bytes_available,
                 total: total_bytes,
             });
@@ -407,5 +485,60 @@ mod tests {
     #[test]
     fn test_statvfs_bytes_missing_path() {
         assert!(statvfs_bytes(std::path::Path::new("/nonexistent-volume-path")).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_apfs_container_device_strips_volume_suffix() {
+        assert_eq!(apfs_container_device("/dev/disk3s1s1"), Some("/dev/disk3"));
+        assert_eq!(apfs_container_device("/dev/disk3s5"), Some("/dev/disk3"));
+        assert_eq!(
+            apfs_container_device("/dev/disk12s2s1"),
+            Some("/dev/disk12")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_apfs_container_device_leaves_non_volumes_alone() {
+        // Whole disks and Linux-style partition names must not be rewritten.
+        assert_eq!(apfs_container_device("/dev/disk3"), None);
+        assert_eq!(apfs_container_device("/dev/nvme0n1p2"), None);
+        assert_eq!(apfs_container_device("/dev/sda1"), None);
+        assert_eq!(apfs_container_device("disk3s5"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_space_pool_collapses_apfs_only() {
+        assert_eq!(space_pool("/dev/disk3s5", "apfs"), "/dev/disk3");
+        // Non-APFS volumes are separate filesystems with their own numbers.
+        assert_eq!(space_pool("/dev/disk4s2", "hfs"), "/dev/disk4s2");
+        assert_eq!(space_pool("/dev/nvme0n1p2", "ext4"), "/dev/nvme0n1p2");
+    }
+
+    /// Volumes of one APFS container share a single space pool, so the listing
+    /// must report each pool once.
+    #[cfg(unix)]
+    #[test]
+    fn test_all_disk_rows_are_unique_per_space_pool() {
+        let disks = get_all_disk_space_info();
+        let mut seen = std::collections::HashSet::new();
+        for disk in &disks {
+            let dev = disk.device.clone().unwrap_or_default();
+            assert!(
+                seen.insert(dev.clone()),
+                "duplicate row for space pool {dev}"
+            );
+        }
+        // Every row is a pool that is actually in the mount table.
+        let pools: std::collections::HashSet<String> = read_mounts()
+            .iter()
+            .filter(|e| e.device.starts_with("/dev/"))
+            .map(pool_for_entry)
+            .collect();
+        for dev in seen {
+            assert!(pools.contains(&dev), "{dev} is not a mounted pool");
+        }
     }
 }

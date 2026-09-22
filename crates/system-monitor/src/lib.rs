@@ -83,6 +83,7 @@ struct NetworkState {
 struct MountCacheEntry {
     canonical_path: std::path::PathBuf,
     device: Option<String>,
+    fs_type: Option<String>,
 }
 
 struct ProcessCacheEntry {
@@ -405,7 +406,7 @@ impl SystemMonitor {
     pub fn get_disk_space_info_cached(&self, path: &Path) -> Option<DiskSpaceInfo> {
         let canonical = path.canonicalize().ok()?;
 
-        let device = {
+        let (device, fs_type) = {
             let mut guard = match self.mount_cache.lock() {
                 Ok(g) => g,
                 Err(poisoned) => poisoned.into_inner(),
@@ -416,17 +417,21 @@ impl SystemMonitor {
                     .as_ref()
                     .is_none_or(|e| e.canonical_path != canonical);
             if needs_refresh {
-                let dev = disk::get_device_for_path(path);
+                let mount = disk::resolve_mount_for_path(path);
+                let device = mount.as_ref().map(|m| m.device.clone());
+                let fs_type = mount.and_then(|m| m.fs_type);
                 *guard = (
                     Some(MountCacheEntry {
                         canonical_path: canonical,
-                        device: dev.clone(),
+                        device: device.clone(),
+                        fs_type: fs_type.clone(),
                     }),
                     Instant::now(),
                 );
-                dev
+                (device, fs_type)
             } else {
-                guard.0.as_ref().unwrap().device.clone()
+                let entry = guard.0.as_ref().unwrap();
+                (entry.device.clone(), entry.fs_type.clone())
             }
         };
 
@@ -434,6 +439,7 @@ impl SystemMonitor {
 
         Some(DiskSpaceInfo {
             device,
+            fs_type,
             available,
             total,
         })
@@ -548,10 +554,13 @@ pub struct ProcessInfo {
 }
 
 /// Disk space information.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct DiskSpaceInfo {
     /// Device name (e.g., "NVME0N1", "SDA1").
     pub device: Option<String>,
+    /// Filesystem type as reported by the mount table (e.g., "apfs", "ext4").
+    /// `None` when the platform mount table does not expose it.
+    pub fs_type: Option<String>,
     /// Available space in bytes.
     pub available: u64,
     /// Total space in bytes.
@@ -559,6 +568,22 @@ pub struct DiskSpaceInfo {
 }
 
 impl DiskSpaceInfo {
+    /// Filesystem type formatted for display (e.g., "APFS", "HFS+", "exFAT").
+    ///
+    /// Canonical spellings for the types that actually show up in the disk
+    /// listing; anything else is uppercased.
+    pub fn fs_type_label(&self) -> Option<String> {
+        let raw = self.fs_type.as_deref()?;
+        let label = match raw {
+            "apfs" => "APFS",
+            "hfs" | "hfsplus" | "hfs+" => "HFS+",
+            "exfat" => "exFAT",
+            "msdosfs" => "MS-DOS",
+            other => return (!other.is_empty()).then(|| other.to_uppercase()),
+        };
+        Some(label.to_string())
+    }
+
     /// Get disk usage percentage (0-100).
     pub fn usage_percent(&self) -> u8 {
         let used = self.total.saturating_sub(self.available);
@@ -638,6 +663,7 @@ mod tests {
     fn test_disk_usage_percent() {
         let info = DiskSpaceInfo {
             device: Some("/dev/sda1".to_string()),
+            fs_type: None,
             available: 200_000_000_000,
             total: 1_000_000_000_000,
         };
@@ -649,6 +675,7 @@ mod tests {
     fn test_disk_usage_percent_zero_total() {
         let info = DiskSpaceInfo {
             device: None,
+            fs_type: None,
             available: 0,
             total: 0,
         };
@@ -659,6 +686,7 @@ mod tests {
     fn test_disk_used_bytes() {
         let info = DiskSpaceInfo {
             device: None,
+            fs_type: None,
             available: 300,
             total: 1000,
         };
@@ -669,6 +697,7 @@ mod tests {
     fn test_disk_device_name() {
         let info = DiskSpaceInfo {
             device: Some("/dev/nvme0n1p2".to_string()),
+            fs_type: None,
             available: 0,
             total: 0,
         };
@@ -679,6 +708,7 @@ mod tests {
     fn test_disk_device_name_no_prefix() {
         let info = DiskSpaceInfo {
             device: Some("sda1".to_string()),
+            fs_type: None,
             available: 0,
             total: 0,
         };
@@ -689,6 +719,7 @@ mod tests {
     fn test_disk_device_name_none() {
         let info = DiskSpaceInfo {
             device: None,
+            fs_type: None,
             available: 0,
             total: 0,
         };
@@ -739,6 +770,7 @@ mod tests {
     fn test_disk_used_gb() {
         let info = DiskSpaceInfo {
             device: None,
+            fs_type: None,
             available: 500 * 1_073_741_824, // 500 GB available
             total: 1000 * 1_073_741_824,    // 1 TB total
         };

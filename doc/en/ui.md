@@ -230,8 +230,10 @@ Example: `NVME0N1P2 386/467Gb (83%)`
 
 The device name is automatically detected from the filesystem:
 - On Linux: shows partition names like `NVME0N1P2`, `SDA1`, etc.
-- On macOS: shows disk identifiers
-- The displayed device corresponds to the partition where the current directory is located
+- On macOS: shows the disk container identifier (e.g. `DISK3`)
+- The displayed device corresponds to the storage pool where the current directory is located
+
+The disk window lists one row per storage pool, with the filesystem type as a second column. On macOS all APFS volumes of one container (`/`, `/System/Volumes/Data`, `Recovery`, …) share the same free space, so they are reported as a single row instead of repeating identical numbers.
 
 ## Keyboard Navigation and Panel Management
 

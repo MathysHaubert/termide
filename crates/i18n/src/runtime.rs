@@ -640,6 +640,7 @@ impl Translation for RuntimeTranslation {
         resource_disk_free,
         resource_disk_used,
         resource_disk_total,
+        resource_disk_type,
         resource_count,
         resource_net_title,        help_desc_new_project,
         help_desc_save,

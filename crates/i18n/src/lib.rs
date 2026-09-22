@@ -1017,6 +1017,7 @@ pub trait Translation: Send + Sync {
     fn resource_disk_free(&self) -> &str;
     fn resource_disk_used(&self) -> &str;
     fn resource_disk_total(&self) -> &str;
+    fn resource_disk_type(&self) -> &str;
     fn resource_count(&self) -> &str;
     fn resource_net_title(&self) -> &str;
 
