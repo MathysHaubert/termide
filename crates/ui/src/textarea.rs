@@ -3,9 +3,11 @@
 //! Extends the concept of TextInput for multi-line text editing with:
 //! - Multiple lines storage
 //! - 2D cursor navigation (row, col)
-//! - Multi-line selection
+//! - Multi-line selection (keyboard and mouse drag)
 //! - Clipboard support for multi-line text
 //! - Undo/Redo history
+//! - The soft-wrap geometry of the last render, so a host that draws the text
+//!   wrapped can map a click on a wrapped row back to the character under it
 
 /// Position in the text area (row, column in characters)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -50,6 +52,12 @@ pub struct TextArea {
     redo_stack: Vec<(Vec<String>, CursorPos)>,
     /// Scroll offset for vertical scrolling
     scroll_offset: usize,
+    /// Soft-wrap geometry of the last render: one `(logical row, first char,
+    /// end char)` per visual row. Empty until the host records it through
+    /// [`TextArea::set_wrap`], which also means "rendered unwrapped".
+    wrap_rows: Vec<(usize, usize, usize)>,
+    /// First visual row drawn by that render, i.e. the vertical scroll.
+    visual_scroll: usize,
 }
 
 impl Default for TextArea {
@@ -68,6 +76,8 @@ impl TextArea {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             scroll_offset: 0,
+            wrap_rows: Vec::new(),
+            visual_scroll: 0,
         }
     }
 
@@ -88,6 +98,8 @@ impl TextArea {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             scroll_offset: 0,
+            wrap_rows: Vec::new(),
+            visual_scroll: 0,
         }
     }
 
@@ -526,6 +538,68 @@ impl TextArea {
         self.cursor.col = self.current_line_len();
     }
 
+    // === Word navigation ===
+
+    /// Char index of the word boundary before `col` on the cursor's line:
+    /// back over trailing whitespace, punctuation, then the word itself.
+    fn word_boundary_before(&self, col: usize) -> usize {
+        let chars: Vec<char> = self.current_line().chars().collect();
+        let mut pos = col.min(chars.len());
+        while pos > 0 && chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+        while pos > 0 && !chars[pos - 1].is_whitespace() && !chars[pos - 1].is_alphanumeric() {
+            pos -= 1;
+        }
+        while pos > 0 && chars[pos - 1].is_alphanumeric() {
+            pos -= 1;
+        }
+        pos
+    }
+
+    /// Char index of the word boundary after `col` on the cursor's line.
+    fn word_boundary_after(&self, col: usize) -> usize {
+        let chars: Vec<char> = self.current_line().chars().collect();
+        let len = chars.len();
+        let mut pos = col.min(len);
+        while pos < len && chars[pos].is_alphanumeric() {
+            pos += 1;
+        }
+        while pos < len && !chars[pos].is_whitespace() && !chars[pos].is_alphanumeric() {
+            pos += 1;
+        }
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        pos
+    }
+
+    /// Move one word left (Ctrl+Left); at the start of a line, to the end of
+    /// the line above, like [`TextArea::move_left`].
+    pub fn move_word_left(&mut self) -> bool {
+        self.clear_selection();
+        let target = self.word_boundary_before(self.cursor.col);
+        if target < self.cursor.col {
+            self.cursor.col = target;
+            true
+        } else {
+            self.move_left()
+        }
+    }
+
+    /// Move one word right (Ctrl+Right); at the end of a line, to the start of
+    /// the line below, like [`TextArea::move_right`].
+    pub fn move_word_right(&mut self) -> bool {
+        self.clear_selection();
+        let target = self.word_boundary_after(self.cursor.col);
+        if target > self.cursor.col {
+            self.cursor.col = target;
+            true
+        } else {
+            self.move_right()
+        }
+    }
+
     // === Selection movement ===
 
     /// Move left with selection.
@@ -597,6 +671,30 @@ impl TextArea {
         self.cursor.col = self.current_line_len();
     }
 
+    /// Move one word left with selection (Ctrl+Shift+Left).
+    pub fn move_word_left_with_selection(&mut self) -> bool {
+        self.start_selection();
+        let target = self.word_boundary_before(self.cursor.col);
+        if target < self.cursor.col {
+            self.cursor.col = target;
+            true
+        } else {
+            self.move_left_with_selection()
+        }
+    }
+
+    /// Move one word right with selection (Ctrl+Shift+Right).
+    pub fn move_word_right_with_selection(&mut self) -> bool {
+        self.start_selection();
+        let target = self.word_boundary_after(self.cursor.col);
+        if target > self.cursor.col {
+            self.cursor.col = target;
+            true
+        } else {
+            self.move_right_with_selection()
+        }
+    }
+
     // === Scrolling ===
 
     /// Ensure cursor is visible within given height.
@@ -616,6 +714,71 @@ impl TextArea {
         self.clear_selection();
         self.cursor.row = row.min(self.lines.len().saturating_sub(1));
         self.cursor.col = col.min(self.current_line_len());
+    }
+
+    /// Place the cursor for a mouse press, dropping any selection: the anchor
+    /// lands on the same spot, so a drag from here selects from where the
+    /// button went down.
+    pub fn place_cursor(&mut self, row: usize, col: usize) {
+        self.set_cursor(row, col);
+        self.selection_anchor = Some(self.cursor);
+    }
+
+    /// Extend the selection to `(row, col)` for a mouse drag, starting one at
+    /// the current cursor when there is no selection in flight.
+    pub fn extend_selection_to(&mut self, row: usize, col: usize) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.cursor);
+        }
+        self.cursor.row = row.min(self.lines.len().saturating_sub(1));
+        let line_len = self.lines[self.cursor.row].chars().count();
+        self.cursor.col = col.min(line_len);
+    }
+
+    // === Soft-wrap geometry ===
+
+    /// Record how the text was laid out by the last render: `rows` holds one
+    /// `(logical row, first char, end char)` per visual row, `scroll` the
+    /// first visual row drawn. [`TextArea::position_at_drawn_row`] then maps a
+    /// click on a wrapped row back to the character under it.
+    pub fn set_wrap(&mut self, rows: Vec<(usize, usize, usize)>, scroll: usize) {
+        self.wrap_rows = rows;
+        self.visual_scroll = scroll;
+    }
+
+    /// The text position under a row of the drawn field area: `drawn_row`
+    /// counts rows from the top of the area the last render used (so it is
+    /// already offset-free, and can be the mouse row minus the area's `y`) and
+    /// `column` counts display columns from the start of the text. Without a
+    /// recorded wrap it treats the row as a scrolled logical row, and without
+    /// any geometry it keeps the cursor where it is.
+    #[must_use]
+    pub fn position_at_drawn_row(&self, drawn_row: usize, column: usize) -> CursorPos {
+        let (row, start) = match self
+            .wrap_rows
+            .get(self.visual_scroll + drawn_row)
+            .copied()
+            .map(|(row, start, _)| (row, start))
+            .or_else(|| {
+                // Unwrapped: the rows on screen are `scroll_offset` onward.
+                let row = self.scroll_offset + drawn_row;
+                (row < self.lines.len()).then_some((row, 0))
+            }) {
+            Some(pair) => pair,
+            None => return self.cursor,
+        };
+        let line = self.lines.get(row).map(|s| s.as_str()).unwrap_or_default();
+        let mut col = start;
+        let mut width = 0usize;
+        for c in line.chars().skip(start) {
+            let cw = crate::grapheme_utils::str_display_width(&c.to_string()).max(1);
+            if width + cw > column {
+                break;
+            }
+            width += cw;
+            col += 1;
+        }
+        CursorPos::new(row, col)
     }
 }
 
@@ -701,5 +864,74 @@ mod tests {
         ta.select_all();
         assert!(ta.has_selection());
         assert_eq!(ta.selected_text(), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn word_navigation_walks_words_then_lines() {
+        // The boundary walk matches `TextInput`: back over whitespace, then
+        // punctuation, then the word.
+        let mut ta = TextArea::with_text("let x = 1;\nnext");
+        ta.set_cursor(0, 10);
+        assert!(ta.move_word_left());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 8));
+        assert!(ta.move_word_left());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 6));
+        assert!(ta.move_word_left());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 4));
+        assert!(ta.move_word_left());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 0));
+        // At the start of a line the word jump wraps to the line above's end.
+        ta.set_cursor(1, 0);
+        assert!(ta.move_word_left());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 10));
+
+        ta.set_cursor(0, 0);
+        assert!(ta.move_word_right());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 4));
+        assert!(ta.move_word_right());
+        assert_eq!(ta.cursor(), CursorPos::new(0, 6));
+    }
+
+    #[test]
+    fn word_selection_extends_from_the_anchor() {
+        let mut ta = TextArea::with_text("hello world");
+        ta.set_cursor(0, 5);
+        // The anchor stays put while the cursor walks the word boundaries.
+        assert!(ta.move_word_right_with_selection());
+        assert_eq!(ta.selected_text(), Some(" ".to_string()));
+        assert!(ta.move_word_right_with_selection());
+        assert_eq!(ta.selected_text(), Some(" world".to_string()));
+        assert!(ta.move_word_left_with_selection());
+        assert_eq!(ta.selected_text(), Some(" ".to_string()));
+        assert!(ta.move_word_left_with_selection());
+        assert_eq!(ta.selected_text(), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn a_press_then_drag_selects_across_lines() {
+        let mut ta = TextArea::with_text("one\ntwo\nthree");
+        ta.place_cursor(0, 2);
+        assert!(!ta.has_selection(), "a press alone selects nothing");
+        ta.extend_selection_to(2, 2);
+        assert_eq!(ta.selected_text(), Some("e\ntwo\nth".to_string()));
+        // A plain move drops the selection, as after a keyboard edit.
+        ta.move_right();
+        assert!(!ta.has_selection());
+    }
+
+    #[test]
+    fn drawn_row_maps_a_wrapped_click_to_its_character() {
+        let mut ta = TextArea::with_text("abcdef");
+        // "abcdef" drawn as "abc" / "def".
+        ta.set_wrap(vec![(0, 0, 3), (0, 3, 6)], 0);
+        assert_eq!(ta.position_at_drawn_row(0, 1), CursorPos::new(0, 1));
+        assert_eq!(ta.position_at_drawn_row(1, 1), CursorPos::new(0, 4));
+        // With the view scrolled to the second row, row 0 is that row.
+        ta.set_wrap(vec![(0, 0, 3), (0, 3, 6)], 1);
+        assert_eq!(ta.position_at_drawn_row(0, 1), CursorPos::new(0, 4));
+        // No geometry recorded: the row is read as a scrolled logical row.
+        let mut plain = TextArea::with_text("one\ntwo");
+        plain.set_scroll_offset(1);
+        assert_eq!(plain.position_at_drawn_row(0, 1), CursorPos::new(1, 1));
     }
 }

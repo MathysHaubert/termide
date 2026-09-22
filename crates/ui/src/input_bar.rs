@@ -20,6 +20,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use termide_core::ThemeColors;
 
+use crate::field_edit::{edit_text_area, edit_text_input, FieldEdit};
 use crate::grapheme_utils::str_display_width;
 use crate::{TextArea, TextInput};
 
@@ -105,6 +106,12 @@ pub struct InputBar {
     field_areas: Vec<Rect>,
     /// Rendered control areas: (area, index into `controls`).
     control_areas: Vec<(Rect, usize)>,
+    /// The field a left button is currently held down on, so a drag extends
+    /// that field's selection and nothing else's.
+    drag_field: Option<usize>,
+    /// Whether a left button is held down anywhere on the bar, including over a
+    /// control, whose press owns the drag until the button is released.
+    pressed: bool,
 }
 
 impl InputBar {
@@ -126,6 +133,8 @@ impl InputBar {
             placeholder: None,
             field_areas: Vec::new(),
             control_areas: Vec::new(),
+            drag_field: None,
+            pressed: false,
         }
     }
 
@@ -348,29 +357,22 @@ impl InputBar {
                 None
             }
             KeyCode::Enter => Some(InputBarAction::Submit(index)),
-            _ => match &mut self.fields[index] {
-                FieldInput::Line(input) => {
-                    let before = input.text().to_string();
-                    if edit_text_input(input, key) && input.text() != before {
-                        Some(InputBarAction::Edited(index))
-                    } else {
-                        None
-                    }
-                }
-                // A multi-line field is normally driven by the host through
-                // `multiline_mut`; handle plain typing here for completeness.
-                FieldInput::Multi(area) => match key.code {
-                    KeyCode::Char(c) => {
-                        area.insert(c);
-                        Some(InputBarAction::Edited(index))
-                    }
-                    KeyCode::Backspace => {
-                        area.backspace();
-                        Some(InputBarAction::Edited(index))
-                    }
-                    _ => None,
-                },
+            _ => match edit_field_input(&mut self.fields[index], key) {
+                FieldEdit::Edited => Some(InputBarAction::Edited(index)),
+                FieldEdit::Navigated | FieldEdit::NotHandled => None,
             },
+        }
+    }
+
+    /// Drive one field's editing keys directly, bypassing the focus ring and
+    /// the `Enter`/`Tab` keys that belong to the bar. Hosts that own their key
+    /// routing — the agent's prompt box, where `Enter` sends — use this so
+    /// every field in the app shares one grammar of typing, navigation,
+    /// selection, clipboard and undo.
+    pub fn edit_field(&mut self, index: usize, key: KeyEvent) -> FieldEdit {
+        match self.fields.get_mut(index) {
+            Some(field) => edit_field_input(field, key),
+            None => FieldEdit::NotHandled,
         }
     }
 
@@ -403,46 +405,86 @@ impl InputBar {
         InputBarAction::Activated(index)
     }
 
-    /// Handle a left click: on a field it focuses it and places the cursor, on
-    /// a control it activates it.
+    /// Handle a left press, drag or release: on a field a press focuses it and
+    /// places the cursor, starting the selection that a drag then extends; on a
+    /// control a press activates it. A drag only moves the selection when the
+    /// press that owns it landed on the same field, so a drag begun elsewhere —
+    /// in the transcript, on a divider — cannot select prompt text.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<InputBarAction> {
-        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+        let pressed = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
+            self.drag_field = None;
+            self.pressed = false;
             return None;
         }
-        let (col, row) = (mouse.column, mouse.row);
-        for (i, area) in self.field_areas.clone().into_iter().enumerate() {
-            if hit_area(area, col, row) {
-                self.focus = i;
-                // Match the rendered prefix: "› " for an empty (prompt) label.
-                let prefix = if self.labels[i].is_empty() {
-                    "› "
-                } else {
-                    &self.labels[i]
-                };
-                let label_w = str_display_width(prefix) as u16;
-                let start_x = area.x + label_w;
-                match &mut self.fields[i] {
-                    FieldInput::Line(input) => {
-                        if col >= start_x {
-                            let pos = screen_x_to_char_pos(input.text(), (col - start_x) as usize);
-                            input.set_cursor_with_selection_start(pos);
-                        }
-                    }
-                    FieldInput::Multi(ta) => {
-                        // Place the cursor at the clicked row/column, best-effort.
-                        let clicked_row = ta.scroll_offset() + (row - area.y) as usize;
-                        let target_row = clicked_row.min(ta.line_count().saturating_sub(1));
-                        let line = ta.lines().get(target_row).cloned().unwrap_or_default();
-                        let target_col = if col >= start_x {
-                            screen_x_to_char_pos(&line, (col - start_x) as usize)
-                        } else {
-                            0
-                        };
-                        ta.set_cursor(target_row, target_col);
+        if !pressed && !matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            return None;
+        }
+        // A drag without a press on this bar belongs to whatever else the
+        // pointer was dragging — the transcript, a divider — not to the bar.
+        if !pressed && self.drag_field.is_none() {
+            return None;
+        }
+        // A drag belongs to the field its press started in, and clamps to that
+        // field's rows: dragged past the top or bottom edge it selects to the
+        // edge instead of computing a position outside the field.
+        let (col, row) = match self.drag_field {
+            Some(i) if !pressed => match self.field_areas.get(i).copied() {
+                Some(area) => (
+                    mouse
+                        .column
+                        .clamp(area.x, area.x + area.width.saturating_sub(1)),
+                    mouse
+                        .row
+                        .clamp(area.y, area.y + area.height.saturating_sub(1)),
+                ),
+                None => return None,
+            },
+            _ => (mouse.column, mouse.row),
+        };
+        for i in 0..self.field_areas.len() {
+            let area = self.field_areas[i];
+            if !hit_area(area, col, row) {
+                continue;
+            }
+            self.drag_field = pressed.then_some(i);
+            self.pressed = true;
+            // Match the rendered prefix: "› " for an empty (prompt) label.
+            let prefix = if self.labels[i].is_empty() {
+                "› "
+            } else {
+                &self.labels[i]
+            };
+            let label_w = str_display_width(prefix) as u16;
+            let start_x = area.x + label_w;
+            let text_x = usize::from(col.saturating_sub(start_x));
+            match &mut self.fields[i] {
+                FieldInput::Line(input) => {
+                    // A press on the label lands at the start of the text.
+                    let pos = screen_x_to_char_pos(input.text(), text_x);
+                    if pressed {
+                        self.focus = i;
+                        input.set_cursor_with_selection_start(pos);
+                    } else {
+                        input.extend_selection_to(pos);
                     }
                 }
-                return None;
+                FieldInput::Multi(ta) => {
+                    // Map through the layout the last render recorded, so a
+                    // click on a wrapped row lands on the character drawn there.
+                    let pos = ta.position_at_drawn_row(usize::from(row - area.y), text_x);
+                    if pressed {
+                        self.focus = i;
+                        ta.place_cursor(pos.row, pos.col);
+                    } else {
+                        ta.extend_selection_to(pos.row, pos.col);
+                    }
+                }
             }
+            return None;
+        }
+        if !pressed {
+            return None;
         }
         let clicked = self
             .control_areas
@@ -450,9 +492,50 @@ impl InputBar {
             .find_map(|(area, idx)| hit(*area, col, row).then_some(*idx));
         if let Some(idx) = clicked {
             self.focus = self.labels.len() + idx;
+            self.pressed = true;
             return Some(self.activate(idx));
         }
         None
+    }
+
+    /// Whether [`InputBar::handle_mouse`] would act on `mouse`: a press or a
+    /// drag over one of its fields or controls, a drag still owned by the bar
+    /// (its button went down there and has not been released), or the release
+    /// that ends it. Hover and wheel events never belong to the bar, so a host
+    /// can ask this instead of repainting on every pointer motion.
+    #[must_use]
+    pub fn mouse_hits(&self, mouse: MouseEvent) -> bool {
+        match mouse.kind {
+            MouseEventKind::Up(MouseButton::Left) => self.pressed,
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.drag_field.is_some() || self.click_hits(mouse.column, mouse.row)
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.click_hits(mouse.column, mouse.row),
+            _ => false,
+        }
+    }
+
+    /// Whether a field holds a selection, so the host knows a `Ctrl+C` or
+    /// `Ctrl+X` has something to take.
+    #[must_use]
+    pub fn has_selection(&self) -> bool {
+        self.fields.iter().any(|field| match field {
+            FieldInput::Line(input) => input.has_selection(),
+            FieldInput::Multi(area) => area.has_selection(),
+        })
+    }
+
+    /// The selected text of the focused field, if it has one.
+    #[must_use]
+    pub fn selected_text(&self) -> Option<String> {
+        let index = match self.focus() {
+            Focus::Field(i) => i,
+            Focus::Control(_) => return None,
+        };
+        self.fields.get(index).and_then(|field| match field {
+            FieldInput::Line(input) => input.selected_text().map(str::to_string),
+            FieldInput::Multi(area) => area.selected_text(),
+        })
     }
 
     /// Whether a click at `(col, row)` lands on one of the bar's controls
@@ -645,6 +728,14 @@ impl InputBar {
     }
 }
 
+/// Route an editing key to one field, whatever kind it is.
+fn edit_field_input(field: &mut FieldInput, key: KeyEvent) -> FieldEdit {
+    match field {
+        FieldInput::Line(input) => edit_text_input(input, key),
+        FieldInput::Multi(area) => edit_text_area(area, key),
+    }
+}
+
 /// Draw a top border `───` with the left text just after the corner and the
 /// right text just before it.
 fn render_border(
@@ -787,14 +878,13 @@ fn render_multiline(
     ta.ensure_cursor_visible(area.height as usize);
     let prompt_style = Style::default().fg(colors.fg);
     let text_style = Style::default().fg(colors.fg);
-    let lines = ta.lines();
     let tw = text_width as usize;
 
     // Soft-wrap: each logical line becomes one or more visual rows, so a long
     // prompt reflows instead of being clipped. `visual[i] = (row, start, end)`
     // is the char range [start, end) of logical `row` shown on that visual row.
     let mut visual: Vec<(usize, usize, usize)> = Vec::new();
-    for (r, line) in lines.iter().enumerate() {
+    for (r, line) in ta.lines().iter().enumerate() {
         for (start, end) in wrap_line(line, tw) {
             visual.push((r, start, end));
         }
@@ -813,6 +903,31 @@ fn render_multiline(
     let height = area.height as usize;
     let scroll = cursor_vi.saturating_sub(height.saturating_sub(1));
 
+    // Hand the layout back to the area before borrowing its text again: a click
+    // on a wrapped row then maps to the character drawn there, not to the
+    // logical row it started from.
+    ta.set_wrap(visual.clone(), scroll);
+    let lines = ta.lines();
+
+    // Char range to invert on each logical row, so a selection that spans
+    // wrapped rows reads as one solid block.
+    let selected: Vec<(usize, usize, usize)> = match ta.selection_range() {
+        Some((start, end)) if start != end => (start.row..=end.row)
+            .map(|row| {
+                let from = if row == start.row { start.col } else { 0 };
+                let to = if row == end.row {
+                    end.col
+                } else {
+                    lines[row].chars().count()
+                };
+                (row, from, to)
+            })
+            .filter(|(_, from, to)| from < to)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let selected_style = Style::default().fg(colors.bg).bg(colors.fg);
+
     for r in 0..height {
         let y = area.y + r as u16;
         let prefix = if r == 0 { prompt } else { indent.as_str() };
@@ -820,6 +935,23 @@ fn render_multiline(
         if let Some(&(row, start, end)) = visual.get(scroll + r) {
             let seg: String = lines[row].chars().skip(start).take(end - start).collect();
             buf.set_stringn(text_x, y, &seg, tw, text_style);
+            // Invert the selected characters of this visual row. One
+            // logical row holds at most one selected range, and it can show
+            // on several wrapped rows of that line.
+            let selection = selected.iter().find(|(srow, _, _)| *srow == row);
+            let mut col = 0usize;
+            for (i, c) in lines[row].chars().enumerate().skip(start).take(end - start) {
+                let cw = char_width(c);
+                if col + cw > tw {
+                    break;
+                }
+                if selection.is_some_and(|(_, from, to)| i >= *from && i < *to) {
+                    for x in 0..cw {
+                        buf[(text_x + (col + x) as u16, y)].set_style(selected_style);
+                    }
+                }
+                col += cw;
+            }
         }
     }
 
@@ -892,30 +1024,6 @@ fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
         width += cw;
     }
     text.chars().count()
-}
-
-/// Apply an editing key to a single-line input. Returns whether it was
-/// handled (text may or may not have changed).
-fn edit_text_input(input: &mut TextInput, key: KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Char(c) => {
-            input.insert(c);
-            true
-        }
-        KeyCode::Backspace => input.backspace(),
-        KeyCode::Delete => input.delete(),
-        KeyCode::Left => input.move_left(),
-        KeyCode::Right => input.move_right(),
-        KeyCode::Home => {
-            input.move_home();
-            true
-        }
-        KeyCode::End => {
-            input.move_end();
-            true
-        }
-        _ => false,
-    }
 }
 
 fn hit(area: Rect, col: u16, row: u16) -> bool {
@@ -1154,5 +1262,131 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         };
         assert_eq!(b.handle_mouse(click), Some(InputBarAction::Activated(0)));
+    }
+
+    #[test]
+    fn a_drag_across_a_multiline_field_selects_the_text_under_it() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        b.multiline_mut(0).unwrap().insert_str("one two\nthree");
+        let area = Rect::new(0, 0, 40, b.height());
+        let mut buf = Buffer::empty(area);
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        // "› " occupies the first two columns, so column 4 is inside "one".
+        assert_eq!(
+            b.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), 4, 0)),
+            None
+        );
+        assert!(!b.has_selection());
+        b.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        assert_eq!(
+            b.multiline(0).unwrap().selected_text(),
+            Some("e two\nthre".into())
+        );
+        // The release ends the drag but keeps the selection, so `Ctrl+C` still
+        // has what was just dragged out.
+        b.handle_mouse(at(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert_eq!(
+            b.multiline(0).unwrap().selected_text(),
+            Some("e two\nthre".into())
+        );
+        assert!(!b.mouse_hits(at(MouseEventKind::Up(MouseButton::Left), 6, 1)));
+        // A later drag whose press was not on this bar leaves it alone.
+        b.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), 6, 0));
+        assert_eq!(
+            b.multiline(0).unwrap().selected_text(),
+            Some("e two\nthre".into())
+        );
+    }
+
+    #[test]
+    fn a_drag_clamps_to_the_field_rows() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        b.multiline_mut(0).unwrap().insert_str("one\ntwo");
+        let area = Rect::new(0, 0, 40, b.height());
+        let mut buf = Buffer::empty(area);
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        b.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), 4, 0));
+        // Dragged off the bottom of the field: the selection clamps to its last
+        // row instead of computing a position outside the field.
+        b.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), 4, 20));
+        assert_eq!(
+            b.multiline(0).unwrap().selected_text(),
+            Some("e\ntw".into())
+        );
+    }
+
+    #[test]
+    fn shift_arrows_select_and_ctrl_a_selects_all() {
+        let mut b = bar();
+        b.set_field_text(0, "needle");
+        for _ in 0..3 {
+            b.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
+        for _ in 0..3 {
+            b.handle_field_key(0, KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+        }
+        assert_eq!(b.field_text(0), "needle");
+        assert_eq!(b.selected_text(), Some("dle".into()));
+        // A plain arrow drops the selection instead of extending it.
+        b.handle_field_key(0, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(b.selected_text(), None);
+        // Ctrl+A takes the whole field.
+        b.handle_field_key(0, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(b.selected_text(), Some("needle".into()));
+    }
+
+    #[test]
+    fn a_selection_shows_inverted_in_the_prompt_box() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        b.multiline_mut(0).unwrap().insert_str("hello there");
+        b.multiline_mut(0).unwrap().select_all();
+        let area = Rect::new(0, 0, 20, b.height());
+        let mut buf = Buffer::empty(area);
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        // The text starts after the "› " prompt marker; the selection inverts
+        // the cell's foreground and background, as the chat block does.
+        let colors = ThemeColors::default();
+        let selected: Vec<u16> = (2..13)
+            .filter(|x| buf[(*x, 0)].bg == colors.fg && buf[(*x, 0)].fg == colors.bg)
+            .collect();
+        assert_eq!(selected, (2..13).collect::<Vec<_>>());
+        // Cell 13 is the cursor at the end of the text; past it the cells
+        // stay plain.
+        assert_eq!(buf[(13, 0)].bg, colors.fg);
+        assert_ne!(buf[(15, 0)].bg, colors.fg);
+    }
+
+    #[test]
+    fn the_bar_claims_only_presses_and_drags_on_its_own_rows() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        let area = Rect::new(0, 0, 40, b.height());
+        let mut buf = Buffer::empty(area);
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        let at = |kind: MouseEventKind, row| MouseEvent {
+            kind,
+            column: 3,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(b.mouse_hits(at(MouseEventKind::Down(MouseButton::Left), 0)));
+        assert!(!b.mouse_hits(at(MouseEventKind::Down(MouseButton::Left), 1)));
+        assert!(b.mouse_hits(at(MouseEventKind::Drag(MouseButton::Left), 0)));
+        assert!(!b.mouse_hits(at(MouseEventKind::ScrollUp, 0)));
+        assert!(!b.mouse_hits(at(MouseEventKind::Up(MouseButton::Left), 0)));
+        b.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), 0));
+        // Once a drag has started in the field, its release belongs to it too.
+        assert!(b.mouse_hits(at(MouseEventKind::Up(MouseButton::Left), 7)));
     }
 }
