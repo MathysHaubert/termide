@@ -684,7 +684,7 @@ impl AgentPanel {
     /// one when `None`). Refuses while a run is in flight.
     pub fn switch_session(&mut self, session: Option<Session>) -> bool {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return false;
         }
         let session = session.or_else(|| {
@@ -880,7 +880,7 @@ impl AgentPanel {
                 match self.runtime.compact(focus) {
                     Ok(()) => self.clear_input(),
                     Err(PromptError::Busy) => {
-                        self.notice("finish or stop the current task first", NoticeKind::Warn)
+                        self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn)
                     }
                     Err(error) => self.notice(error.to_string(), NoticeKind::Warn),
                 }
@@ -897,7 +897,7 @@ impl AgentPanel {
                 // Like `/new`, but the current session is deleted rather than
                 // kept, so there is nothing to resume back to.
                 if self.is_busy() {
-                    self.notice("finish or stop the current task first", NoticeKind::Warn);
+                    self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 self.clear_input();
@@ -915,7 +915,10 @@ impl AgentPanel {
                     return self.handle_status_action(RENAME_ACTION);
                 }
                 if !self.rename_session(args) {
-                    self.notice("this session has no log to name", NoticeKind::Warn);
+                    self.notice(
+                        termide_i18n::t().agent_notice_no_log_to_name(),
+                        NoticeKind::Warn,
+                    );
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
@@ -923,9 +926,15 @@ impl AgentPanel {
                 self.clear_input();
                 if self.is_busy() {
                     self.runtime.pause();
-                    self.notice("will pause after the current step", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_will_pause(),
+                        NoticeKind::Info,
+                    );
                 } else {
-                    self.notice("nothing is running to pause", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_nothing_to_pause(),
+                        NoticeKind::Info,
+                    );
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
@@ -937,14 +946,21 @@ impl AgentPanel {
                             self.busy = true;
                             self.paused = false;
                         }
-                        Err(error) => {
-                            self.notice(format!("cannot continue: {error}"), NoticeKind::Warn)
-                        }
+                        Err(error) => self.notice(
+                            termide_i18n::t().agent_notice_cannot_continue_fmt(&error.to_string()),
+                            NoticeKind::Warn,
+                        ),
                     }
                 } else if self.is_busy() {
-                    self.notice("already running", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_already_running(),
+                        NoticeKind::Info,
+                    );
                 } else {
-                    self.notice("nothing to continue", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_nothing_to_continue(),
+                        NoticeKind::Info,
+                    );
                 }
                 return vec![PanelEvent::NeedsRedraw];
             }
@@ -953,24 +969,31 @@ impl AgentPanel {
                 let args = args.trim();
                 if args.is_empty() || args == "stop" || args == "off" {
                     if self.loop_task.take().is_some() {
-                        self.notice("loop stopped", NoticeKind::Info);
+                        self.notice(
+                            termide_i18n::t().agent_notice_loop_stopped(),
+                            NoticeKind::Info,
+                        );
                     } else {
-                        self.notice("usage: /loop [interval] <prompt>", NoticeKind::Info);
+                        self.notice(
+                            termide_i18n::t().agent_notice_loop_usage(),
+                            NoticeKind::Info,
+                        );
                     }
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 let (interval, prompt) = parse_loop_args(args);
                 if prompt.is_empty() {
-                    self.notice("usage: /loop [interval] <prompt>", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_loop_usage(),
+                        NoticeKind::Info,
+                    );
                     return vec![PanelEvent::NeedsRedraw];
                 }
+                let t = termide_i18n::t();
                 self.notice(
                     match interval {
-                        Some(d) => format!(
-                            "looping every {} — /loop stop to end",
-                            fmt_secs(d.as_secs())
-                        ),
-                        None => "looping — /loop stop to end".to_string(),
+                        Some(d) => t.agent_notice_looping_every_fmt(&fmt_secs(d.as_secs())),
+                        None => t.agent_notice_looping().to_string(),
                     },
                     NoticeKind::Info,
                 );
@@ -987,14 +1010,20 @@ impl AgentPanel {
                 let args = args.trim();
                 if args.is_empty() || args == "stop" || args == "off" {
                     if self.goal_task.take().is_some() {
-                        self.notice("goal stopped", NoticeKind::Info);
+                        self.notice(
+                            termide_i18n::t().agent_notice_goal_stopped(),
+                            NoticeKind::Info,
+                        );
                     } else {
-                        self.notice("usage: /goal <what to achieve>", NoticeKind::Info);
+                        self.notice(
+                            termide_i18n::t().agent_notice_goal_usage(),
+                            NoticeKind::Info,
+                        );
                     }
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 if self.is_busy() {
-                    self.notice("finish or stop the current task first", NoticeKind::Warn);
+                    self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 return self.start_goal(args.to_string());
@@ -1045,7 +1074,7 @@ impl AgentPanel {
                     names.push(USAGE_COMMAND.to_string());
                     names.push(PROMPT_COMMAND.to_string());
                     self.notice(
-                        format!("no command named {name}; available: {}", names.join(", ")),
+                        termide_i18n::t().agent_notice_no_command_fmt(name, &names.join(", ")),
                         NoticeKind::Warn,
                     );
                     return vec![PanelEvent::NeedsRedraw];
@@ -1065,7 +1094,7 @@ impl AgentPanel {
         if self.is_busy() {
             self.runtime.steer(message);
             self.queued = self.runtime.queue_lens();
-            self.notice("queued for the next turn", NoticeKind::Info);
+            self.notice(termide_i18n::t().agent_notice_queued(), NoticeKind::Info);
         } else {
             // A fresh turn starts: surface the system prompt as a folded `#`
             // block when it is new or has changed since it was last shown, so it
@@ -1089,7 +1118,10 @@ impl AgentPanel {
             }
             match self.runtime.prompt(message) {
                 Ok(()) => self.busy = true,
-                Err(error) => self.notice(format!("cannot start: {error}"), NoticeKind::Error),
+                Err(error) => self.notice(
+                    termide_i18n::t().agent_notice_cannot_start_fmt(&error.to_string()),
+                    NoticeKind::Error,
+                ),
             }
         }
         vec![PanelEvent::NeedsRedraw]
@@ -1105,7 +1137,7 @@ impl AgentPanel {
         {
             self.loop_task = None;
             self.notice(
-                format!("loop stopped after {LOOP_MAX_ITERATIONS} iterations"),
+                termide_i18n::t().agent_notice_loop_stopped_max_fmt(LOOP_MAX_ITERATIONS),
                 NoticeKind::Warn,
             );
             return vec![PanelEvent::NeedsRedraw];
@@ -1123,7 +1155,7 @@ impl AgentPanel {
     /// each turn whether it is reached. The first work turn is the goal itself.
     fn start_goal(&mut self, goal: String) -> Vec<PanelEvent> {
         self.notice(
-            format!("working toward the goal — /goal stop to end:\n{goal}"),
+            termide_i18n::t().agent_notice_goal_working_fmt(&goal),
             NoticeKind::Info,
         );
         self.goal_task = Some(GoalTask {
@@ -1149,7 +1181,7 @@ impl AgentPanel {
         if over_cap {
             self.goal_task = None;
             self.notice(
-                format!("goal stopped after {GOAL_MAX_ITERATIONS} turns"),
+                termide_i18n::t().agent_notice_goal_stopped_max_fmt(GOAL_MAX_ITERATIONS),
                 NoticeKind::Warn,
             );
             return vec![PanelEvent::NeedsRedraw];
@@ -1170,10 +1202,16 @@ impl AgentPanel {
             None => return vec![PanelEvent::NeedsRedraw],
         };
         match self.runtime.judge(goal) {
-            Ok(()) => self.notice("checking whether the goal is reached…", NoticeKind::Info),
+            Ok(()) => self.notice(
+                termide_i18n::t().agent_notice_goal_checking(),
+                NoticeKind::Info,
+            ),
             Err(error) => {
                 self.goal_task = None;
-                self.notice(format!("cannot check the goal: {error}"), NoticeKind::Warn);
+                self.notice(
+                    termide_i18n::t().agent_notice_cannot_check_goal_fmt(&error.to_string()),
+                    NoticeKind::Warn,
+                );
             }
         }
         vec![PanelEvent::NeedsRedraw]
@@ -1192,10 +1230,11 @@ impl AgentPanel {
         if done {
             self.goal_task = None;
             let reason = reason.trim();
+            let t = termide_i18n::t();
             let msg = if reason.is_empty() {
-                "goal reached".to_string()
+                t.agent_notice_goal_reached().to_string()
             } else {
-                format!("goal reached: {reason}")
+                t.agent_notice_goal_reached_reason_fmt(reason)
             };
             self.notice(msg, NoticeKind::Info);
             return;
@@ -1208,11 +1247,17 @@ impl AgentPanel {
     /// work into a brief; the verdict arrives as an `AgentEvent::Handoff`.
     fn start_handoff(&mut self) -> Vec<PanelEvent> {
         match self.runtime.handoff() {
-            Ok(()) => self.notice("preparing a handoff brief…", NoticeKind::Info),
+            Ok(()) => self.notice(
+                termide_i18n::t().agent_notice_handoff_preparing(),
+                NoticeKind::Info,
+            ),
             Err(PromptError::Busy) => {
-                self.notice("finish or stop the current task first", NoticeKind::Warn)
+                self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn)
             }
-            Err(error) => self.notice(format!("cannot hand off: {error}"), NoticeKind::Warn),
+            Err(error) => self.notice(
+                termide_i18n::t().agent_notice_cannot_handoff_fmt(&error.to_string()),
+                NoticeKind::Warn,
+            ),
         }
         vec![PanelEvent::NeedsRedraw]
     }
@@ -1225,13 +1270,16 @@ impl AgentPanel {
         match std::fs::write(&path, brief) {
             Ok(()) => {
                 self.notice(
-                    format!("handoff written to {}", path.display()),
+                    termide_i18n::t().agent_notice_handoff_written_fmt(&path.display().to_string()),
                     NoticeKind::Info,
                 );
                 self.pending_events
                     .push(PanelEvent::FileChangedOnDisk(path));
             }
-            Err(error) => self.notice(format!("cannot write handoff: {error}"), NoticeKind::Warn),
+            Err(error) => self.notice(
+                termide_i18n::t().agent_notice_cannot_write_handoff_fmt(&error.to_string()),
+                NoticeKind::Warn,
+            ),
         }
     }
 
@@ -1253,7 +1301,7 @@ impl AgentPanel {
         self.goal_task = None;
         if self.is_busy() {
             self.runtime.abort();
-            self.notice("stopping…", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_stopping(), NoticeKind::Warn);
         }
     }
 
@@ -1390,10 +1438,7 @@ impl AgentPanel {
             }
             AgentEvent::Paused => {
                 self.paused = true;
-                self.notice(
-                    "paused after the current step; /continue to resume",
-                    NoticeKind::Info,
-                );
+                self.notice(termide_i18n::t().agent_notice_paused(), NoticeKind::Info);
             }
             AgentEvent::AgentEnd => {
                 self.busy = false;
@@ -1419,7 +1464,10 @@ impl AgentPanel {
                 // rather than looping on the failure.
                 if self.goal_task.is_some() && self.goal_errored {
                     self.goal_task = None;
-                    self.notice("goal stopped after a failed turn", NoticeKind::Warn);
+                    self.notice(
+                        termide_i18n::t().agent_notice_goal_stopped_failed(),
+                        NoticeKind::Warn,
+                    );
                 } else if !self.paused && self.pending.is_none() {
                     if let Some(task) = self.goal_task.as_mut() {
                         task.judge_at = Some(Instant::now());
@@ -1447,7 +1495,12 @@ impl AgentPanel {
                 delay_ms,
                 error,
             }) => self.notice(
-                format!("retry {attempt}/{max_attempts} in {delay_ms} ms: {error}"),
+                termide_i18n::t().agent_notice_retry_fmt(
+                    attempt as usize,
+                    max_attempts as usize,
+                    delay_ms,
+                    &error.to_string(),
+                ),
                 NoticeKind::Warn,
             ),
             AgentEvent::MessageUpdate(_) => {}
@@ -1561,7 +1614,10 @@ impl AgentPanel {
             } => self.queued = (steering, follow_up),
             AgentEvent::CompactionStart { .. } => {
                 self.set_phase(Phase::Compact);
-                self.notice("compacting the conversation…", NoticeKind::Info)
+                self.notice(
+                    termide_i18n::t().agent_notice_compacting(),
+                    NoticeKind::Info,
+                )
             }
             AgentEvent::Compacted {
                 summary,
@@ -1569,7 +1625,7 @@ impl AgentPanel {
                 tokens_before,
             } => {
                 self.notice(
-                    format!("compacted {tokens_before} tokens, kept the last {kept} messages"),
+                    termide_i18n::t().agent_notice_compacted_fmt(tokens_before, kept),
                     NoticeKind::Info,
                 );
                 if let Some(session) = &mut self.session {
@@ -1578,13 +1634,17 @@ impl AgentPanel {
                     }
                 }
             }
-            AgentEvent::CompactionFailed { error } => {
-                self.notice(format!("compaction failed: {error}"), NoticeKind::Warn)
-            }
+            AgentEvent::CompactionFailed { error } => self.notice(
+                termide_i18n::t().agent_notice_compaction_failed_fmt(&error.to_string()),
+                NoticeKind::Warn,
+            ),
             AgentEvent::GoalJudged { done, reason } => self.on_goal_verdict(done, &reason),
             AgentEvent::GoalJudgeFailed { error } => {
                 self.goal_task = None;
-                self.notice(format!("goal check failed: {error}"), NoticeKind::Warn);
+                self.notice(
+                    termide_i18n::t().agent_notice_goal_check_failed_fmt(&error.to_string()),
+                    NoticeKind::Warn,
+                );
             }
             AgentEvent::Handoff { brief } => match brief {
                 Ok(text) => {
@@ -1602,7 +1662,10 @@ impl AgentPanel {
                     .with_cancel(t.agent_handoff_dismiss());
                     self.pending = Some(Pending::Handoff { form, brief: text });
                 }
-                Err(error) => self.notice(format!("handoff failed: {error}"), NoticeKind::Warn),
+                Err(error) => self.notice(
+                    termide_i18n::t().agent_notice_handoff_failed_fmt(&error.to_string()),
+                    NoticeKind::Warn,
+                ),
             },
         }
     }
@@ -1702,7 +1765,7 @@ impl AgentPanel {
             Err(error) => {
                 log::warn!("cannot open {}: {error}", summary.path.display());
                 self.notice(
-                    format!("cannot open that session: {error}"),
+                    termide_i18n::t().agent_notice_cannot_open_session_fmt(&error.to_string()),
                     NoticeKind::Error,
                 );
             }
@@ -1764,7 +1827,7 @@ impl AgentPanel {
     /// cannot list models falls back to a typed id.
     fn request_model_list(&mut self) -> Vec<PanelEvent> {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return vec![PanelEvent::NeedsRedraw];
         }
         if self.model_fetch.is_some() {
@@ -1782,7 +1845,10 @@ impl AgentPanel {
         let mut models = match result {
             Ok(models) => models,
             Err(error) => {
-                self.notice(format!("model list unavailable: {error}"), NoticeKind::Info);
+                self.notice(
+                    termide_i18n::t().agent_notice_model_list_unavailable_fmt(&error.to_string()),
+                    NoticeKind::Info,
+                );
                 Vec::new()
             }
         };
@@ -1817,7 +1883,10 @@ impl AgentPanel {
         let t = termide_i18n::t();
         let models = self.runtime.available_models();
         if models.is_empty() {
-            self.notice("this agent offers no model choices", NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_no_model_choices(),
+                NoticeKind::Info,
+            );
             return vec![PanelEvent::NeedsRedraw];
         }
         let current = self.runtime.current_model();
@@ -1946,7 +2015,7 @@ impl AgentPanel {
         let request = self.plan_prompt.request.trim().to_string();
         if request.is_empty() {
             self.notice(
-                "system/plan.md names no request: tell the agent to go ahead yourself",
+                termide_i18n::t().agent_notice_plan_no_request(),
                 NoticeKind::Warn,
             );
         } else {
@@ -1981,13 +2050,16 @@ impl AgentPanel {
             match event {
                 LateTools::Ready { source, tools } => {
                     self.notice(
-                        format!("mcp {source}: {} tools connected", tools.len()),
+                        termide_i18n::t().agent_notice_mcp_connected_fmt(&source, tools.len()),
                         NoticeKind::Info,
                     );
                     self.waiting_tools.extend(tools);
                 }
                 LateTools::Failed { source, error } => {
-                    self.notice(format!("mcp {source}: {error}"), NoticeKind::Warn);
+                    self.notice(
+                        termide_i18n::t().agent_notice_mcp_error_fmt(&source, &error.to_string()),
+                        NoticeKind::Warn,
+                    );
                 }
             }
         }
@@ -2074,14 +2146,17 @@ impl AgentPanel {
             return true;
         }
         let Some(profile) = self.catalog.resolve(name) else {
-            self.notice(format!("no agent named {name}"), NoticeKind::Warn);
+            self.notice(
+                termide_i18n::t().agent_notice_no_agent_fmt(name),
+                NoticeKind::Warn,
+            );
             return false;
         };
         // An external agent, or leaving one: the runtime is rebuilt on the
         // same session log, which is replayed into the transcript only.
         if profile.backend.is_some() || self.external {
             if self.is_busy() {
-                self.notice("finish or stop the current task first", NoticeKind::Warn);
+                self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
                 return false;
             }
             if let Some(session) = &mut self.session {
@@ -2103,7 +2178,10 @@ impl AgentPanel {
             let session = self.session.take();
             self.switch_session(session);
             if !self.is_fresh() {
-                self.notice(format!("agent: {name}"), NoticeKind::Info);
+                self.notice(
+                    termide_i18n::t().agent_notice_agent_fmt(name),
+                    NoticeKind::Info,
+                );
             }
             return true;
         }
@@ -2128,7 +2206,7 @@ impl AgentPanel {
             agent.set_model(worker_model);
         })) {
             self.notice(
-                format!("cannot switch the agent: {error}"),
+                termide_i18n::t().agent_notice_cannot_switch_agent_fmt(&error.to_string()),
                 NoticeKind::Warn,
             );
             return false;
@@ -2160,7 +2238,10 @@ impl AgentPanel {
         }
         self.agent = name.to_string();
         if !self.is_fresh() {
-            self.notice(format!("agent: {name}"), NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_agent_fmt(name),
+                NoticeKind::Info,
+            );
         }
         true
     }
@@ -2192,7 +2273,7 @@ impl AgentPanel {
             .update(Box::new(move |agent| agent.set_model(worker_model)))
         {
             self.notice(
-                format!("cannot switch the model: {error}"),
+                termide_i18n::t().agent_notice_cannot_switch_model_fmt(&error.to_string()),
                 NoticeKind::Warn,
             );
             return false;
@@ -2210,7 +2291,10 @@ impl AgentPanel {
         // A silent window adoption (same id) leaves no notice; nor does a fresh
         // session, where the banner shows the new model instead.
         if id_changed && !self.is_fresh() {
-            self.notice(format!("model: {id}"), NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_model_fmt(id),
+                NoticeKind::Info,
+            );
         }
         true
     }
@@ -2243,7 +2327,7 @@ impl AgentPanel {
             return false;
         }
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return false;
         }
         let reasoning = !self.model.reasoning;
@@ -2255,7 +2339,7 @@ impl AgentPanel {
             .update(Box::new(move |agent| agent.set_model(worker_model)))
         {
             self.notice(
-                format!("cannot change reasoning: {error}"),
+                termide_i18n::t().agent_notice_cannot_change_reasoning_fmt(&error.to_string()),
                 NoticeKind::Warn,
             );
             return false;
@@ -2266,8 +2350,13 @@ impl AgentPanel {
                 log::warn!("agent session write failed: {error}");
             }
         }
+        let t = termide_i18n::t();
         self.notice(
-            format!("reasoning: {}", if reasoning { "on" } else { "off" }),
+            if reasoning {
+                t.agent_notice_reasoning_on()
+            } else {
+                t.agent_notice_reasoning_off()
+            },
             NoticeKind::Info,
         );
         true
@@ -2370,7 +2459,10 @@ impl AgentPanel {
             Item::Notice { .. } => return vec![PanelEvent::NeedsRedraw],
         };
         if content.trim().is_empty() {
-            self.notice("nothing to open yet", NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_nothing_to_open(),
+                NoticeKind::Info,
+            );
             return vec![PanelEvent::NeedsRedraw];
         }
         let safe: String = name
@@ -2387,7 +2479,10 @@ impl AgentPanel {
         match std::fs::write(&path, content) {
             Ok(()) => vec![PanelEvent::ViewFile(path), PanelEvent::NeedsRedraw],
             Err(error) => {
-                self.notice(format!("cannot open the block: {error}"), NoticeKind::Error);
+                self.notice(
+                    termide_i18n::t().agent_notice_cannot_open_block_fmt(&error.to_string()),
+                    NoticeKind::Error,
+                );
                 vec![PanelEvent::NeedsRedraw]
             }
         }
@@ -2476,9 +2571,7 @@ impl AgentPanel {
             items.push(
                 CompletionItem::new(UNDO_COMMAND)
                     .with_label(format!("/{UNDO_COMMAND}"))
-                    .with_description(
-                        "Undo the last request: restore its files, rewind the session",
-                    ),
+                    .with_description(termide_i18n::t().agent_cmd_desc_undo()),
             );
         }
         if COMPACT_COMMAND.starts_with(prefix) && !self.external {
@@ -2486,7 +2579,7 @@ impl AgentPanel {
                 CompletionItem::new(COMPACT_COMMAND)
                     .with_label(format!("/{COMPACT_COMMAND}"))
                     .with_hint("[focus]")
-                    .with_description("Summarise the older part of the session now"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_compact()),
             );
         }
         if self.session_dir.is_some() {
@@ -2494,14 +2587,14 @@ impl AgentPanel {
                 items.push(
                     CompletionItem::new(NEW_COMMAND)
                         .with_label(format!("/{NEW_COMMAND}"))
-                        .with_description("Start a fresh session, keeping the current one"),
+                        .with_description(termide_i18n::t().agent_cmd_desc_new()),
                 );
             }
             if CLEAR_COMMAND.starts_with(prefix) {
                 items.push(
                     CompletionItem::new(CLEAR_COMMAND)
                         .with_label(format!("/{CLEAR_COMMAND}"))
-                        .with_description("Discard the current session and start fresh"),
+                        .with_description(termide_i18n::t().agent_cmd_desc_clear()),
                 );
             }
             if RENAME_COMMAND.starts_with(prefix) {
@@ -2509,7 +2602,7 @@ impl AgentPanel {
                     CompletionItem::new(RENAME_COMMAND)
                         .with_label(format!("/{RENAME_COMMAND}"))
                         .with_hint("[name]")
-                        .with_description("Rename this session"),
+                        .with_description(termide_i18n::t().agent_cmd_desc_rename()),
                 );
             }
             if NAME_COMMAND.starts_with(prefix) {
@@ -2517,7 +2610,7 @@ impl AgentPanel {
                     CompletionItem::new(NAME_COMMAND)
                         .with_label(format!("/{NAME_COMMAND}"))
                         .with_hint("[name]")
-                        .with_description("Rename this session"),
+                        .with_description(termide_i18n::t().agent_cmd_desc_rename()),
                 );
             }
         }
@@ -2526,14 +2619,14 @@ impl AgentPanel {
             items.push(
                 CompletionItem::new(PAUSE_COMMAND)
                     .with_label(format!("/{PAUSE_COMMAND}"))
-                    .with_description("Pause after the current step"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_pause()),
             );
         }
         if self.paused && CONTINUE_COMMAND.starts_with(prefix) {
             items.push(
                 CompletionItem::new(CONTINUE_COMMAND)
                     .with_label(format!("/{CONTINUE_COMMAND}"))
-                    .with_description("Resume the paused run"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_continue()),
             );
         }
         if LOOP_COMMAND.starts_with(prefix) {
@@ -2541,7 +2634,7 @@ impl AgentPanel {
                 CompletionItem::new(LOOP_COMMAND)
                     .with_label(format!("/{LOOP_COMMAND}"))
                     .with_hint("[interval] <prompt>")
-                    .with_description("Re-run a prompt on an interval, or stop the loop"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_loop()),
             );
         }
         if GOAL_COMMAND.starts_with(prefix) {
@@ -2549,30 +2642,28 @@ impl AgentPanel {
                 CompletionItem::new(GOAL_COMMAND)
                     .with_label(format!("/{GOAL_COMMAND}"))
                     .with_hint("<what to achieve>")
-                    .with_description(
-                        "Work autonomously toward a goal until a judge says it is reached",
-                    ),
+                    .with_description(termide_i18n::t().agent_cmd_desc_goal()),
             );
         }
         if HANDOFF_COMMAND.starts_with(prefix) && !self.external {
             items.push(
                 CompletionItem::new(HANDOFF_COMMAND)
                     .with_label(format!("/{HANDOFF_COMMAND}"))
-                    .with_description("Brief the unfinished work for a new session or agent"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_handoff()),
             );
         }
         if USAGE_COMMAND.starts_with(prefix) {
             items.push(
                 CompletionItem::new(USAGE_COMMAND)
                     .with_label(format!("/{USAGE_COMMAND}"))
-                    .with_description("Show this session's model, tokens, context and more"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_usage()),
             );
         }
         if PROMPT_COMMAND.starts_with(prefix) {
             items.push(
                 CompletionItem::new(PROMPT_COMMAND)
                     .with_label(format!("/{PROMPT_COMMAND}"))
-                    .with_description("Open the assembled system prompt in a viewer"),
+                    .with_description(termide_i18n::t().agent_cmd_desc_prompt()),
             );
         }
         if items.is_empty() {
@@ -2733,7 +2824,7 @@ impl AgentPanel {
     /// conversation is rewound to before it.
     fn ask_undo(&mut self) -> Vec<PanelEvent> {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return vec![PanelEvent::NeedsRedraw];
         }
         let files = self
@@ -2743,7 +2834,7 @@ impl AgentPanel {
             .unwrap_or_default();
         if files.is_empty() {
             self.notice(
-                "nothing to undo: the last request changed no files",
+                termide_i18n::t().agent_notice_nothing_to_undo(),
                 NoticeKind::Info,
             );
             return vec![PanelEvent::NeedsRedraw];
@@ -2777,7 +2868,7 @@ impl AgentPanel {
     /// answer comes back as `PanelCommand::Confirmed(DELETE_SESSION_ACTION)`.
     fn ask_delete_session(&mut self) -> Vec<PanelEvent> {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return vec![PanelEvent::NeedsRedraw];
         }
         let label = self
@@ -2900,16 +2991,22 @@ impl AgentPanel {
     /// back to before a chosen change.
     fn ask_rollback(&mut self) -> Vec<PanelEvent> {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return vec![PanelEvent::NeedsRedraw];
         }
         let Some(store) = self.checkpoints.clone() else {
-            self.notice("nothing to roll back", NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_nothing_to_rollback(),
+                NoticeKind::Info,
+            );
             return vec![PanelEvent::NeedsRedraw];
         };
         let checkpoints = store.lock().unwrap().checkpoints();
         if checkpoints.is_empty() {
-            self.notice("nothing to roll back", NoticeKind::Info);
+            self.notice(
+                termide_i18n::t().agent_notice_nothing_to_rollback(),
+                NoticeKind::Info,
+            );
             return vec![PanelEvent::NeedsRedraw];
         }
         let options = checkpoints
@@ -2945,7 +3042,7 @@ impl AgentPanel {
     /// rewinding the conversation to before the oldest of them.
     fn perform_rollback(&mut self, steps_from_newest: usize) -> Vec<PanelEvent> {
         if self.is_busy() {
-            self.notice("finish or stop the current task first", NoticeKind::Warn);
+            self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return vec![PanelEvent::NeedsRedraw];
         }
         let Some(store) = self.checkpoints.clone() else {
@@ -2976,11 +3073,9 @@ impl AgentPanel {
         }
         let session = self.session.take();
         self.switch_session(session);
+        let t = termide_i18n::t();
         self.notice(
-            format!(
-                "rolled back: {restored} file{} restored, conversation rewound",
-                if restored == 1 { "" } else { "s" }
-            ),
+            t.agent_notice_rolled_back_fmt(restored, t.pluralize(restored, "file")),
             NoticeKind::Info,
         );
         events.push(PanelEvent::NeedsRedraw);
@@ -2997,7 +3092,10 @@ impl AgentPanel {
         let undone = match undone {
             Ok(undone) => undone,
             Err(error) => {
-                self.notice(format!("cannot undo: {error}"), NoticeKind::Error);
+                self.notice(
+                    termide_i18n::t().agent_notice_cannot_undo_fmt(&error.to_string()),
+                    NoticeKind::Error,
+                );
                 return vec![PanelEvent::NeedsRedraw];
             }
         };
@@ -3014,11 +3112,9 @@ impl AgentPanel {
         let count = undone.files.len();
         let session = self.session.take();
         self.switch_session(session);
+        let t = termide_i18n::t();
         self.notice(
-            format!(
-                "undid the last request: {count} file{} restored, conversation rewound",
-                if count == 1 { "" } else { "s" }
-            ),
+            t.agent_notice_undid_fmt(count, t.pluralize(count, "file")),
             NoticeKind::Info,
         );
         events.push(PanelEvent::NeedsRedraw);
@@ -3031,7 +3127,7 @@ impl AgentPanel {
         let verdict = self.rules.evaluate("command", &script.name);
         if verdict == Some(Decision::Deny) {
             self.notice(
-                format!("/{} is denied by the permission rules", script.name),
+                termide_i18n::t().agent_notice_command_denied_fmt(&script.name),
                 NoticeKind::Warn,
             );
             return;
@@ -3064,7 +3160,10 @@ impl AgentPanel {
     /// Run the script on a thread; `tick` sends its output as the request.
     fn start_command(&mut self, script: CommandScript, args: String) {
         if self.command_run.is_some() {
-            self.notice("a command is still running", NoticeKind::Warn);
+            self.notice(
+                termide_i18n::t().agent_notice_command_running(),
+                NoticeKind::Warn,
+            );
             return;
         }
         let (tx, rx) = mpsc::channel();
@@ -3098,7 +3197,10 @@ impl AgentPanel {
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.command_run = None;
-                self.notice("the command was dropped", NoticeKind::Error);
+                self.notice(
+                    termide_i18n::t().agent_notice_command_dropped(),
+                    NoticeKind::Error,
+                );
                 true
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => false,
@@ -4002,7 +4104,7 @@ impl Panel for AgentPanel {
                 Ok(path) => vec![PanelEvent::ViewFile(path)],
                 Err(error) => {
                     self.notice(
-                        format!("cannot write the system prompt: {error}"),
+                        termide_i18n::t().agent_notice_cannot_write_prompt_fmt(&error.to_string()),
                         NoticeKind::Error,
                     );
                     vec![PanelEvent::NeedsRedraw]
@@ -4330,9 +4432,15 @@ impl Panel for AgentPanel {
                 if self.is_busy() {
                     self.abort();
                 } else if self.goal_task.take().is_some() {
-                    self.notice("goal stopped", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_goal_stopped(),
+                        NoticeKind::Info,
+                    );
                 } else if self.loop_task.take().is_some() {
-                    self.notice("loop stopped", NoticeKind::Info);
+                    self.notice(
+                        termide_i18n::t().agent_notice_loop_stopped(),
+                        NoticeKind::Info,
+                    );
                 } else if !self.input_area().is_empty() {
                     self.clear_input();
                     self.after_edit();
@@ -4616,7 +4724,10 @@ impl Panel for AgentPanel {
                 Some(Some(text)) if !text.trim().is_empty() => {
                     if let Err(error) = termide_ui::clipboard::copy(&text) {
                         log::warn!("agent copy failed: {error}");
-                        self.notice("could not copy to the clipboard", NoticeKind::Warn);
+                        self.notice(
+                            termide_i18n::t().agent_notice_clipboard_failed(),
+                            NoticeKind::Warn,
+                        );
                     }
                     CommandResult::Handled(true)
                 }
@@ -4661,11 +4772,15 @@ impl Panel for AgentPanel {
                         Ok(()) => {
                             self.model.id = model.id.clone();
                             if !self.is_fresh() {
-                                self.notice(format!("model: {}", model.id), NoticeKind::Info);
+                                self.notice(
+                                    termide_i18n::t().agent_notice_model_fmt(&model.id),
+                                    NoticeKind::Info,
+                                );
                             }
                         }
                         Err(error) => self.notice(
-                            format!("cannot switch the model: {error}"),
+                            termide_i18n::t()
+                                .agent_notice_cannot_switch_model_fmt(&error.to_string()),
                             NoticeKind::Warn,
                         ),
                     }
@@ -5845,7 +5960,7 @@ mod tests {
             .transcript()
             .items()
             .iter()
-            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains("goal stopped"))));
+            .any(|i| matches!(i, Item::Notice { text, .. } if text.contains(termide_i18n::t().agent_notice_goal_stopped()))));
     }
 
     fn roles(messages: &[Message]) -> Vec<&'static str> {

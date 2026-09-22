@@ -66,20 +66,6 @@ impl RuntimeTranslation {
         }
         result
     }
-
-    fn pluralize(&self, count: usize, key: &str) -> &str {
-        if let Some(rules) = self.plurals.get(key) {
-            match count {
-                1 => &rules.one,
-                2..=4 if rules.few.is_some() => rules.few.as_deref().unwrap_or(&rules.other),
-                _ => &rules.other,
-            }
-        } else if count == 1 {
-            ""
-        } else {
-            "s"
-        }
-    }
 }
 
 /// Generates trivial translation methods of the shape
@@ -96,6 +82,20 @@ macro_rules! i18n_get_string_methods {
 }
 
 impl Translation for RuntimeTranslation {
+    fn pluralize(&self, count: usize, key: &str) -> &str {
+        if let Some(rules) = self.plurals.get(key) {
+            match count {
+                1 => &rules.one,
+                2..=4 if rules.few.is_some() => rules.few.as_deref().unwrap_or(&rules.other),
+                _ => &rules.other,
+            }
+        } else if count == 1 {
+            ""
+        } else {
+            "s"
+        }
+    }
+
     // Generate 393 trivial `fn name(&self) -> &str` wrappers over get_string("name").
     i18n_get_string_methods! {
         git_operation_cancelled,
@@ -397,6 +397,47 @@ impl Translation for RuntimeTranslation {
         agent_cmd_run_session,
         agent_cmd_run_always,
         agent_cmd_dont_run,
+        agent_cmd_desc_compact,
+        agent_cmd_desc_undo,
+        agent_cmd_desc_new,
+        agent_cmd_desc_clear,
+        agent_cmd_desc_rename,
+        agent_cmd_desc_pause,
+        agent_cmd_desc_continue,
+        agent_cmd_desc_loop,
+        agent_cmd_desc_goal,
+        agent_cmd_desc_handoff,
+        agent_cmd_desc_usage,
+        agent_cmd_desc_prompt,
+        agent_notice_busy,
+        agent_notice_no_log_to_name,
+        agent_notice_will_pause,
+        agent_notice_nothing_to_pause,
+        agent_notice_already_running,
+        agent_notice_nothing_to_continue,
+        agent_notice_loop_stopped,
+        agent_notice_loop_usage,
+        agent_notice_goal_stopped,
+        agent_notice_goal_usage,
+        agent_notice_queued,
+        agent_notice_goal_checking,
+        agent_notice_handoff_preparing,
+        agent_notice_stopping,
+        agent_notice_goal_stopped_failed,
+        agent_notice_compacting,
+        agent_notice_no_model_choices,
+        agent_notice_paused,
+        agent_notice_plan_no_request,
+        agent_notice_nothing_to_open,
+        agent_notice_nothing_to_undo,
+        agent_notice_nothing_to_rollback,
+        agent_notice_command_running,
+        agent_notice_command_dropped,
+        agent_notice_clipboard_failed,
+        agent_notice_goal_reached,
+        agent_notice_looping,
+        agent_notice_reasoning_on,
+        agent_notice_reasoning_off,
         agent_change_agent,
         agent_prompts,
         agent_no_prompts,
@@ -726,6 +767,185 @@ impl Translation for RuntimeTranslation {
         self.format(
             "agent_command_run_title_fmt",
             &[("name", name), ("path", path)],
+        )
+    }
+
+    fn agent_notice_cannot_continue_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_continue_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_start_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_start_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_check_goal_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_check_goal_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_handoff_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_handoff_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_write_handoff_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_write_handoff_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_compaction_failed_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_compaction_failed_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_goal_check_failed_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_goal_check_failed_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_handoff_failed_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_handoff_failed_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_model_list_unavailable_fmt(&self, error: &str) -> String {
+        self.format(
+            "agent_notice_model_list_unavailable_fmt",
+            &[("error", error)],
+        )
+    }
+
+    fn agent_notice_mcp_error_fmt(&self, source: &str, error: &str) -> String {
+        self.format(
+            "agent_notice_mcp_error_fmt",
+            &[("source", source), ("error", error)],
+        )
+    }
+
+    fn agent_notice_mcp_connected_fmt(&self, source: &str, count: usize) -> String {
+        self.format(
+            "agent_notice_mcp_connected_fmt",
+            &[("source", source), ("count", &count.to_string())],
+        )
+    }
+
+    fn agent_notice_no_agent_fmt(&self, name: &str) -> String {
+        self.format("agent_notice_no_agent_fmt", &[("name", name)])
+    }
+
+    fn agent_notice_agent_fmt(&self, name: &str) -> String {
+        self.format("agent_notice_agent_fmt", &[("name", name)])
+    }
+
+    fn agent_notice_cannot_switch_agent_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_switch_agent_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_switch_model_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_switch_model_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_change_reasoning_fmt(&self, error: &str) -> String {
+        self.format(
+            "agent_notice_cannot_change_reasoning_fmt",
+            &[("error", error)],
+        )
+    }
+
+    fn agent_notice_model_fmt(&self, id: &str) -> String {
+        self.format("agent_notice_model_fmt", &[("id", id)])
+    }
+
+    fn agent_notice_cannot_open_session_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_open_session_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_open_block_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_open_block_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_undo_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_undo_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_cannot_write_prompt_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_cannot_write_prompt_fmt", &[("error", error)])
+    }
+
+    fn agent_notice_retry_fmt(
+        &self,
+        attempt: usize,
+        max: usize,
+        delay_ms: u64,
+        error: &str,
+    ) -> String {
+        self.format(
+            "agent_notice_retry_fmt",
+            &[
+                ("attempt", &attempt.to_string()),
+                ("max", &max.to_string()),
+                ("delay_ms", &delay_ms.to_string()),
+                ("error", error),
+            ],
+        )
+    }
+
+    fn agent_notice_compacted_fmt(&self, tokens: u64, kept: usize) -> String {
+        self.format(
+            "agent_notice_compacted_fmt",
+            &[("tokens", &tokens.to_string()), ("kept", &kept.to_string())],
+        )
+    }
+
+    fn agent_notice_handoff_written_fmt(&self, path: &str) -> String {
+        self.format("agent_notice_handoff_written_fmt", &[("path", path)])
+    }
+
+    fn agent_notice_no_command_fmt(&self, name: &str, available: &str) -> String {
+        self.format(
+            "agent_notice_no_command_fmt",
+            &[("name", name), ("available", available)],
+        )
+    }
+
+    fn agent_notice_loop_stopped_max_fmt(&self, count: usize) -> String {
+        self.format(
+            "agent_notice_loop_stopped_max_fmt",
+            &[("count", &count.to_string())],
+        )
+    }
+
+    fn agent_notice_goal_stopped_max_fmt(&self, count: usize) -> String {
+        self.format(
+            "agent_notice_goal_stopped_max_fmt",
+            &[("count", &count.to_string())],
+        )
+    }
+
+    fn agent_notice_goal_working_fmt(&self, goal: &str) -> String {
+        self.format("agent_notice_goal_working_fmt", &[("goal", goal)])
+    }
+
+    fn agent_notice_looping_every_fmt(&self, interval: &str) -> String {
+        self.format("agent_notice_looping_every_fmt", &[("interval", interval)])
+    }
+
+    fn agent_notice_goal_reached_reason_fmt(&self, reason: &str) -> String {
+        self.format(
+            "agent_notice_goal_reached_reason_fmt",
+            &[("reason", reason)],
+        )
+    }
+
+    fn agent_notice_command_denied_fmt(&self, name: &str) -> String {
+        self.format("agent_notice_command_denied_fmt", &[("name", name)])
+    }
+
+    fn agent_notice_rolled_back_fmt(&self, count: usize, plural: &str) -> String {
+        self.format(
+            "agent_notice_rolled_back_fmt",
+            &[("count", &count.to_string()), ("plural", plural)],
+        )
+    }
+
+    fn agent_notice_undid_fmt(&self, count: usize, plural: &str) -> String {
+        self.format(
+            "agent_notice_undid_fmt",
+            &[("count", &count.to_string()), ("plural", plural)],
         )
     }
 

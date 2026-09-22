@@ -51,6 +51,10 @@ static LANGUAGE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 /// Translation trait for all user-facing strings.
 pub trait Translation: Send + Sync {
+    /// The plural suffix (or form) for `count` under `key`'s rules in the
+    /// active language; empty when no rule matches and `count == 1`.
+    fn pluralize(&self, count: usize, key: &str) -> &str;
+
     // File Manager operations
     fn fm_paste_confirm(&self, count: usize, mode: &str, dest: &str) -> String;
     fn fm_copy_prompt(&self, name: &str) -> String;
@@ -518,6 +522,92 @@ pub trait Translation: Send + Sync {
     fn agent_cmd_run_always(&self) -> &str;
     /// Command card: do not run
     fn agent_cmd_dont_run(&self) -> &str;
+
+    // Agent panel — `/`-command completion descriptions
+    fn agent_cmd_desc_compact(&self) -> &str;
+    fn agent_cmd_desc_undo(&self) -> &str;
+    fn agent_cmd_desc_new(&self) -> &str;
+    fn agent_cmd_desc_clear(&self) -> &str;
+    fn agent_cmd_desc_rename(&self) -> &str;
+    fn agent_cmd_desc_pause(&self) -> &str;
+    fn agent_cmd_desc_continue(&self) -> &str;
+    fn agent_cmd_desc_loop(&self) -> &str;
+    fn agent_cmd_desc_goal(&self) -> &str;
+    fn agent_cmd_desc_handoff(&self) -> &str;
+    fn agent_cmd_desc_usage(&self) -> &str;
+    fn agent_cmd_desc_prompt(&self) -> &str;
+
+    // Agent panel — transient notices (static)
+    fn agent_notice_busy(&self) -> &str;
+    fn agent_notice_no_log_to_name(&self) -> &str;
+    fn agent_notice_will_pause(&self) -> &str;
+    fn agent_notice_nothing_to_pause(&self) -> &str;
+    fn agent_notice_already_running(&self) -> &str;
+    fn agent_notice_nothing_to_continue(&self) -> &str;
+    fn agent_notice_loop_stopped(&self) -> &str;
+    fn agent_notice_loop_usage(&self) -> &str;
+    fn agent_notice_goal_stopped(&self) -> &str;
+    fn agent_notice_goal_usage(&self) -> &str;
+    fn agent_notice_queued(&self) -> &str;
+    fn agent_notice_goal_checking(&self) -> &str;
+    fn agent_notice_handoff_preparing(&self) -> &str;
+    fn agent_notice_stopping(&self) -> &str;
+    fn agent_notice_goal_stopped_failed(&self) -> &str;
+    fn agent_notice_compacting(&self) -> &str;
+    fn agent_notice_no_model_choices(&self) -> &str;
+    fn agent_notice_paused(&self) -> &str;
+    fn agent_notice_plan_no_request(&self) -> &str;
+    fn agent_notice_nothing_to_open(&self) -> &str;
+    fn agent_notice_nothing_to_undo(&self) -> &str;
+    fn agent_notice_nothing_to_rollback(&self) -> &str;
+    fn agent_notice_command_running(&self) -> &str;
+    fn agent_notice_command_dropped(&self) -> &str;
+    fn agent_notice_clipboard_failed(&self) -> &str;
+    fn agent_notice_goal_reached(&self) -> &str;
+    fn agent_notice_looping(&self) -> &str;
+    fn agent_notice_reasoning_on(&self) -> &str;
+    fn agent_notice_reasoning_off(&self) -> &str;
+
+    // Agent panel — transient notices (with values)
+    fn agent_notice_cannot_continue_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_start_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_check_goal_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_handoff_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_write_handoff_fmt(&self, error: &str) -> String;
+    fn agent_notice_compaction_failed_fmt(&self, error: &str) -> String;
+    fn agent_notice_goal_check_failed_fmt(&self, error: &str) -> String;
+    fn agent_notice_handoff_failed_fmt(&self, error: &str) -> String;
+    fn agent_notice_model_list_unavailable_fmt(&self, error: &str) -> String;
+    fn agent_notice_mcp_error_fmt(&self, source: &str, error: &str) -> String;
+    fn agent_notice_mcp_connected_fmt(&self, source: &str, count: usize) -> String;
+    fn agent_notice_no_agent_fmt(&self, name: &str) -> String;
+    fn agent_notice_agent_fmt(&self, name: &str) -> String;
+    fn agent_notice_cannot_switch_agent_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_switch_model_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_change_reasoning_fmt(&self, error: &str) -> String;
+    fn agent_notice_model_fmt(&self, id: &str) -> String;
+    fn agent_notice_cannot_open_session_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_open_block_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_undo_fmt(&self, error: &str) -> String;
+    fn agent_notice_cannot_write_prompt_fmt(&self, error: &str) -> String;
+    fn agent_notice_retry_fmt(
+        &self,
+        attempt: usize,
+        max: usize,
+        delay_ms: u64,
+        error: &str,
+    ) -> String;
+    fn agent_notice_compacted_fmt(&self, tokens: u64, kept: usize) -> String;
+    fn agent_notice_handoff_written_fmt(&self, path: &str) -> String;
+    fn agent_notice_no_command_fmt(&self, name: &str, available: &str) -> String;
+    fn agent_notice_loop_stopped_max_fmt(&self, count: usize) -> String;
+    fn agent_notice_goal_stopped_max_fmt(&self, count: usize) -> String;
+    fn agent_notice_goal_working_fmt(&self, goal: &str) -> String;
+    fn agent_notice_looping_every_fmt(&self, interval: &str) -> String;
+    fn agent_notice_goal_reached_reason_fmt(&self, reason: &str) -> String;
+    fn agent_notice_command_denied_fmt(&self, name: &str) -> String;
+    fn agent_notice_rolled_back_fmt(&self, count: usize, plural: &str) -> String;
+    fn agent_notice_undid_fmt(&self, count: usize, plural: &str) -> String;
 
     /// Agent panel: open the agent picker
     fn agent_change_agent(&self) -> &str;
