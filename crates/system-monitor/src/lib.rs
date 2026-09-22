@@ -403,9 +403,6 @@ impl SystemMonitor {
     /// changed and the cache is fresh.
     #[cfg(unix)]
     pub fn get_disk_space_info_cached(&self, path: &Path) -> Option<DiskSpaceInfo> {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-
         let canonical = path.canonicalize().ok()?;
 
         let device = {
@@ -433,29 +430,13 @@ impl SystemMonitor {
             }
         };
 
-        let path_cstr = CString::new(path.as_os_str().as_bytes()).ok()?;
-        unsafe {
-            let mut stat: libc::statvfs = std::mem::zeroed();
-            if libc::statvfs(path_cstr.as_ptr(), &mut stat) == 0 {
-                #[cfg(target_os = "macos")]
-                let available = (stat.f_bavail as u64) * stat.f_bsize;
-                #[cfg(not(target_os = "macos"))]
-                let available = stat.f_bavail * stat.f_bsize;
+        let (available, total) = disk::statvfs_bytes(path)?;
 
-                #[cfg(target_os = "macos")]
-                let total = (stat.f_blocks as u64) * stat.f_bsize;
-                #[cfg(not(target_os = "macos"))]
-                let total = stat.f_blocks * stat.f_bsize;
-
-                Some(DiskSpaceInfo {
-                    device,
-                    available,
-                    total,
-                })
-            } else {
-                None
-            }
-        }
+        Some(DiskSpaceInfo {
+            device,
+            available,
+            total,
+        })
     }
 
     /// Refresh processes and return top N grouped by name, sorted by the given key.

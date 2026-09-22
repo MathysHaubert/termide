@@ -157,52 +157,64 @@ pub(crate) fn get_device_for_path(path: &Path) -> Option<String> {
     })
 }
 
+/// Query a path with `statvfs` and return `(available, total)` in bytes.
+///
+/// `f_blocks` and `f_bavail` count *fundamental* blocks, so they must be
+/// scaled by `f_frsize`. `f_bsize` is the optimal I/O size and can be much
+/// larger: on macOS/APFS it is 1 MiB while `f_frsize` is 4 KiB, so scaling by
+/// `f_bsize` inflates every figure 256x (a 1.8 TB volume reports 464 TB).
+/// Some platforms leave `f_frsize` unset, hence the `f_bsize` fallback.
+#[cfg(unix)]
+pub(crate) fn statvfs_bytes(path: &Path) -> Option<(u64, u64)> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path_cstr = CString::new(path.as_os_str().as_bytes()).ok()?;
+
+    // SAFETY: `statvfs` is POSIX; it fills the zero-initialized struct and
+    // returns 0 on success, at which point the fields are valid. `path_cstr`
+    // is a valid NUL-terminated path built above.
+    let stat = unsafe {
+        let mut stat: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(path_cstr.as_ptr(), &mut stat) != 0 {
+            return None;
+        }
+        stat
+    };
+
+    let block_size = {
+        let frsize = stat.f_frsize as u64;
+        if frsize == 0 {
+            stat.f_bsize as u64
+        } else {
+            frsize
+        }
+    };
+    if block_size == 0 {
+        return None;
+    }
+
+    let available = (stat.f_bavail as u64).checked_mul(block_size)?;
+    let total = (stat.f_blocks as u64).checked_mul(block_size)?;
+
+    Some((available, total))
+}
+
 /// Get disk space information for a given path.
 ///
 /// Returns `DiskSpaceInfo` with device name, available and total space.
 #[cfg(unix)]
 pub fn get_disk_space_info(path: &Path) -> Option<DiskSpaceInfo> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    // Convert path to CString for passing to statvfs
-    let path_cstr = CString::new(path.as_os_str().as_bytes()).ok()?;
-
     // Get device name for this path
     let device = get_device_for_path(path);
 
-    // SAFETY: statvfs is a POSIX function that fills a statvfs struct with
-    // filesystem statistics. We zero-initialize the struct to ensure all fields
-    // have defined values. path_cstr is a valid null-terminated CString created
-    // above. statvfs returns 0 on success and writes valid data to the struct.
-    // We only read the struct fields after confirming success (return == 0).
-    unsafe {
-        let mut stat: libc::statvfs = std::mem::zeroed();
-        if libc::statvfs(path_cstr.as_ptr(), &mut stat) == 0 {
-            // f_bavail - available blocks for non-privileged users
-            // f_blocks - total blocks in the filesystem
-            // f_bsize - block size in bytes
-            // On macOS, f_bavail and f_blocks are u32, f_bsize is u64
-            // On Linux, all are u64
-            #[cfg(target_os = "macos")]
-            let available = (stat.f_bavail as u64) * stat.f_bsize;
-            #[cfg(not(target_os = "macos"))]
-            let available = stat.f_bavail * stat.f_bsize;
+    let (available, total) = statvfs_bytes(path)?;
 
-            #[cfg(target_os = "macos")]
-            let total = (stat.f_blocks as u64) * stat.f_bsize;
-            #[cfg(not(target_os = "macos"))]
-            let total = stat.f_blocks * stat.f_bsize;
-
-            Some(DiskSpaceInfo {
-                device,
-                available,
-                total,
-            })
-        } else {
-            None
-        }
-    }
+    Some(DiskSpaceInfo {
+        device,
+        available,
+        total,
+    })
 }
 
 /// Get disk space information for all real mounted devices.
@@ -355,5 +367,45 @@ mod tests {
             assert!(dev.starts_with("/dev/"));
             assert!(!dev.starts_with("/dev/loop"));
         }
+    }
+
+    /// `statvfs` block counts are fundamental-block counts. Cross-check against
+    /// a raw `statvfs` call, and assert the figure stays physically plausible:
+    /// on macOS scaling by `f_bsize` (1 MiB) instead of `f_frsize` (4 KiB)
+    /// inflated a 1.8 TB volume to ~464 TB.
+    #[cfg(unix)]
+    #[test]
+    fn test_statvfs_bytes_matches_statvfs_and_is_plausible() {
+        let path = std::path::Path::new("/");
+        let (available, total) = statvfs_bytes(path).expect("statvfs on /");
+
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        let c_path = std::ffi::CString::new("/").unwrap();
+        assert_eq!(unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) }, 0);
+        let block = {
+            let frsize = stat.f_frsize as u64;
+            if frsize == 0 {
+                stat.f_bsize as u64
+            } else {
+                frsize
+            }
+        };
+
+        assert_eq!(total, stat.f_blocks as u64 * block);
+        assert_eq!(available, stat.f_bavail as u64 * block);
+        assert!(
+            total < 64 * 1024u64.pow(4),
+            "total {total} bytes is beyond any plausible single volume"
+        );
+        assert!(
+            available > 0 && available < total,
+            "available {available} outside 0..{total}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_statvfs_bytes_missing_path() {
+        assert!(statvfs_bytes(std::path::Path::new("/nonexistent-volume-path")).is_none());
     }
 }
