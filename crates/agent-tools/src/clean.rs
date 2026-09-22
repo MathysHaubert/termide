@@ -40,6 +40,7 @@ pub fn clean_output(raw: &str, command: &str) -> Cleaned {
     let stripped = strip_escapes(raw);
     let lines: Vec<String> = stripped.lines().map(apply_carriage_returns).collect();
     let lines = compact_command(command, lines);
+    let lines = compact_test_output(command, lines);
     let lines = collapse_duplicates(&lines);
     let text = collapse_blank_runs(&lines);
     Cleaned {
@@ -236,6 +237,44 @@ fn compact_command(command: &str, lines: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Whether `command` is a Rust test run whose output is worth trimming:
+/// `cargo test` (libtest) or `cargo nextest run`. Both print a line per test
+/// that is almost all passes.
+fn is_rust_test_command(command: &str) -> bool {
+    first_word(command) == Some("cargo")
+        && command
+            .split_whitespace()
+            .any(|w| w == "test" || w == "nextest")
+}
+
+/// A per-test line reporting a pass or a skip — pure noise to the model, which
+/// only needs the failures and the final count. Covers libtest
+/// (`test path ... ok` / `... ignored`) and nextest (`PASS […] …` /
+/// `SKIP […] …`). Failures (`FAILED`, `FAIL`, `SLOW`, `TIMEOUT`, `LEAK`) and
+/// the `running N tests` / `test result:` / `Summary` lines never match.
+fn is_passing_test_line(line: &str) -> bool {
+    let t = line.trim_start();
+    // libtest: the line ends in the status after `...`.
+    if t.starts_with("test ") && (t.ends_with(" ... ok") || t.ends_with(" ... ignored")) {
+        return true;
+    }
+    // nextest: the status is the first word, padded, then `[time] crate test`.
+    matches!(t.split_whitespace().next(), Some("PASS" | "SKIP")) && t.contains('[')
+}
+
+/// Drop passing and skipped test lines from a Rust test run, keeping failures,
+/// the run header and the result summary — the count of what was hidden stays
+/// in that summary, so nothing the model needs is lost.
+fn compact_test_output(command: &str, lines: Vec<String>) -> Vec<String> {
+    if !is_rust_test_command(command) {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .filter(|line| !is_passing_test_line(line))
+        .collect()
+}
+
 /// The first whitespace-separated word of `command`, ignoring a leading
 /// `VAR=val` assignment so `RUST_LOG=info cargo …` still counts as cargo.
 fn first_word(command: &str) -> Option<&str> {
@@ -289,6 +328,35 @@ mod tests {
         // Without the cargo hint the progress lines stay.
         let plain = clean_output(raw, "make");
         assert!(plain.text.contains("Compiling a v0.1"));
+    }
+
+    #[test]
+    fn libtest_passes_are_hidden_but_failures_and_summary_survive() {
+        let raw = "\nrunning 3 tests\ntest a::works ... ok\ntest a::also ... ok\ntest a::skipme ... ignored\ntest a::boom ... FAILED\n\nfailures:\n\n---- a::boom stdout ----\npanicked at 'boom'\n\ntest result: FAILED. 2 passed; 1 failed; 1 ignored;\n";
+        let cleaned = clean_output(raw, "cargo test");
+        assert!(!cleaned.text.contains("works ... ok"));
+        assert!(!cleaned.text.contains("also ... ok"));
+        assert!(!cleaned.text.contains("skipme ... ignored"));
+        assert!(cleaned.text.contains("test a::boom ... FAILED"));
+        assert!(cleaned.text.contains("running 3 tests"));
+        assert!(cleaned.text.contains("panicked at 'boom'"));
+        assert!(cleaned
+            .text
+            .contains("test result: FAILED. 2 passed; 1 failed"));
+        assert!(cleaned.shrank());
+        // Without a test command the pass lines stay.
+        assert!(clean_output(raw, "cat log").text.contains("works ... ok"));
+    }
+
+    #[test]
+    fn nextest_passes_are_hidden_but_failures_survive() {
+        let raw = "    PASS [   0.02s] mycrate a::works\n    PASS [   0.10s] mycrate a::also\n    FAIL [   0.01s] mycrate a::boom\n  Summary [   0.2s] 3 tests run: 2 passed, 1 failed\n";
+        let cleaned = clean_output(raw, "cargo nextest run");
+        assert!(!cleaned.text.contains("a::works"));
+        assert!(!cleaned.text.contains("a::also"));
+        assert!(cleaned.text.contains("FAIL [   0.01s] mycrate a::boom"));
+        assert!(cleaned.text.contains("Summary"));
+        assert!(cleaned.text.contains("2 passed, 1 failed"));
     }
 
     #[test]

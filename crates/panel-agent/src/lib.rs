@@ -494,6 +494,10 @@ pub struct AgentPanel {
     /// Session token totals from `Usage`: input (prefill) and output.
     session_input: u64,
     session_output: u64,
+    /// Bytes of shell output before and after cleaning, summed over the
+    /// session, for the "output cleaned" diagnostic in the summary.
+    clean_raw_bytes: u64,
+    clean_out_bytes: u64,
     /// When each running tool started, to report how long it took (`🕒`).
     tool_starts: HashMap<String, Instant>,
     /// Throttles the animation redraws requested while busy.
@@ -647,6 +651,8 @@ impl AgentPanel {
             activity: None,
             session_input: 0,
             session_output: 0,
+            clean_raw_bytes: 0,
+            clean_out_bytes: 0,
             tool_starts: HashMap::new(),
             last_anim: Instant::now(),
             colors: ThemeColors::default(),
@@ -1440,6 +1446,17 @@ impl AgentPanel {
                 if let Some(path) = changed_file(&result) {
                     self.pending_events
                         .push(PanelEvent::FileChangedOnDisk(path));
+                }
+                // Tally how much the output cleaning saved (bash reports the
+                // raw and cleaned byte counts in its details).
+                if let Some(details) = result.details.as_ref() {
+                    if let (Some(raw), Some(clean)) = (
+                        details.get("raw_bytes").and_then(|v| v.as_u64()),
+                        details.get("cleaned_bytes").and_then(|v| v.as_u64()),
+                    ) {
+                        self.clean_raw_bytes += raw;
+                        self.clean_out_bytes += clean;
+                    }
                 }
                 let id = result.tool_call_id.clone();
                 let finished = now_hms();
@@ -2688,6 +2705,16 @@ impl AgentPanel {
                 format_tokens(self.model.context_window)
             ),
         ];
+        // How much shell-output cleaning has saved this session, when any ran.
+        if self.clean_raw_bytes > 0 {
+            let saved = self.clean_raw_bytes.saturating_sub(self.clean_out_bytes);
+            let percent = saved * 100 / self.clean_raw_bytes;
+            lines.push(format!(
+                "Output cleaned: {} → {} (−{percent}%)",
+                format_bytes(self.clean_raw_bytes),
+                format_bytes(self.clean_out_bytes),
+            ));
+        }
         if let Some(id) = self
             .session
             .as_ref()
@@ -3250,6 +3277,17 @@ fn fmt_secs(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{}m{}s", secs / 60, secs % 60)
+    }
+}
+
+/// A byte count as `B`/`KB`/`MB`, for the output-cleaning diagnostic.
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1000 {
+        format!("{}KB", (bytes + 500) / 1000)
+    } else {
+        format!("{bytes}B")
     }
 }
 
@@ -5837,6 +5875,29 @@ mod tests {
         );
         // Once the banner is gone it leaves no clickable fields behind.
         assert!(panel.banner_hits.is_empty());
+    }
+
+    #[test]
+    fn the_summary_reports_output_cleaning_savings() {
+        use termide_agent_core::ToolCall;
+        let mut panel = panel(vec![]);
+        let call = ToolCall {
+            id: "b1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({ "command": "ls" }),
+        };
+        panel.apply(AgentEvent::ToolExecutionStart { call: call.clone() });
+        panel.apply(AgentEvent::ToolExecutionEnd {
+            result: ToolResultMessage::text(&call, "out").with_details(
+                serde_json::json!({ "raw_bytes": 1000_u64, "cleaned_bytes": 250_u64 }),
+            ),
+        });
+        let events = panel.session_summary();
+        let Some(PanelEvent::ShowMessage(text)) = events.first() else {
+            panic!("expected a summary, got {events:?}");
+        };
+        assert!(text.contains("Output cleaned:"), "{text}");
+        assert!(text.contains("−75%"), "{text}");
     }
 
     #[test]

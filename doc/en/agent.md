@@ -109,7 +109,7 @@ you have named or sent even one message to is always kept.
 | `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `F2` | Rename this session (the same prompt as the `[≡]` menu) |
-| `F3` | Show a summary of this session (model, agent, directory, tokens) |
+| `F3` | Show a summary of this session (model, agent, directory, tokens, how much shell output was cleaned) |
 | `F4` | Roll the session back to before a chosen checkpoint |
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
@@ -174,7 +174,9 @@ terminals) and drag as usual.
 What the agent runs is captured cleanly for the model: colour and cursor
 escapes, progress-bar redraws, spinner frames and long runs of near-identical
 build lines are stripped or collapsed before the output enters the context,
-so a noisy command costs far fewer tokens. The full, untouched log is still
+so a noisy command costs far fewer tokens. A Rust test run (`cargo test` or
+`cargo nextest run`) drops the passing and skipped test lines and keeps the
+failures and the result summary. The full, untouched log is still
 written to a file whose path the tool reports, and you still see the raw
 stream live in the panel.
 
