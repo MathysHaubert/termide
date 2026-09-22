@@ -415,8 +415,12 @@ ai/
 
 The first time the panel opens, the configuration level is laid out:
 `AGENTS.md` and the `system/` files receive the shipped texts, `agents/`,
-`skills/`, `prompts/`, `commands/` and `shims/` are created empty. Nothing there is ever overwritten; delete
-`AGENTS.md` to get the shipped template back.
+`skills/`, `prompts/`, `commands/` and `shims/` are created empty. termide
+records what it shipped (in `.seeds.toml`) and keeps these files current on
+later starts: one you never edited is refreshed when the shipped version
+changes, so upgrades reach you; one you edited is left untouched, with the new
+default written beside it as `<file>.new` to compare and merge at your leisure.
+Delete a file to get the shipped version back.
 
 ### Agents
 

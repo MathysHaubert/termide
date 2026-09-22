@@ -150,10 +150,57 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
     (fields, body)
 }
 
-/// Lay out the `ai` directory of the configuration so the prompt is a file
-/// one can read and edit: `AGENTS.md` seeded from the shipped template when
-/// no such file exists yet, plus empty `agents/`, `skills/` and `prompts/`.
-/// Files already there are left alone, so the call is safe on every start.
+/// The shipped assets written into the configuration's `ai` directory, as
+/// `(relative path, contents)`. The single source of truth for what
+/// [`ensure_global_layout`] seeds and keeps up to date.
+fn shipped_assets() -> [(String, &'static str); 5] {
+    [
+        (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
+        (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
+        (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
+        (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
+        (format!("{SYSTEM_DIR}/goal.md"), SEED_GOAL),
+    ]
+}
+
+/// Records the hash of each shipped asset as termide last wrote it, so an
+/// update can tell a file the user never touched (safe to refresh in place)
+/// from one they edited (left alone, the new default offered as `<file>.new`).
+const SEEDS_MANIFEST: &str = ".seeds.toml";
+
+/// A stable content hash (FNV-1a, 64-bit) for change detection across runs and
+/// versions. Not cryptographic; collisions are irrelevant here.
+fn seed_hash(content: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in content.as_bytes() {
+        h ^= u64::from(*byte);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// The `<path>.new` sidecar where an updated default is left when the user has
+/// edited the original.
+fn dot_new(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".new");
+    PathBuf::from(name)
+}
+
+/// Lay out the `ai` directory of the configuration and keep its shipped assets
+/// current. Empty `agents/`, `skills/`, `prompts/`, `commands/`, `system/` and
+/// `shims/` are created. Each shipped file (`AGENTS.md`, the `system/` prompts)
+/// is then reconciled against the version it was last written from, recorded in
+/// `.seeds.toml`:
+///
+/// - missing → written;
+/// - unchanged since termide last wrote it, and the shipped version changed →
+///   refreshed in place (the user is on defaults, so keep them current);
+/// - edited by the user, and the shipped version changed → left alone, the new
+///   default written beside it as `<file>.new` for the user to merge;
+/// - otherwise untouched.
+///
+/// Safe to call on every start.
 pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
     for dir in [
         "agents",
@@ -165,16 +212,44 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
     ] {
         std::fs::create_dir_all(global.join(dir))?;
     }
-    for (relative, seed) in [
-        (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
-        (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
-        (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
-        (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
-        (format!("{SYSTEM_DIR}/goal.md"), SEED_GOAL),
-    ] {
-        let path = global.join(relative);
-        if !path.exists() {
-            std::fs::write(&path, seed)?;
+
+    let manifest_path = global.join(SEEDS_MANIFEST);
+    let mut manifest: BTreeMap<String, String> = std::fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_default();
+    let mut manifest_changed = false;
+
+    for (relative, seed) in shipped_assets() {
+        let path = global.join(&relative);
+        let shipped = seed_hash(seed);
+        let last = manifest.get(&relative).cloned();
+        match std::fs::read_to_string(&path) {
+            // Missing: write it.
+            Err(_) => std::fs::write(&path, seed)?,
+            // Already on the current shipped version: nothing to do.
+            Ok(current) if seed_hash(&current) == shipped => {}
+            // Untouched since we last wrote it, but the shipped version moved:
+            // refresh in place.
+            Ok(current) if last.as_deref() == Some(seed_hash(&current).as_str()) => {
+                std::fs::write(&path, seed)?;
+            }
+            // User-edited and the shipped version differs from the one we last
+            // offered: leave theirs, drop the new default beside it once.
+            Ok(_) if last.as_deref() != Some(shipped.as_str()) => {
+                std::fs::write(dot_new(&path), seed)?;
+            }
+            Ok(_) => {}
+        }
+        if last.as_deref() != Some(shipped.as_str()) {
+            manifest.insert(relative, shipped);
+            manifest_changed = true;
+        }
+    }
+
+    if manifest_changed {
+        if let Ok(text) = toml::to_string(&manifest) {
+            let _ = std::fs::write(&manifest_path, text);
         }
     }
     Ok(())
@@ -727,6 +802,42 @@ mod tests {
         let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
         assert_eq!(dirs.soul(DEFAULT_AGENT).as_deref(), Some("mine"));
     }
+
+    #[test]
+    fn shipped_assets_refresh_when_untouched_and_offer_new_when_edited() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        ensure_global_layout(&global).unwrap();
+        let compact = global.join("system/compact.md");
+        let manifest = global.join(SEEDS_MANIFEST);
+        assert_eq!(std::fs::read_to_string(&compact).unwrap(), SEED_COMPACT);
+
+        // A file the user never touched, recorded from an older shipment, is
+        // refreshed in place when the shipped version moves on.
+        std::fs::write(&compact, "OLD SHIPPED").unwrap();
+        let old = seed_hash("OLD SHIPPED");
+        std::fs::write(&manifest, format!("\"system/compact.md\" = \"{old}\"\n")).unwrap();
+        ensure_global_layout(&global).unwrap();
+        assert_eq!(std::fs::read_to_string(&compact).unwrap(), SEED_COMPACT);
+        assert!(!dot_new(&compact).exists());
+
+        // An edited file is kept; the new default lands beside it as `.new`.
+        std::fs::write(&compact, "MY EDITS").unwrap();
+        std::fs::write(&manifest, format!("\"system/compact.md\" = \"{old}\"\n")).unwrap();
+        ensure_global_layout(&global).unwrap();
+        assert_eq!(std::fs::read_to_string(&compact).unwrap(), "MY EDITS");
+        assert_eq!(
+            std::fs::read_to_string(dot_new(&compact)).unwrap(),
+            SEED_COMPACT
+        );
+
+        // The shipment is now recorded, so a rerun does not re-drop `.new`.
+        std::fs::remove_file(dot_new(&compact)).unwrap();
+        ensure_global_layout(&global).unwrap();
+        assert!(!dot_new(&compact).exists());
+        assert_eq!(std::fs::read_to_string(&compact).unwrap(), "MY EDITS");
+    }
+
     #[test]
     fn skills_merge_termide_and_shared_directories_by_name() {
         let tmp = tempfile::tempdir().unwrap();
