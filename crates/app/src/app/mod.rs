@@ -86,6 +86,10 @@ pub struct App {
     /// input, used to detect when focus moves to a git panel so it can be
     /// refreshed automatically (no manual Ctrl+R).
     last_focus_sig: Option<(usize, String)>,
+    /// Off-thread `list_models` started when the settings modal opens, polled
+    /// each loop so the AI model field's dropdown fills in once it arrives.
+    settings_model_fetch:
+        Option<std::sync::mpsc::Receiver<Result<Vec<termide_agent_core::ModelInfo>, String>>>,
 }
 
 impl App {
@@ -162,6 +166,7 @@ impl App {
             keyboard_caps: termide_keyboard::KeyboardCaps::default(),
             persist_session: true,
             last_focus_sig: None,
+            settings_model_fetch: None,
         }
     }
 
@@ -249,6 +254,7 @@ impl App {
             keyboard_caps: caps,
             persist_session: true,
             last_focus_sig: None,
+            settings_model_fetch: None,
         }
     }
 
@@ -791,6 +797,7 @@ impl App {
     /// operation-manager, git/command/fetch pollers and the always-on
     /// system-resource / LSP-completion / modal-spinner updates.
     fn poll_background(&mut self) {
+        self.poll_settings_model_fetch();
         // Adaptive tick rate: slow down polling when idle
         if self.state.last_activity.elapsed()
             > Duration::from_millis(termide_config::constants::IDLE_THRESHOLD_MS)

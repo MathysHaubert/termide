@@ -48,6 +48,7 @@ impl SettingsModal {
             selected_button: BUTTON_APPLY,
             dirty: false,
             project_override_active,
+            model_options: Vec::new(),
             last_modal_area: None,
             last_sidebar_area: None,
             last_content_area: None,
@@ -56,6 +57,25 @@ impl SettingsModal {
         m.field_cursor = m.first_selectable_row();
         m.refresh_reset_available();
         m
+    }
+
+    /// Provide the AI provider's model list (fetched off-thread by the app),
+    /// so the model field's dropdown lists them.
+    pub fn set_model_options(&mut self, models: Vec<String>) {
+        self.model_options = models;
+    }
+
+    /// The dropdown options for a field: the fetched model list for the AI
+    /// `model` field, the pure config-derived options for every other.
+    pub(super) fn enum_options_for(
+        &self,
+        field_index: usize,
+    ) -> Option<crate::settings::fields::EnumOptions> {
+        use crate::settings::fields::{ai_model_enum_options, enum_options, AI_MODEL_FIELD};
+        if self.active_tab == SettingsTab::Ai && field_index == AI_MODEL_FIELD {
+            return Some(ai_model_enum_options(&self.config, &self.model_options));
+        }
+        enum_options(&self.config, self.active_tab, field_index)
     }
 
     fn sorted_server_keys(config: &Config) -> Vec<String> {
@@ -267,11 +287,12 @@ impl SettingsModal {
             SettingsTab::Logging => vec![Field(0), Field(1)],
             SettingsTab::Vfs => vec![Field(0)],
             SettingsTab::Ai if is_cli_provider(&self.config.ai.provider) => vec![
-                // A CLI adapter (Claude Code, Codex) brings its own endpoint,
-                // model and auth, so only the provider choice and the
-                // transcript display apply.
+                // A CLI adapter (Claude Code, Codex) brings its own endpoint and
+                // auth, so those fields do not apply; the model is kept as the
+                // one to pre-select on the agent over ACP.
                 Header("Backend"),
                 Field(0), // provider
+                Field(2), // model (pre-selected over ACP)
                 Spacer,
                 Header("Transcript"),
                 Field(7), // autofold
@@ -390,6 +411,14 @@ impl SettingsModal {
                 self.apply_optional_number(tab, field_idx, val);
                 self.dirty = true;
             }
+            // The AI model field: an enum, but its typed-id escape commits text.
+            FieldType::Enum
+                if tab == SettingsTab::Ai
+                    && field_idx == crate::settings::fields::AI_MODEL_FIELD =>
+            {
+                self.config.ai.model = self.edit_buffer.trim().to_string();
+                self.dirty = true;
+            }
             _ => {}
         }
         self.editing = false;
@@ -409,8 +438,13 @@ impl SettingsModal {
         let Some(desc) = fields.get(field_idx) else {
             return;
         };
+        // The AI model field is an enum but its "type an id" escape edits it
+        // inline like a text field.
+        let is_model = self.active_tab == SettingsTab::Ai
+            && field_idx == crate::settings::fields::AI_MODEL_FIELD;
         match desc.field_type {
-            FieldType::Bool | FieldType::Enum => return,
+            FieldType::Bool => return,
+            FieldType::Enum if !is_model => return,
             _ => {}
         }
         self.edit_buffer = get_field_value(&self.config, self.active_tab, field_idx);
@@ -559,9 +593,41 @@ mod content_row_tests {
                 _ => None,
             })
             .collect();
-        // Only the provider (0) and the transcript autofold (7) apply; the
-        // endpoint/model/auth fields (1..=6) are hidden.
-        assert_eq!(rendered, vec![0, 7]);
+        // Provider (0), the pre-selected model (2) and autofold (7) apply; the
+        // endpoint/auth/window fields are hidden.
+        assert_eq!(rendered, vec![0, 2, 7]);
+    }
+
+    #[test]
+    fn the_ai_model_field_lists_fetched_models_with_a_typed_id_escape() {
+        let mut modal = SettingsModal::new(Config::default(), false);
+        modal.active_tab = SettingsTab::Ai;
+        modal.config.ai.model = "current-m".into();
+
+        // With no fetched list: just the current value and the "type an id"
+        // escape.
+        let options = modal.enum_options_for(2).unwrap();
+        assert_eq!(options.values.len(), 2);
+        assert_eq!(options.current, Some(0));
+        assert_eq!(
+            options.values.last().unwrap(),
+            crate::settings::fields::MODEL_TYPE_SENTINEL
+        );
+
+        // Once models arrive they are listed, the current kept present, and the
+        // escape stays last.
+        modal.set_model_options(vec!["a".into(), "b".into()]);
+        let options = modal.enum_options_for(2).unwrap();
+        assert_eq!(
+            options.values,
+            vec![
+                "current-m".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                crate::settings::fields::MODEL_TYPE_SENTINEL.to_string(),
+            ]
+        );
+        assert_eq!(options.current, Some(0));
     }
 }
 

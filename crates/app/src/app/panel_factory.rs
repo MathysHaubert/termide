@@ -183,10 +183,43 @@ impl App {
         let project_override_active =
             termide_config::project_config_path(&self.project_root).exists();
         let modal = SettingsModal::new(config, project_override_active);
+        // Fetch the provider's models off-thread; the loop feeds them into the
+        // modal's model dropdown when they arrive.
+        self.settings_model_fetch =
+            super::agent_panel::spawn_settings_model_fetch(&self.state.config.ai);
         self.state.set_pending_action(
             crate::state::PendingAction::Settings,
             ActiveModal::Settings(Box::new(modal)),
         );
+    }
+
+    /// Feed the off-thread model list into the open settings modal once it
+    /// arrives; drop the fetch if the modal has since closed. Cheap and safe to
+    /// call every loop — a no-op with no fetch in flight.
+    pub(super) fn poll_settings_model_fetch(&mut self) {
+        use termide_modal::ActiveModal;
+        if self.settings_model_fetch.is_none() {
+            return;
+        }
+        if !matches!(self.state.active_modal, Some(ActiveModal::Settings(_))) {
+            self.settings_model_fetch = None;
+            return;
+        }
+        let received = self
+            .settings_model_fetch
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
+        let Some(result) = received else {
+            return;
+        };
+        self.settings_model_fetch = None;
+        if let Ok(models) = result {
+            let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            if let Some(ActiveModal::Settings(modal)) = self.state.active_modal.as_mut() {
+                modal.set_model_options(ids);
+                self.state.needs_redraw = true;
+            }
+        }
     }
 
     /// Open or refresh the References panel with LSP find-references results.

@@ -402,6 +402,10 @@ pub struct AgentPanel {
     /// Whether the external agent advertised any models (so a Model chip and
     /// picker are worth showing); latched once known.
     acp_has_models: bool,
+    /// A model to pre-select on an external CLI agent (from `[ai].model` for a
+    /// `claude_code`/`codex` provider), applied once its models are known.
+    /// Taken (set to `None`) after the one-shot attempt.
+    pending_preferred_model: Option<String>,
     /// Background `list_models` call, polled from `tick()`.
     model_fetch: Option<Receiver<Result<Vec<ModelInfo>, String>>>,
     /// A silent `list_models` call started at construction to adopt the active
@@ -567,6 +571,12 @@ impl AgentPanel {
         // adopt the active model's real `max_model_len`; the configured window
         // is only a fallback (an external agent has no such endpoint).
         let context_probe = (!external).then(|| spawn_model_list(Arc::clone(&setup.provider)));
+        // A CLI provider carries the model to pre-select on its agent in
+        // `[ai].model`; a wire-protocol or generic external agent does not.
+        let pending_preferred_model = (external
+            && termide_config::is_cli_provider(&setup.provider_kind)
+            && !model.id.is_empty())
+        .then(|| model.id.clone());
         Self {
             runtime,
             external,
@@ -591,6 +601,7 @@ impl AgentPanel {
             model_choices: Vec::new(),
             acp_models: Vec::new(),
             acp_has_models: false,
+            pending_preferred_model,
             model_fetch: None,
             context_probe,
             pending_events: Vec::new(),
@@ -4324,6 +4335,18 @@ impl Panel for AgentPanel {
             if !self.acp_has_models && !self.runtime.available_models().is_empty() {
                 self.acp_has_models = true;
                 changed = true;
+                // Apply the configured pre-selected model once, now that the
+                // agent's models are known.
+                if let Some(pref) = self.pending_preferred_model.take() {
+                    if self.runtime.current_model().as_deref() != Some(pref.as_str()) {
+                        match self.runtime.select_model(pref.clone()) {
+                            Ok(()) => self.model.id = pref,
+                            Err(error) => {
+                                log::warn!("cannot pre-select the model: {error}");
+                            }
+                        }
+                    }
+                }
             }
             if let Some(id) = self.runtime.current_model() {
                 if id != self.model.id {
@@ -6923,6 +6946,34 @@ mod tests {
             action: MODEL_ACTION.to_string(),
             index: 1,
         });
+        assert_eq!(*picked.lock().unwrap(), Some("m-slow".to_string()));
+        assert_eq!(panel.model.id, "m-slow");
+    }
+
+    #[test]
+    fn a_cli_provider_pre_selects_its_configured_model_on_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let picked = Arc::new(Mutex::new(None));
+        let for_factory = Arc::clone(&picked);
+        let mut base = setup(vec![]);
+        // A CLI provider with a configured model to pre-select.
+        base.provider_kind = "claude_code".into();
+        base.model = ModelSpec {
+            id: "m-slow".into(),
+            ..base.model
+        };
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            session_dir: Some(dir.path().to_path_buf()),
+            backend: Some(Arc::new(move |_setup: BackendSetup| {
+                Ok(Box::new(ModelBackend {
+                    picked: Arc::clone(&for_factory),
+                }) as Box<dyn Backend>)
+            })),
+            ..base
+        });
+        assert!(panel.external);
+        // The agent starts on "m-fast"; a tick applies the configured "m-slow".
+        panel.tick();
         assert_eq!(*picked.lock().unwrap(), Some("m-slow".to_string()));
         assert_eq!(panel.model.id, "m-slow");
     }

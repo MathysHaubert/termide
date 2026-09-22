@@ -194,8 +194,10 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
                 field_type: FieldType::OptionalText,
             },
             FieldDescriptor {
+                // A dropdown: the endpoint's models when the panel has fetched
+                // them (with a "type an id" escape), just the escape otherwise.
                 label: t.settings_agent_model(),
-                field_type: FieldType::OptionalText,
+                field_type: FieldType::Enum,
             },
             FieldDescriptor {
                 label: t.settings_agent_api_key_env(),
@@ -352,7 +354,8 @@ pub(super) use termide_config::is_cli_provider;
 fn clear_cli_irrelevant_ai_fields(config: &mut Config) {
     let defaults = termide_config::AiSettings::default();
     config.ai.base_url = defaults.base_url;
-    config.ai.model = defaults.model;
+    // `model` is kept: for a CLI provider it is the model pre-selected on the
+    // agent's own login, applied over ACP once the session starts.
     config.ai.api_key_env = defaults.api_key_env;
     config.ai.context_window_fallback = defaults.context_window_fallback;
     config.ai.max_tokens_per_turn = defaults.max_tokens_per_turn;
@@ -498,7 +501,34 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
         }
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
         (SettingsTab::Ai, 0) => set_ai_provider(config, value),
+        (SettingsTab::Ai, 2) => config.ai.model = value.to_string(),
         _ => {}
+    }
+}
+
+/// The AI `model` field's index in the AI tab, and the dropdown value that
+/// stands for "type an id by hand" instead of choosing a listed model.
+pub(super) const AI_MODEL_FIELD: usize = 2;
+pub(super) const MODEL_TYPE_SENTINEL: &str = "\u{0}type-a-model-id";
+
+/// The dropdown for the AI `model` field: the fetched models (with the current
+/// value kept present), then a "type an id" escape that opens inline editing.
+/// With no fetched models — a CLI provider, or an endpoint that cannot list —
+/// only the current value and the escape show, so typing still works.
+pub(super) fn ai_model_enum_options(config: &Config, model_options: &[String]) -> EnumOptions {
+    let current = config.ai.model.clone();
+    let mut values: Vec<String> = model_options.to_vec();
+    if !current.is_empty() && !values.contains(&current) {
+        values.insert(0, current.clone());
+    }
+    let mut labels: Vec<String> = values.clone();
+    values.push(MODEL_TYPE_SENTINEL.to_string());
+    labels.push(i18n::t().agent_model_other().to_string());
+    let current_index = values.iter().position(|v| *v == current);
+    EnumOptions {
+        values,
+        labels,
+        current: current_index,
     }
 }
 
@@ -748,7 +778,8 @@ mod enum_option_tests {
         assert_eq!(config.ai.provider, "claude_code");
         let defaults = termide_config::AiSettings::default();
         assert_eq!(config.ai.base_url, defaults.base_url);
-        assert_eq!(config.ai.model, defaults.model);
+        // The model is kept — it is the model to pre-select on the CLI agent.
+        assert_eq!(config.ai.model, "gpt-5");
         assert_eq!(config.ai.api_key_env, defaults.api_key_env);
         assert_eq!(
             config.ai.context_window_fallback,

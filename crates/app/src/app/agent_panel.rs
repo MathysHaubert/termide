@@ -786,6 +786,26 @@ fn cli_provider_backend(provider: &str, agent: &str) -> Option<BackendFactory> {
     }) as BackendFactory)
 }
 
+/// Start an off-thread `list_models` for the settings modal's model dropdown.
+/// `None` for a CLI-adapter provider (its models come over ACP at runtime) or
+/// when no provider is configured. The receiver is polled by the app loop.
+pub(crate) fn spawn_settings_model_fetch(
+    settings: &AiSettings,
+) -> Option<std::sync::mpsc::Receiver<Result<Vec<termide_agent_core::ModelInfo>, String>>> {
+    if settings.provider.trim().is_empty() || termide_config::is_cli_provider(&settings.provider) {
+        return None;
+    }
+    let api_key = (!settings.api_key_env.is_empty())
+        .then(|| std::env::var(&settings.api_key_env).ok())
+        .flatten();
+    let provider = build_provider(settings, api_key);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(provider.list_models());
+    });
+    Some(rx)
+}
+
 fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Arc<dyn Provider> {
     match settings.provider.trim().to_ascii_lowercase().as_str() {
         // A CLI-adapter provider runs over ACP; the built-in model provider is

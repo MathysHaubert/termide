@@ -8,8 +8,8 @@ use termide_config::{Config, KeyBinding, LspServerSettings};
 use crate::ModalResult;
 
 use super::fields::{
-    apply_enum_value, cycle_enum_backward, cycle_enum_forward, enum_options, fields_for_tab,
-    toggle_field, ContentRow, FieldType,
+    apply_enum_value, cycle_enum_backward, cycle_enum_forward, fields_for_tab, toggle_field,
+    ContentRow, FieldType,
 };
 use super::kb::{format_key_event, get_kb_binding, kb_binding_names, set_kb_value, KB_SECTIONS};
 use super::{
@@ -164,7 +164,7 @@ impl SettingsModal {
 
     /// Open the dropdown for an enum field, highlighting its current value.
     pub(super) fn open_enum_picker(&mut self, field_index: usize) {
-        let Some(options) = enum_options(&self.config, self.active_tab, field_index) else {
+        let Some(options) = self.enum_options_for(field_index) else {
             return;
         };
         // With nothing matching, start at the top rather than nowhere.
@@ -187,11 +187,17 @@ impl SettingsModal {
         let Some(picker) = self.enum_picker.take() else {
             return;
         };
-        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+        let Some(options) = self.enum_options_for(picker.field_index) else {
             return;
         };
         if let Some(value) = options.values.get(picker.cursor) {
             let value = value.clone();
+            // The model dropdown's last entry is the "type an id" escape: it
+            // opens inline editing rather than storing a value.
+            if value == crate::settings::fields::MODEL_TYPE_SENTINEL {
+                self.start_edit();
+                return;
+            }
             apply_enum_value(
                 &mut self.config,
                 self.active_tab,
@@ -212,7 +218,7 @@ impl SettingsModal {
         let Some(picker) = self.enum_picker.as_ref() else {
             return;
         };
-        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+        let Some(options) = self.enum_options_for(picker.field_index) else {
             return;
         };
         let len = options.values.len();

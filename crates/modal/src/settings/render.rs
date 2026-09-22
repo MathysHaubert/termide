@@ -13,9 +13,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::base::button_style;
 
-use super::fields::{
-    enum_options, fields_for_tab, get_field_value, ContentRow, FieldDescriptor, FieldType,
-};
+use super::fields::{fields_for_tab, get_field_value, ContentRow, FieldDescriptor, FieldType};
 use super::kb::{get_kb_value, kb_binding_names, KB_SECTIONS};
 use super::{
     button_labels, button_spans, FocusArea, KbMode, LspMode, SettingsModal, SettingsTab,
@@ -556,7 +554,7 @@ impl SettingsModal {
         let Some(picker) = self.enum_picker.clone() else {
             return;
         };
-        let Some(options) = enum_options(&self.config, self.active_tab, picker.field_index) else {
+        let Some(options) = self.enum_options_for(picker.field_index) else {
             self.enum_picker = None;
             return;
         };

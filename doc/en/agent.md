@@ -29,7 +29,10 @@ autofold = true              # fold each block to a preview by default
 
 Every one of these lives under an **AI** section in the settings modal too
 (the gear, or the command palette), so you can change the provider, model,
-context window and the rest without editing the file. The API key is read from
+context window and the rest without editing the file. The model is a dropdown:
+it fills with the endpoint's models (fetched in the background when the modal
+opens), and its last entry, "Enter a model id…", lets you type one by hand when
+the endpoint cannot list them. The API key is read from
 the environment variable named by `api_key_env`, so the configuration file
 never holds a secret. Local servers usually need no key at all; leave the
 variable unset. `autofold = false` shows every block expanded instead of
@@ -49,10 +52,11 @@ of the built-in loop talking to a model endpoint, the panel drives that tool's
 own CLI as an [external agent](#external-agents) over ACP
 (`@zed-industries/claude-code-acp` / `@zed-industries/codex-acp`, run through
 `npx`). The CLI owns the endpoint and the sign-in — its own subscription or
-API key — so `base_url`, `model` and `api_key_env` in `[ai]` do not apply; the
-settings modal hides them for these providers and clears them from the file.
-The model is still yours to pick, but through the CLI: when the adapter
-advertises its models over ACP the **Model** chip lists and switches them. The
+API key — so `base_url` and `api_key_env` in `[ai]` do not apply; the settings
+modal hides them for these providers and clears them from the file. `model` is
+kept: it is the model **pre-selected** on the agent — applied over ACP once the
+session starts — and at runtime the **Model** chip lists and switches the
+agent's own models. The
 tool must be installed and signed in first (`npx` on `PATH`). This is the
 built-in shortcut for what an agent's own `[acp]` table does by hand.
 

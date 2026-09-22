@@ -244,6 +244,12 @@ pub struct SettingsModal {
     /// the modal result handler routes the third-button click.
     project_override_active: bool,
 
+    /// The AI provider's models, fetched off-thread after the modal opens and
+    /// pushed in with [`SettingsModal::set_model_options`]; empty until they
+    /// arrive (or when the endpoint cannot list them), when the model field
+    /// falls back to typing an id.
+    pub(super) model_options: Vec<String>,
+
     // --- Area caches (for mouse hit-testing) ---
     last_modal_area: Option<Rect>,
     last_sidebar_area: Option<Rect>,
