@@ -3658,6 +3658,10 @@ fn spawn_runtime(
         system_prompt.to_string()
     };
     let system_prompt = system_prompt.as_str();
+    // The external backend, if one is used, is handed the same rules so its
+    // permission requests get the built-in agent's treatment (read-only
+    // commands and matching rules pass without a prompt).
+    let backend_rules = rules.clone();
     let mut hooks = PermissionHooks::new(rules, Box::new(prompter));
     let mode = hooks.mode_handle();
     if let Some(persist) = persist_rule {
@@ -3675,13 +3679,16 @@ fn spawn_runtime(
     let messages: Vec<Message> = history.into_iter().map(|(message, _)| message).collect();
 
     if let Some(factory) = backend {
-        // The external agent gets its own prompter on a channel of its own;
-        // the permission hooks built above are not used for it.
+        // The external agent gets its own prompter on a channel of its own,
+        // and the same rules, so it builds permission hooks that decide its
+        // requests exactly as the built-in agent's do.
         let (external_prompter, external_rx) = permission_channel(cancel.clone());
         match factory(BackendSetup {
             cwd: cwd.to_path_buf(),
             prompter: external_prompter,
             cancel: cancel.clone(),
+            rules: backend_rules,
+            persist: persist_rule.map(|f| Box::new(f) as PersistRule),
         }) {
             Ok(runtime) => {
                 if !messages.is_empty() {

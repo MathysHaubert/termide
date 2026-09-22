@@ -485,10 +485,13 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 
 The program starts in the background when you switch to the agent; the first
 request waits for it. Its answers, thoughts and tool calls appear in the
-session like the built-in agent's, its permission requests use the same
-card, and it reads and writes files through TermIDE, so an open editor
-follows its edits. The **Mode** chip disappears while an external agent is
-active: it has its own. The **Model** chip stays when the agent advertises
+session like the built-in agent's, and it reads and writes files through
+TermIDE, so an open editor follows its edits. Its permission requests are
+judged by the same rules as the built-in agent's: a read-only command or a
+request a `[ai.permissions]` rule or a session grant already covers passes
+without a card, and only what is left reaches you — so a granted or read-only
+command is never asked twice. The **Mode** chip disappears while an external
+agent is active: it has its own, and TermIDE's mode is not cycled for it. The **Model** chip stays when the agent advertises
 its models over ACP — it then lists them and switches with `session/set_model`,
 so you pick the agent's model in TermIDE; agents that advertise none show no
 chip. Skills, prompt templates and MCP servers are the agent's own affair too;

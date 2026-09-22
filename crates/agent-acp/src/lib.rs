@@ -26,9 +26,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use termide_agent_core::{
     expand_env, now_millis, AcpConfig, Agent, AgentEvent, AssistantContent, AssistantMessage,
-    Backend, BackendModel, BackendSetup, CancelToken, ChannelPrompter, Message, PermissionAnswer,
-    PermissionPrompter, PermissionRequest, PromptError, StopReason, StreamEvent, ToolCall,
-    ToolResultMessage, UserMessage,
+    Backend, BackendModel, BackendSetup, CancelToken, Hooks, Message, PermissionHooks, PromptError,
+    StopReason, StreamEvent, ToolCall, ToolContext, ToolDecision, ToolResultMessage, UserMessage,
 };
 
 /// The protocol version requested.
@@ -54,7 +53,10 @@ struct Shared {
     queue: Mutex<Vec<UserMessage>>,
     busy: AtomicBool,
     cancel: CancelToken,
-    prompter: Mutex<ChannelPrompter>,
+    /// The same permission logic the built-in agent runs: read-only commands
+    /// and matching rules pass without a prompt, and grants (session or
+    /// always) are remembered here so a request is asked only once.
+    hooks: Mutex<PermissionHooks>,
     cwd: PathBuf,
     name: String,
     /// The assistant message being streamed, if any: text and thought count.
@@ -124,7 +126,13 @@ impl AcpRuntime {
             queue: Mutex::new(Vec::new()),
             busy: AtomicBool::new(false),
             cancel: setup.cancel,
-            prompter: Mutex::new(setup.prompter),
+            hooks: Mutex::new({
+                let mut hooks = PermissionHooks::new(setup.rules, Box::new(setup.prompter));
+                if let Some(persist) = setup.persist {
+                    hooks = hooks.with_persist(persist);
+                }
+                hooks
+            }),
             cwd: setup.cwd,
             name: name.to_string(),
             open_message: Mutex::new(None),
@@ -557,23 +565,16 @@ impl Shared {
     }
 
     fn ask_permission(&self, params: &Value) -> Value {
-        let tool_call = &params["toolCall"];
-        let title = tool_call["title"].as_str().unwrap_or("").to_string();
-        let kind = tool_call["kind"].as_str().unwrap_or("other").to_string();
-        let request = PermissionRequest {
-            tool: kind.clone(),
-            subject: title.clone(),
-            call: ToolCall {
-                id: tool_call["toolCallId"].as_str().unwrap_or("").to_string(),
-                name: kind,
-                arguments: tool_call
-                    .get("rawInput")
-                    .cloned()
-                    .unwrap_or_else(|| json!({ "title": title })),
-            },
-            suggested_pattern: "*".into(),
+        let call = permission_call(&params["toolCall"]);
+        let ctx = ToolContext {
+            cwd: self.cwd.clone(),
         };
-        let answer = self.prompter.lock().unwrap().ask(&request);
+        // The hooks decide the request as they would for the built-in agent:
+        // a read-only command or a matching rule passes without a prompt, an
+        // unknown one reaches the user, and a session or always grant is
+        // recorded so it is asked only once. The user is never troubled with
+        // anything the built-in agent would have let through silently.
+        let decision = self.hooks.lock().unwrap().before_tool_call(&call, &ctx);
         let options = params["options"].as_array().cloned().unwrap_or_default();
         let pick = |kinds: &[&str]| {
             kinds.iter().find_map(|kind| {
@@ -584,14 +585,14 @@ impl Shared {
                     .map(str::to_string)
             })
         };
-        let chosen = match answer {
-            PermissionAnswer::AllowOnce => pick(&["allow_once", "allow_always"]),
-            PermissionAnswer::AllowSession | PermissionAnswer::AllowAlways => {
-                pick(&["allow_always", "allow_once"])
-            }
-            PermissionAnswer::Deny | PermissionAnswer::DenyWithReason(_) => {
-                pick(&["reject_once", "reject_always"])
-            }
+        // Always answer "once": termide stays the source of truth for grants,
+        // so the agent keeps asking and termide keeps deciding silently,
+        // rather than the agent remembering a rule of its own.
+        let chosen = match decision {
+            ToolDecision::Block { .. } => pick(&["reject_once", "reject_always"]),
+            // The permission hooks only ever allow or block; any allowing
+            // verdict answers the request "once".
+            _ => pick(&["allow_once", "allow_always"]),
         };
         match chosen {
             Some(option_id) => {
@@ -703,6 +704,39 @@ fn tool_call_of(update: &Value) -> ToolCall {
     }
 }
 
+/// A `session/request_permission` `toolCall` as a termide [`ToolCall`], its
+/// ACP `kind` translated to the tool name the permission rules speak so the
+/// same logic judges it: `execute` becomes `bash` (the command placed under
+/// `command`, from the raw input or the title), `read`/`edit` keep their
+/// names, and anything else stands as its kind, which no built-in rule covers
+/// and so reaches the user.
+fn permission_call(tool_call: &Value) -> ToolCall {
+    let title = tool_call["title"].as_str().unwrap_or("").to_string();
+    let kind = tool_call["kind"].as_str().unwrap_or("other");
+    let name = match kind {
+        "execute" => "bash",
+        other => other,
+    };
+    let mut arguments = tool_call
+        .get("rawInput")
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    // `bash` rules match on the command line; if the agent gave none in the
+    // raw input, the title is the best stand-in for a read-only check.
+    if name == "bash" && arguments.get("command").and_then(Value::as_str).is_none() {
+        arguments["command"] = json!(title);
+    }
+    if !title.is_empty() {
+        arguments["title"] = json!(title);
+    }
+    ToolCall {
+        id: tool_call["toolCallId"].as_str().unwrap_or("").to_string(),
+        name: name.to_string(),
+        arguments,
+    }
+}
+
 /// The text of a tool call's content blocks: plain content as is, diffs as
 /// a unified-looking summary.
 fn content_text(content: &Value) -> String {
@@ -779,7 +813,9 @@ fn write_text_file(cwd: &Path, params: &Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     use std::io::pipe;
-    use termide_agent_core::{permission_channel, PermissionEnvelope};
+    use termide_agent_core::{
+        permission_channel, PermissionAnswer, PermissionEnvelope, PermissionRules,
+    };
 
     /// An agent on the other end of two pipes, scripted for one prompt: it
     /// thinks, speaks, edits a file through our fs methods after asking for
@@ -865,7 +901,7 @@ mod tests {
                                 break m;
                             }
                         };
-                        assert_eq!(answer["result"]["outcome"]["optionId"], "o-always");
+                        assert_eq!(answer["result"]["outcome"]["optionId"], "o-once");
                         send(update(
                             json!({ "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Write notes.md", "kind": "edit", "status": "in_progress", "rawInput": { "path": "notes.md" } }),
                         ));
@@ -938,6 +974,8 @@ mod tests {
                 cwd: dir,
                 prompter,
                 cancel,
+                rules: PermissionRules::default(),
+                persist: None,
             },
             5,
         );
@@ -955,7 +993,9 @@ mod tests {
             events.extend(runtime.drain());
             if let Ok(envelope) = permissions.try_recv() {
                 assert_eq!(envelope.request.tool, "edit");
-                assert_eq!(envelope.request.subject, "Write notes.md");
+                // The subject is derived from the call, as for the built-in
+                // agent: the project-relative path, not the ACP title.
+                assert_eq!(envelope.request.subject, "notes.md");
                 envelope.reply.send(answer.clone()).unwrap();
             }
             if events.iter().any(|e| matches!(e, AgentEvent::AgentEnd)) {
@@ -1010,6 +1050,8 @@ mod tests {
                 cwd: dir,
                 prompter,
                 cancel,
+                rules: PermissionRules::default(),
+                persist: None,
             },
             5,
         )
@@ -1150,6 +1192,8 @@ mod tests {
                 cwd: PathBuf::from("/tmp"),
                 prompter,
                 cancel,
+                rules: PermissionRules::default(),
+                persist: None,
             },
             1,
         );
@@ -1170,6 +1214,48 @@ mod tests {
         assert_eq!(
             runtime.prompt(UserMessage::text("again")),
             Err(PromptError::Stopped)
+        );
+    }
+
+    #[test]
+    fn an_execute_request_maps_to_a_bash_call() {
+        let call = permission_call(&json!({
+            "toolCallId": "t1",
+            "title": "Run cat",
+            "kind": "execute",
+            "rawInput": { "command": "cat notes.txt" }
+        }));
+        assert_eq!(call.name, "bash");
+        assert_eq!(call.arguments["command"], "cat notes.txt");
+
+        // With no raw command, the title stands in so a read-only check works.
+        let from_title = permission_call(&json!({
+            "toolCallId": "t2", "title": "ls -la", "kind": "execute"
+        }));
+        assert_eq!(from_title.name, "bash");
+        assert_eq!(from_title.arguments["command"], "ls -la");
+    }
+
+    #[test]
+    fn a_read_only_execute_request_is_allowed_without_asking() {
+        // Exactly what `ask_permission` does: map the ACP request, then let
+        // the same hooks the built-in agent uses decide it.
+        let call = permission_call(&json!({
+            "toolCallId": "t1",
+            "title": "Run cat",
+            "kind": "execute",
+            "rawInput": { "command": "cat notes.txt" }
+        }));
+        let cancel = CancelToken::new();
+        let (prompter, rx) = permission_channel(cancel);
+        let mut hooks = PermissionHooks::new(PermissionRules::default(), Box::new(prompter));
+        let ctx = ToolContext {
+            cwd: PathBuf::from("/tmp"),
+        };
+        assert_eq!(hooks.before_tool_call(&call, &ctx), ToolDecision::Allow);
+        assert!(
+            rx.try_recv().is_err(),
+            "a read-only command must not reach the user"
         );
     }
 }

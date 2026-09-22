@@ -14,7 +14,7 @@ use crate::agent::{Agent, AgentEvent, Hooks, QueueHandle};
 use crate::cancel::CancelToken;
 use crate::compaction::CompactionReason;
 use crate::message::UserMessage;
-use crate::permissions::ChannelPrompter;
+use crate::permissions::{ChannelPrompter, PermissionRules, PersistRule};
 use crate::provider::ModelSpec;
 use std::path::PathBuf;
 
@@ -75,6 +75,13 @@ pub struct BackendSetup {
     pub prompter: ChannelPrompter,
     /// Set by the panel's abort.
     pub cancel: CancelToken,
+    /// The same rules the built-in agent runs under (config plus this
+    /// session's grants): read-only commands and rules an external agent's
+    /// permission requests match are answered without troubling the user.
+    pub rules: PermissionRules,
+    /// Persists an "allow always" grant to the configuration, as for the
+    /// built-in agent; `None` when there is nowhere to write it.
+    pub persist: Option<PersistRule>,
 }
 
 /// What the panel drives: the built-in agent on its worker thread, or an
