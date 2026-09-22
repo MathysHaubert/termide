@@ -404,6 +404,7 @@ ai/
   skills/<name>/SKILL.md   skills, see below
   prompts/<name>.md        prompt templates, typed as /name
   commands/<name>          command scripts, typed as /name, see below
+  shims/<command>          command shims (config level only), see below
   mcp.toml                 MCP servers, see below
   hooks.toml               command hooks, see below
   system/compact.md        how the agent summarises a long session
@@ -414,7 +415,7 @@ ai/
 
 The first time the panel opens, the configuration level is laid out:
 `AGENTS.md` and the `system/` files receive the shipped texts, `agents/`,
-`skills/`, `prompts/` and `commands/` are created empty. Nothing there is ever overwritten; delete
+`skills/`, `prompts/`, `commands/` and `shims/` are created empty. Nothing there is ever overwritten; delete
 `AGENTS.md` to get the shipped template back.
 
 ### Agents
@@ -706,6 +707,29 @@ what the model sees; exit code 2 turns the result into an error with
 standard error as its text. Hooks run in name order before the permission
 rules; a hook that fails in any other way, or exceeds its timeout, is logged
 and ignored, so a broken hook never stops the agent.
+
+### Command shims
+
+A shim is an executable in `shims/` named after a command. When the built-in
+agent runs a shell command, `shims/` is prepended to the `bash` tool's `PATH`,
+so a shim shadows the real command — including inside a pipeline
+(`… | grep …`). It is the token-saving layer you extend by hand: a `shims/grep`
+that runs a leaner search, a `shims/cat` that trims noise, each printing a
+compact result the model reads. (The `bash` tool also cleans output on its own;
+a shim is the part you control.)
+
+```sh
+# ~/.config/termide/ai/shims/rg  (chmod +x)
+#!/bin/sh
+# Cap ripgrep at a few matches per file, then hand the rest to the real one.
+exec /usr/bin/rg --max-count 5 "$@"
+```
+
+Because a shim runs silently on every matching command, only the configuration
+level's `shims/` is honoured — never a project's or the working directory's, so
+a checkout cannot plant one. A shim is a normal executable in any language; call
+the real tool by its absolute path (or `PATH= command <tool>`) to avoid calling
+itself. External (ACP) agents run their own commands and are not shimmed.
 
 ### Project instructions
 

@@ -2,7 +2,7 @@
 //! cancel, keep head and tail of long output inline and the full log on disk.
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,6 +33,10 @@ pub struct BashTool {
     /// Clean and compact output for the model (strip escapes, collapse noise)
     /// before truncation. The user still sees the raw stream and full log.
     pub clean: bool,
+    /// Directory of command shims prepended to `PATH`, so an executable named
+    /// after a command shadows the real one (a token-saving wrapper). `None`
+    /// leaves `PATH` untouched.
+    pub shim_path: Option<PathBuf>,
 }
 
 impl Default for BashTool {
@@ -43,6 +47,7 @@ impl Default for BashTool {
             max_output_bytes: SHELL_MAX_BYTES,
             log_dir: None,
             clean: true,
+            shim_path: None,
         }
     }
 }
@@ -120,7 +125,7 @@ impl BashTool {
         on_update: &mut dyn FnMut(ToolUpdate),
         cancel: &CancelToken,
     ) -> Result<Run, String> {
-        let mut child = spawn(command, ctx)?;
+        let mut child = spawn(command, ctx, self.shim_path.as_deref())?;
         let started = Instant::now();
         let output = Arc::new(Mutex::new(Vec::new()));
         let stdout: Option<Box<dyn Read + Send>> = child
@@ -299,7 +304,7 @@ impl BashTool {
     }
 }
 
-fn spawn(command: &str, ctx: &ToolContext) -> Result<Child, String> {
+fn spawn(command: &str, ctx: &ToolContext, shim_path: Option<&Path>) -> Result<Child, String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-c")
         .arg(command)
@@ -307,6 +312,16 @@ fn spawn(command: &str, ctx: &ToolContext) -> Result<Child, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Prepend the shim directory to PATH so a shim shadows the real command,
+    // including inside pipelines. The child's own PATH is used as the base.
+    if let Some(dir) = shim_path {
+        let base = std::env::var_os("PATH").unwrap_or_default();
+        let mut entries = vec![dir.to_path_buf()];
+        entries.extend(std::env::split_paths(&base));
+        if let Ok(joined) = std::env::join_paths(entries) {
+            cmd.env("PATH", joined);
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -396,6 +411,39 @@ mod tests {
 
     fn run(dir: &std::path::Path, args: Value) -> ToolResultMessage {
         run_with(&tool(dir), dir, args, &CancelToken::new()).0
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shim_on_path_shadows_the_real_command() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let shims = dir.path().join("shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        let shim = shims.join("date");
+        std::fs::write(&shim, "#!/bin/sh\necho SHIMMED\n").unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let tool = BashTool {
+            log_dir: Some(dir.path().to_path_buf()),
+            shim_path: Some(shims),
+            ..BashTool::default()
+        };
+        let result = run_with(
+            &tool,
+            dir.path(),
+            json!({ "command": "date" }),
+            &CancelToken::new(),
+        )
+        .0;
+        assert!(!result.is_error, "{}", result.plain_text());
+        assert_eq!(result.plain_text().trim(), "SHIMMED");
+
+        // Without the shim dir the real `date` runs (not our fixed string).
+        let plain = run(dir.path(), json!({ "command": "date +SHIMMED" }));
+        assert_eq!(plain.plain_text().trim(), "SHIMMED");
+        let real = run(dir.path(), json!({ "command": "date +%Y" }));
+        assert_ne!(real.plain_text().trim(), "SHIMMED");
     }
 
     #[test]

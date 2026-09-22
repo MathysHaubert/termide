@@ -50,6 +50,11 @@ pub const PROMPTS_DIR: &str = "prompts";
 /// termide's own prompts under an `ai` directory: `system/compact.md` and
 /// `system/compacted.md` so far.
 pub const SYSTEM_DIR: &str = "system";
+/// Command shims: executables named after a command that shadow it on the
+/// built-in agent's `PATH`, so a shell command runs a token-saving wrapper.
+/// Only the configuration level is honoured — a shim runs silently on every
+/// matching command, so a project must not be able to plant one.
+pub const SHIMS_DIR: &str = "shims";
 
 /// One prompt template: `/<name> args` in the input expands to `body` with
 /// `$ARGUMENTS` and `$1`…`$9` filled in.
@@ -150,7 +155,14 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
 /// no such file exists yet, plus empty `agents/`, `skills/` and `prompts/`.
 /// Files already there are left alone, so the call is safe on every start.
 pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
-    for dir in ["agents", "skills", "prompts", COMMANDS_DIR, SYSTEM_DIR] {
+    for dir in [
+        "agents",
+        "skills",
+        "prompts",
+        COMMANDS_DIR,
+        SYSTEM_DIR,
+        SHIMS_DIR,
+    ] {
         std::fs::create_dir_all(global.join(dir))?;
     }
     for (relative, seed) in [
@@ -278,6 +290,15 @@ impl AgentDirs {
     #[must_use]
     pub fn goal_prompt(&self) -> GoalPrompt {
         GoalPrompt::from_file(&self.system_file("goal.md", SEED_GOAL))
+    }
+
+    /// The command-shim directory (`shims/`), from the configuration level
+    /// only — a shim runs silently, so a project's is never trusted. `None`
+    /// when there is no configuration level or it does not exist yet.
+    #[must_use]
+    pub fn shims_dir(&self) -> Option<PathBuf> {
+        let dir = self.global.as_ref()?.join(SHIMS_DIR);
+        dir.is_dir().then_some(dir)
     }
 
     /// `system/<name>` from the first level that has a non-empty one, else
@@ -658,9 +679,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let global = tmp.path().join("ai");
         ensure_global_layout(&global).unwrap();
-        for dir in ["agents", "skills", "prompts", "commands", "system"] {
+        for dir in ["agents", "skills", "prompts", "commands", "system", "shims"] {
             assert!(global.join(dir).is_dir(), "{dir}");
         }
+        // The shim directory is the configuration level's, and never a
+        // project's — a shim runs silently, so it must be trusted.
+        let dirs_shim = AgentDirs::new(tmp.path(), Some(tmp.path()), Some(&global));
+        assert_eq!(dirs_shim.shims_dir(), Some(global.join("shims")));
+        assert_eq!(
+            AgentDirs::new(tmp.path(), Some(tmp.path()), None).shims_dir(),
+            None
+        );
         let soul = global.join(ROOT_SOUL_FILE);
         assert_eq!(std::fs::read_to_string(&soul).unwrap(), SEED_TEMPLATE);
         assert_eq!(

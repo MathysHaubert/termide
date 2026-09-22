@@ -174,7 +174,7 @@ impl AgentCatalog for FsCatalog {
         let mut tools = if backend.is_some() {
             termide_agent_core::ToolRegistry::new()
         } else {
-            builtin_tools()
+            builtin_tools(self.dirs.shims_dir())
         };
         restrict_tools(&mut tools, &definition.spec.tools, name);
         // Skills are instructions, not a capability, so an agent's `tools`
@@ -290,7 +290,7 @@ impl Subagents {
                 "{name} is an external agent and cannot be run as a subagent"
             ));
         }
-        let mut tools = builtin_tools();
+        let mut tools = builtin_tools(self.dirs.shims_dir());
         restrict_tools(&mut tools, &definition.spec.tools, name);
         let skills = self.dirs.skills();
         if !skills.is_empty() {
@@ -570,7 +570,7 @@ pub fn run_agent_headless(
         return 2;
     }
 
-    let mut tools = builtin_tools();
+    let mut tools = builtin_tools(dirs.shims_dir());
     restrict_tools(&mut tools, &definition.spec.tools, name);
     let skills = dirs.skills();
     if !skills.is_empty() {

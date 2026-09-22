@@ -19,6 +19,7 @@ mod task;
 mod truncate;
 mod write;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use termide_agent_core::ToolRegistry;
@@ -32,12 +33,17 @@ pub use task::{SubagentRun, TaskTool};
 pub use write::WriteTool;
 
 /// The default registry: `read`, `edit`, `write`, `bash`, in prompt order.
+/// `shim_path` is the command-shim directory prepended to `bash`'s `PATH`
+/// (the configuration-level `shims/`); `None` leaves `PATH` untouched.
 #[must_use]
-pub fn builtin_tools() -> ToolRegistry {
+pub fn builtin_tools(shim_path: Option<PathBuf>) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.insert(Arc::new(ReadTool));
     registry.insert(Arc::new(EditTool));
     registry.insert(Arc::new(WriteTool));
-    registry.insert(Arc::new(BashTool::default()));
+    registry.insert(Arc::new(BashTool {
+        shim_path,
+        ..BashTool::default()
+    }));
     registry
 }
