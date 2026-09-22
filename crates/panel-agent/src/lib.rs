@@ -23,11 +23,11 @@ use ratatui::text::{Line, Span};
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendModel,
     BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript,
-    CompactionPolicy, CompactionPrompts, Decision, GoalPrompt, HandoffPrompt, Hooks, LateTools,
-    Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope,
-    PermissionHooks, PermissionRules, PersistRule, PlanGuard, PlanPrompt, PromptTemplate, Provider,
-    Session, SessionSummary, StreamEvent, Tool, ToolRegistry, ToolResultMessage, ToolUpdate,
-    UserMessage, DEFAULT_AGENT,
+    CompactionPolicy, CompactionPrompts, Decision, EntryKind, GoalPrompt, HandoffPrompt, Hooks,
+    LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
+    PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard, PlanPrompt,
+    PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
+    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -78,6 +78,8 @@ const MODE_ACTION: &str = "agent_mode";
 const REASONING_ACTION: &str = "agent_reasoning";
 /// Context-menu action that opens the assembled system prompt in a viewer.
 const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
+/// Context-menu action that opens the session-info modal (also F3, `/usage`).
+const SESSION_INFO_ACTION: &str = "agent_session_info";
 /// Status chip and context-menu action that opens the agent picker.
 const AGENT_ACTION: &str = "agent_agent";
 /// Context-menu action that opens the prompt-template picker.
@@ -112,6 +114,10 @@ const GOAL_MAX_ITERATIONS: usize = 50;
 /// The built-in `/handoff` command: distil the unfinished work into a brief for
 /// a fresh session or another agent.
 const HANDOFF_COMMAND: &str = "handoff";
+/// The built-in `/usage` command: open the session-info modal (same as F3).
+const USAGE_COMMAND: &str = "usage";
+/// The built-in `/prompt` command: open the assembled system prompt in a viewer.
+const PROMPT_COMMAND: &str = "prompt";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -1004,6 +1010,14 @@ impl AgentPanel {
                 self.clear_input();
                 return self.start_handoff();
             }
+            Some((USAGE_COMMAND, _)) => {
+                self.clear_input();
+                return self.session_summary();
+            }
+            Some((PROMPT_COMMAND, _)) => {
+                self.clear_input();
+                return self.handle_status_action(SHOW_PROMPT_ACTION);
+            }
             Some((name, args)) => {
                 let prompts = self.catalog.prompts();
                 if let Some(template) = prompts.iter().find(|p| p.name == name) {
@@ -1035,6 +1049,8 @@ impl AgentPanel {
                     names.push(LOOP_COMMAND.to_string());
                     names.push(GOAL_COMMAND.to_string());
                     names.push(HANDOFF_COMMAND.to_string());
+                    names.push(USAGE_COMMAND.to_string());
+                    names.push(PROMPT_COMMAND.to_string());
                     self.notice(
                         format!("no command named {name}; available: {}", names.join(", ")),
                         NoticeKind::Warn,
@@ -2540,6 +2556,20 @@ impl AgentPanel {
                     .with_description("Brief the unfinished work for a new session or agent"),
             );
         }
+        if USAGE_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(USAGE_COMMAND)
+                    .with_label(format!("/{USAGE_COMMAND}"))
+                    .with_description("Show this session's model, tokens, context and more"),
+            );
+        }
+        if PROMPT_COMMAND.starts_with(prefix) {
+            items.push(
+                CompletionItem::new(PROMPT_COMMAND)
+                    .with_label(format!("/{PROMPT_COMMAND}"))
+                    .with_description("Open the assembled system prompt in a viewer"),
+            );
+        }
         if items.is_empty() {
             self.completion = None;
             return;
@@ -2778,8 +2808,10 @@ impl AgentPanel {
         vec![PanelEvent::NeedsRedraw]
     }
 
-    /// A read-only summary of the current session (F3), shown as a message.
+    /// A read-only summary of the current session, shown in an info modal
+    /// (F3, the `[≡]` menu's "Session info", or `/usage`).
     fn session_summary(&self) -> Vec<PanelEvent> {
+        let t = termide_i18n::t();
         let name = self
             .session
             .as_ref()
@@ -2792,44 +2824,69 @@ impl AgentPanel {
             .iter()
             .filter(|item| matches!(item, Item::User { .. } | Item::Assistant { .. }))
             .count();
-        let mut lines = vec![
-            format!("Session: {name}"),
-            format!("Agent: {}", self.agent),
-            format!("Provider: {}", self.provider_kind),
-            format!("Model: {}", self.model.id),
-            format!("Directory: {}", shorten_path(&self.cwd, usize::MAX)),
-            format!("Messages: {messages}"),
+        let mut rows: Vec<(String, String)> = vec![("Session".into(), name)];
+        if let Some(session) = self.session.as_ref() {
+            if let Some(id) = session
+                .path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+            {
+                rows.push(("Log".into(), id));
+            }
+        }
+        rows.push(("Agent".into(), self.agent.clone()));
+        rows.push(("Provider".into(), self.provider_kind.clone()));
+        rows.push(("Model".into(), self.model.id.clone()));
+        rows.push(("Mode".into(), self.mode.get().label().to_string()));
+        rows.push(("Directory".into(), shorten_path(&self.cwd, usize::MAX)));
+        if let Some(session) = self.session.as_ref() {
+            rows.push(("Created".into(), civil_date(session.header().created)));
+            if let Some(last) = session.entries().last().map(|e| e.timestamp) {
+                rows.push(("Last active".into(), civil_date(last)));
+            }
+            let compactions = session
+                .entries()
+                .iter()
+                .filter(|e| matches!(e.kind, EntryKind::Compaction { .. }))
+                .count();
+            rows.push(("Compactions".into(), compactions.to_string()));
+        }
+        rows.push(("Messages".into(), messages.to_string()));
+        rows.push((
+            "Tokens".into(),
             format!(
-                "Tokens: ↑{} ↓{}",
+                "↑{} ↓{}",
                 format_tokens(self.session_input),
                 format_tokens(self.session_output)
             ),
+        ));
+        rows.push((
+            "Context".into(),
             format!(
-                "Context: {} / {}",
+                "{} / {}",
                 format_tokens(self.context_tokens),
                 format_tokens(self.model.context_window)
             ),
-        ];
-        // How much shell-output cleaning has saved this session, when any ran.
+        ));
+        // How much the clean mechanism has shrunk shell output this session,
+        // when any ran: raw → cleaned and the percentage saved.
         if self.clean_raw_bytes > 0 {
             let saved = self.clean_raw_bytes.saturating_sub(self.clean_out_bytes);
             let percent = saved * 100 / self.clean_raw_bytes;
-            lines.push(format!(
-                "Output cleaned: {} → {} (−{percent}%)",
-                format_bytes(self.clean_raw_bytes),
-                format_bytes(self.clean_out_bytes),
+            rows.push((
+                "Output cleaned".into(),
+                format!(
+                    "{} → {} (−{percent}%)",
+                    format_bytes(self.clean_raw_bytes),
+                    format_bytes(self.clean_out_bytes),
+                ),
             ));
         }
-        if let Some(id) = self
-            .session
-            .as_ref()
-            .map(Session::path)
-            .and_then(Path::file_stem)
-            .and_then(|s| s.to_str())
-        {
-            lines.insert(1, format!("Log: {id}"));
-        }
-        vec![PanelEvent::ShowMessage(lines.join("\n"))]
+        vec![PanelEvent::ShowInfo {
+            title: t.agent_session_info().to_string(),
+            rows,
+        }]
     }
 
     /// Offer the undoable checkpoints (F4), newest first, to roll the session
@@ -3865,11 +3922,12 @@ impl Panel for AgentPanel {
         // Only actions with no home elsewhere. New/switch/delete sessions also
         // have F-keys, sessions/prompts/agents live in the AI menu, and the
         // model/agent/mode pickers are status-bar chips — none is repeated here.
-        // Showing the assembled prompt has no other entry point, so it stays.
+        // Session info also answers F3 and `/usage`; the assembled prompt is
+        // reached with `/prompt`, so neither needs another menu slot beyond this.
         vec![
+            (t.agent_session_info().to_string(), SESSION_INFO_ACTION),
             (t.agent_rename().to_string(), RENAME_ACTION),
             (t.agent_delete_session().to_string(), DELETE_SESSION_ACTION),
-            (t.agent_show_prompt().to_string(), SHOW_PROMPT_ACTION),
         ]
     }
 
@@ -3946,6 +4004,7 @@ impl Panel for AgentPanel {
                     vec![PanelEvent::NeedsRedraw]
                 }
             },
+            SESSION_INFO_ACTION => self.session_summary(),
             _ => vec![],
         }
     }
@@ -5493,7 +5552,11 @@ mod tests {
         assert_eq!(panel.title(), "Agent: first request");
 
         // The context menu raises an input prompt carrying our action.
-        let (label, action) = panel.context_menu_items().remove(0);
+        let (label, action) = panel
+            .context_menu_items()
+            .into_iter()
+            .find(|(_, action)| *action == RENAME_ACTION)
+            .expect("a rename entry in the menu");
         assert_eq!(label, "Rename session");
         let events = panel.handle_status_action(action);
         let Some(PanelEvent::ShowInput { on_submit, .. }) = events.first() else {
@@ -5540,7 +5603,7 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["Rename session", "Delete session", "Show system prompt"]
+            vec!["Session info", "Rename session", "Delete session"]
         );
         panel.handle_status_action(NEW_SESSION_ACTION);
         assert!(panel.transcript().items().is_empty());
@@ -5931,13 +5994,20 @@ mod tests {
     fn f3_shows_a_session_summary() {
         let mut panel = panel(vec![]);
         let events = panel.handle_key(chord(KeyCode::F(3), KeyModifiers::NONE));
-        let Some(PanelEvent::ShowMessage(text)) = events.first() else {
-            panic!("F3 should show a summary, got {events:?}");
+        let Some(PanelEvent::ShowInfo { rows, .. }) = events.first() else {
+            panic!("F3 should show a summary modal, got {events:?}");
         };
         for label in ["Provider", "Model", "Agent", "Directory", "Tokens"] {
-            assert!(text.contains(label), "missing {label}: {text}");
+            assert!(
+                rows.iter().any(|(key, _)| key == label),
+                "missing {label}: {rows:?}"
+            );
         }
-        assert!(text.contains(panel.model.id.as_str()), "{text}");
+        assert!(
+            rows.iter()
+                .any(|(key, value)| key == "Model" && value == panel.model.id.as_str()),
+            "{rows:?}"
+        );
     }
 
     #[test]
@@ -6008,11 +6078,39 @@ mod tests {
             ),
         });
         let events = panel.session_summary();
-        let Some(PanelEvent::ShowMessage(text)) = events.first() else {
-            panic!("expected a summary, got {events:?}");
+        let Some(PanelEvent::ShowInfo { rows, .. }) = events.first() else {
+            panic!("expected a summary modal, got {events:?}");
         };
-        assert!(text.contains("Output cleaned:"), "{text}");
-        assert!(text.contains("−75%"), "{text}");
+        let cleaned = rows
+            .iter()
+            .find(|(key, _)| key == "Output cleaned")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| panic!("no cleaning row: {rows:?}"));
+        assert!(cleaned.contains("−75%"), "{cleaned}");
+    }
+
+    #[test]
+    fn slash_usage_opens_the_session_info_modal() {
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "/usage");
+        let events = panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, PanelEvent::ShowInfo { .. })),
+            "expected an info modal, got {events:?}"
+        );
+    }
+
+    #[test]
+    fn slash_prompt_opens_the_system_prompt() {
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "/prompt");
+        let events = panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            events.iter().any(|e| matches!(e, PanelEvent::ViewFile(_))),
+            "expected the prompt file to open, got {events:?}"
+        );
     }
 
     #[test]
@@ -6559,14 +6657,9 @@ mod tests {
             system_prompt: "You are terse.\n".into(),
             ..setup(vec![])
         });
-        let labels: Vec<String> = panel
-            .context_menu_items()
-            .into_iter()
-            .map(|(label, _)| label)
-            .collect();
-        assert!(labels.iter().any(|label| label == "Show system prompt"));
-
-        let events = panel.handle_status_action(SHOW_PROMPT_ACTION);
+        // It has no menu slot; `/prompt` is its entry point.
+        type_text(&mut panel, "/prompt");
+        let events = panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
         let Some(PanelEvent::ViewFile(path)) = events.first() else {
             panic!("expected a viewer, got {events:?}");
         };

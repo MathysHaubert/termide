@@ -375,6 +375,7 @@ impl Translation for RuntimeTranslation {
         agent_mode_auto,
         agent_mode_plan,
         agent_show_prompt,
+        agent_session_info,
         agent_change_agent,
         agent_prompts,
         agent_no_prompts,

@@ -140,6 +140,12 @@ impl App {
                 self.state.set_info(message);
             }
 
+            PanelEvent::ShowInfo { title, rows } => {
+                let modal = termide_modal::InfoModal::new(title, rows);
+                self.state.active_modal = Some(crate::state::ActiveModal::Info(Box::new(modal)));
+                self.state.needs_redraw = true;
+            }
+
             PanelEvent::ShowError(message) => {
                 self.show_error_modal(message);
             }

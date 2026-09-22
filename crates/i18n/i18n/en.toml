@@ -370,6 +370,7 @@ agent_mode_accept_edits = "accept-edits — edit files inside the project withou
 agent_mode_auto = "auto — allow everything"
 agent_mode_plan = "plan — read only, propose a plan first"
 agent_show_prompt = "Show system prompt"
+agent_session_info = "Session info"
 agent_change_agent = "Change agent…"
 agent_prompts = "Insert prompt…"
 agent_no_prompts = "No prompt templates: add prompts/<name>.md to the ai directory"

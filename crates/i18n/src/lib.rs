@@ -450,6 +450,8 @@ pub trait Translation: Send + Sync {
     fn agent_mode_plan(&self) -> &str;
     /// Agent panel context menu: open the assembled system prompt
     fn agent_show_prompt(&self) -> &str;
+    /// Agent panel context menu and `/usage`: the session-info modal title
+    fn agent_session_info(&self) -> &str;
     /// Agent panel: open the agent picker
     fn agent_change_agent(&self) -> &str;
     /// Agent panel: open the prompt-template picker

@@ -523,6 +523,13 @@ pub enum PanelEvent {
     /// Show informational message
     ShowMessage(String),
 
+    /// Show a read-only info modal: a title and key/value rows, rendered as a
+    /// table (used for the agent panel's session summary).
+    ShowInfo {
+        title: String,
+        rows: Vec<(String, String)>,
+    },
+
     /// Show error message
     ShowError(String),
 

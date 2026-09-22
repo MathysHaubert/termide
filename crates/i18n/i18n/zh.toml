@@ -384,6 +384,7 @@ agent_mode_accept_edits = "accept-edits — 无需询问即可编辑项目内文
 agent_mode_auto = "auto — 允许一切"
 agent_mode_plan = "plan — 只读，先给出计划"
 agent_show_prompt = "显示系统提示词"
+agent_session_info = "会话信息"
 agent_change_agent = "更换代理…"
 agent_prompts = "插入提示词…"
 agent_no_prompts = "没有提示词模板：请在 ai 目录中添加 prompts/<名称>.md"

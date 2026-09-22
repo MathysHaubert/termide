@@ -377,6 +377,7 @@ agent_mode_accept_edits = "accept-edits — править файлы внутр
 agent_mode_auto = "auto — разрешать всё"
 agent_mode_plan = "plan — только чтение, сначала план"
 agent_show_prompt = "Показать системный промпт"
+agent_session_info = "Сведения о сессии"
 agent_change_agent = "Сменить агента…"
 agent_prompts = "Вставить промпт…"
 agent_no_prompts = "Промптов нет: добавьте prompts/<имя>.md в каталог ai"

@@ -80,9 +80,10 @@ accent colour: a click on either opens the same picker its status-bar chip
 does, so you can switch before you start. The banner gives way to the
 conversation as soon as you send your first message.
 
-The panel's `[≡]` menu is kept to the actions with no home elsewhere — **Rename
-session**, **Delete session** and **Show system prompt**. Managing sessions is
-on the F-keys and in the AI menu instead: `F7` starts a new session, `F6` opens
+The panel's `[≡]` menu is kept to the actions with no home elsewhere —
+**Session info** (also `F3` and `/usage`), **Rename session** and **Delete
+session**. The assembled system prompt opens with `/prompt`. Managing sessions
+is on the F-keys and in the AI menu instead: `F7` starts a new session, `F6` opens
 the picker of this directory's sessions (newest first, the current one marked
 `●`), `F8` deletes the current one after a confirmation, and `F2` renames it.
 Switching waits for the current task: stop it with `Esc` first if the agent is
@@ -109,12 +110,12 @@ you have named or sent even one message to is always kept.
 | `Ctrl+C` | With a block selected, copy its text to the clipboard |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `F2` | Rename this session (the same prompt as the `[≡]` menu) |
-| `F3` | Show a summary of this session (model, agent, directory, tokens, how much shell output was cleaned) |
+| `F3` | Open the session-info modal (model, agent, mode, directory, created/last-active times, messages, compactions, tokens, context, how much shell output was cleaned); also `/usage` and the `[≡]` menu |
 | `F4` | Roll the session back to before a chosen checkpoint |
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it; `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it; `/usage` opens the session-info modal and `/prompt` opens the assembled system prompt |
 | `↑` / `↓` | On the first or last line of the input: recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -536,9 +537,8 @@ the tools themselves contribute, `{{skills}}` the skills by name and
 description, `{{environment}}` the working directory, platform, date and
 whether it is a git repository, and `{{project_instructions}}` the
 instruction files described below. Reword the file, drop a section or add
-your own; a placeholder you leave out is simply not sent. **Show system
-prompt** in the panel's `[≡]` menu opens the assembled result, so you can see
-exactly what the model gets.
+your own; a placeholder you leave out is simply not sent. `/prompt` opens the
+assembled result in a viewer, so you can see exactly what the model gets.
 
 ### Service prompts
 
