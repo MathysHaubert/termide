@@ -174,9 +174,10 @@ terminals) and drag as usual.
 What the agent runs is captured cleanly for the model: colour and cursor
 escapes, progress-bar redraws, spinner frames and long runs of near-identical
 build lines are stripped or collapsed before the output enters the context,
-so a noisy command costs far fewer tokens. A Rust test run (`cargo test` or
-`cargo nextest run`) drops the passing and skipped test lines and keeps the
-failures and the result summary. The full, untouched log is still
+so a noisy command costs far fewer tokens. A test run — Rust (`cargo test`,
+`cargo nextest`), Python (`pytest`), Go (`go test`) or JS/TS (`jest`,
+`vitest`) — drops the passing and skipped test lines and keeps the failures and
+the result summary. The full, untouched log is still
 written to a file whose path the tool reports, and you still see the raw
 stream live in the panel.
 

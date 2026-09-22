@@ -237,36 +237,66 @@ fn compact_command(command: &str, lines: Vec<String>) -> Vec<String> {
     out
 }
 
-/// Whether `command` is a Rust test run whose output is worth trimming:
-/// `cargo test` (libtest) or `cargo nextest run`. Both print a line per test
-/// that is almost all passes.
-fn is_rust_test_command(command: &str) -> bool {
-    first_word(command) == Some("cargo")
-        && command
-            .split_whitespace()
-            .any(|w| w == "test" || w == "nextest")
+/// Whether `command` is a test run whose per-test output is worth trimming.
+/// Covers the runners a general-purpose dev tool sees most: Rust (`cargo test`
+/// / `cargo nextest`), Python (`pytest`, `python -m pytest`), Go (`go test`),
+/// and JS/TS (`jest`, `vitest`, and the `npm`/`pnpm`/`yarn`/`npx` wrappers).
+fn is_test_command(command: &str) -> bool {
+    let Some(first) = first_word(command) else {
+        return false;
+    };
+    let has = |word: &str| command.split_whitespace().any(|w| w == word);
+    match first {
+        "cargo" => has("test") || has("nextest"),
+        "pytest" | "py.test" | "jest" | "vitest" => true,
+        "python" | "python3" => command.contains("pytest"),
+        "go" => has("test"),
+        "npm" | "pnpm" | "yarn" | "npx" | "bunx" | "bun" => {
+            has("test") || command.contains("jest") || command.contains("vitest")
+        }
+        _ => false,
+    }
 }
 
 /// A per-test line reporting a pass or a skip — pure noise to the model, which
-/// only needs the failures and the final count. Covers libtest
-/// (`test path ... ok` / `... ignored`) and nextest (`PASS […] …` /
-/// `SKIP […] …`). Failures (`FAILED`, `FAIL`, `SLOW`, `TIMEOUT`, `LEAK`) and
-/// the `running N tests` / `test result:` / `Summary` lines never match.
+/// only needs the failures and the final count. Union of the common runners'
+/// formats; failures (`FAILED` / `--- FAIL:` / `✗` / `ERROR`), the run headers
+/// and the result summaries never match, so nothing needed is dropped.
 fn is_passing_test_line(line: &str) -> bool {
     let t = line.trim_start();
-    // libtest: the line ends in the status after `...`.
+    // Rust libtest: `test path::name ... ok` / `... ignored`.
     if t.starts_with("test ") && (t.ends_with(" ... ok") || t.ends_with(" ... ignored")) {
         return true;
     }
-    // nextest: the status is the first word, padded, then `[time] crate test`.
-    matches!(t.split_whitespace().next(), Some("PASS" | "SKIP")) && t.contains('[')
+    // Rust nextest: `PASS`/`SKIP` first, then `[time] crate name`.
+    if matches!(t.split_whitespace().next(), Some("PASS" | "SKIP")) && t.contains('[') {
+        return true;
+    }
+    // Go: run markers and per-test passes/skips (failures use `--- FAIL:`).
+    if t.starts_with("=== RUN")
+        || t.starts_with("=== CONT")
+        || t.starts_with("=== PAUSE")
+        || t.starts_with("--- PASS:")
+        || t.starts_with("--- SKIP:")
+    {
+        return true;
+    }
+    // pytest -v: `path::test PASSED/SKIPPED/XFAIL …` (failures say FAILED/ERROR).
+    if t.contains("::")
+        && t.split_whitespace()
+            .any(|w| matches!(w, "PASSED" | "SKIPPED" | "XFAIL" | "XPASS"))
+    {
+        return true;
+    }
+    // jest / vitest pass marks (failures use ✗ / × / ❯).
+    t.starts_with("\u{2713} ") || t.starts_with("\u{221a} ")
 }
 
-/// Drop passing and skipped test lines from a Rust test run, keeping failures,
-/// the run header and the result summary — the count of what was hidden stays
-/// in that summary, so nothing the model needs is lost.
+/// Drop passing and skipped test lines from a test run, keeping failures, the
+/// run header and the result summary — the count of what was hidden stays in
+/// that summary, so nothing the model needs is lost.
 fn compact_test_output(command: &str, lines: Vec<String>) -> Vec<String> {
-    if !is_rust_test_command(command) {
+    if !is_test_command(command) {
         return lines;
     }
     lines
@@ -357,6 +387,32 @@ mod tests {
         assert!(cleaned.text.contains("FAIL [   0.01s] mycrate a::boom"));
         assert!(cleaned.text.contains("Summary"));
         assert!(cleaned.text.contains("2 passed, 1 failed"));
+    }
+
+    #[test]
+    fn pytest_go_and_jest_hide_passes_but_keep_failures() {
+        // pytest -v
+        let pytest = "tests/test_a.py::test_ok PASSED [ 50%]\ntests/test_a.py::test_bad FAILED [100%]\n=== 1 failed, 1 passed in 0.1s ===\n";
+        let c = clean_output(pytest, "pytest -v");
+        assert!(!c.text.contains("test_ok PASSED"));
+        assert!(c.text.contains("test_bad FAILED"));
+        assert!(c.text.contains("1 failed, 1 passed"));
+
+        // go test -v
+        let go = "=== RUN   TestOk\n--- PASS: TestOk (0.00s)\n=== RUN   TestBad\n--- FAIL: TestBad (0.01s)\n    x_test.go:9: boom\nFAIL\n";
+        let c = clean_output(go, "go test ./...");
+        assert!(!c.text.contains("=== RUN"));
+        assert!(!c.text.contains("--- PASS: TestOk"));
+        assert!(c.text.contains("--- FAIL: TestBad"));
+        assert!(c.text.contains("boom"));
+        assert!(c.text.contains("FAIL"));
+
+        // jest / vitest
+        let jest = "\u{2713} adds numbers\n\u{2717} breaks things\n  expected 1 to be 2\nTests: 1 failed, 1 passed\n";
+        let c = clean_output(jest, "npx jest");
+        assert!(!c.text.contains("adds numbers"));
+        assert!(c.text.contains("breaks things"));
+        assert!(c.text.contains("1 failed, 1 passed"));
     }
 
     #[test]
