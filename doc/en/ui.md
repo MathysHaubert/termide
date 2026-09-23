@@ -214,6 +214,9 @@ Items are filtered by context: e.g. *Split/Merge* is hidden when there is only o
 
 The status bar is designed to display additional information about work in the active panel.
 Depending on the type of active panel, corresponding data is displayed.
+The progress of background file operations and the disk space indicator sit
+flush right; on a narrow terminal the panel's own text is cut, ending in `…`,
+so these stay visible.
 
 ### Disk Space Indicator
 

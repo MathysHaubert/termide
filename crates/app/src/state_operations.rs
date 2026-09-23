@@ -84,6 +84,17 @@ impl AppState {
             .filter(|s| s.has_operations())
     }
 
+    /// The background-operations indicator as the status bar renders it.
+    pub fn background_ops_indicator(&self) -> Option<termide_ui_render::BackgroundOpsSummary> {
+        self.background_operations_summary().map(|summary| {
+            termide_ui_render::BackgroundOpsSummary {
+                has_operations: summary.has_operations(),
+                status_text: summary.status_text(),
+                is_paused: summary.any_paused,
+            }
+        })
+    }
+
     /// Resolve a conflict for an operation waiting for user decision.
     pub fn resolve_operation_conflict(
         &mut self,

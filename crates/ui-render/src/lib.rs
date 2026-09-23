@@ -43,6 +43,7 @@ pub use panel_rendering::{
 };
 pub use simple_dropdown::render_simple_dropdown;
 pub use status_bar::{
-    segment_hit_areas, BackgroundOpsSummary, SegmentHit, StatusBar, StatusBarParams,
+    segment_hit_areas, status_trailing_width, BackgroundOpsSummary, SegmentHit, StatusBar,
+    StatusBarParams,
 };
 pub use theme_dropdown::ThemeDropdown;

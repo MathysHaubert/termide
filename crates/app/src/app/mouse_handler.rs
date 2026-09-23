@@ -561,17 +561,26 @@ impl App {
         // Clickable status-bar segments contributed by the focused panel
         // (editor: Pos / Tab / file-type / Hex / View-Edit; binary viewer:
         // Hex/Text). Layout matches the renderer's `segment_hit_areas`.
-        let seg_action = {
-            let segs = self
-                .layout_manager
-                .active_panel()
-                .map(|p| p.status_segments())
-                .unwrap_or_default();
-            termide_ui_render::segment_hit_areas(&segs, 0)
-                .into_iter()
-                .find(|h| (h.start..h.end).contains(&x))
-                .map(|h| h.action)
-        };
+        let seg_action =
+            {
+                let segs = self
+                    .layout_manager
+                    .active_panel()
+                    .map(|p| p.status_segments())
+                    .unwrap_or_default();
+                // Laid out in the width the renderer gives them: the bar less the
+                // background-operations and disk indicators on its right.
+                let width = self.state.terminal.width.saturating_sub(
+                    termide_ui_render::status_trailing_width(
+                        self.state.background_ops_indicator().as_ref(),
+                        self.state.cache.disk_space.as_ref(),
+                    ),
+                );
+                termide_ui_render::segment_hit_areas(&segs, 0, width)
+                    .into_iter()
+                    .find(|h| (h.start..h.end).contains(&x))
+                    .map(|h| h.action)
+            };
         if let Some(action) = seg_action {
             use crate::panel_ext::PanelExt;
             // A segment action may both emit events and request a modal (e.g.

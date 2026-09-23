@@ -216,11 +216,16 @@ pub enum SegmentKind {
     Warn,
     /// Error emphasis.
     Error,
+    /// Flexible gap (its text is ignored): pushes the segments after it to
+    /// the right edge. When the bar is too narrow, the segments before it are
+    /// cut instead of the ones after it.
+    Spacer,
 }
 
 /// A status-bar segment contributed by a panel via [`Panel::status_segments`].
 ///
-/// The global status bar renders the focused panel's segments left-to-right.
+/// The global status bar renders the focused panel's segments left-to-right;
+/// a [`StatusSegment::spacer`] right-aligns the ones after it.
 /// A segment with `action = Some(id)` is a clickable chip: a click is routed
 /// back to the panel through [`Panel::handle_status_action`].
 #[derive(Debug, Clone)]
@@ -241,6 +246,11 @@ impl StatusSegment {
             kind,
             action: None,
         }
+    }
+
+    /// Flexible gap that right-aligns the segments after it.
+    pub fn spacer() -> Self {
+        Self::new("", SegmentKind::Spacer)
     }
 
     /// Clickable chip whose click is routed to the panel's

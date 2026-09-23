@@ -823,13 +823,7 @@ fn render_status_bar_for_active(
         let disk_space = state.cache.disk_space.as_ref();
 
         // Build background operations summary if available
-        let background_ops = state.background_operations_summary().map(|summary| {
-            termide_ui_render::BackgroundOpsSummary {
-                has_operations: summary.has_operations(),
-                status_text: summary.status_text(),
-                is_paused: summary.any_paused,
-            }
-        });
+        let background_ops = state.background_ops_indicator();
 
         let disk_selected = state.ui.menu_open
             && state.ui.selected_menu_item == Some(termide_ui_render::INDICATOR_DISK_INDEX);
