@@ -447,7 +447,12 @@ impl InputBar {
             if !hit_area(area, col, row) {
                 continue;
             }
-            self.drag_field = pressed.then_some(i);
+            // Only a press takes ownership of the drag: a drag that extends the
+            // selection leaves it in place, so the drags that follow — past the
+            // edge of the field, into the transcript — keep extending it too.
+            if pressed {
+                self.drag_field = Some(i);
+            }
             self.pressed = true;
             // Match the rendered prefix: "› " for an empty (prompt) label.
             let prefix = if self.labels[i].is_empty() {
@@ -1302,6 +1307,40 @@ mod tests {
             b.multiline(0).unwrap().selected_text(),
             Some("e two\nthre".into())
         );
+    }
+
+    #[test]
+    fn a_drag_keeps_selecting_while_the_button_travels_on() {
+        let mut b = InputBar::new(vec![]).with_multiline_field("");
+        b.multiline_mut(0).unwrap().insert_str("one two three four");
+        let area = Rect::new(0, 0, 40, b.height());
+        let mut buf = Buffer::empty(area);
+        b.render(area, &mut buf, &ThemeColors::default(), true);
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        b.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), 4, 0));
+        // Terminal emulators report a drag per cell the pointer crosses, so a
+        // real selection is a run of them: each one must extend the selection
+        // further, not only the first. Column 4 sits on char index 2 of the
+        // text (the "› " prefix occupies the first two columns), so a drag to
+        // column N selects up to index N - 2.
+        let expected = ["e", "e ", "e t", "e tw"];
+        for (i, want) in expected.iter().enumerate() {
+            let column = 5 + i as u16;
+            b.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), column, 0));
+            assert_eq!(
+                b.multiline(0).unwrap().selected_text(),
+                Some((*want).to_string()),
+                "drag to column {column}"
+            );
+        }
+        // The bar still owns the pointer, so a drag that has wandered up into
+        // the transcript is claimed and clamped rather than dropped.
+        assert!(b.mouse_hits(at(MouseEventKind::Drag(MouseButton::Left), 3, 9)));
     }
 
     #[test]
