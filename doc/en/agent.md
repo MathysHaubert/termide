@@ -107,7 +107,12 @@ you have named or sent even one message to is always kept.
 | `Ctrl+O` | Expand or collapse every block |
 | `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `o` opens it in its own panel |
 | Click a block | Focus the chat and select that block (the selected block is shown inverted); click it again to fold or unfold it |
-| `Ctrl+C` | With a block selected, copy its text to the clipboard |
+| `Ctrl+C` | Copy: the selected prompt text, or — with a block selected in the chat — the block's text |
+| `Ctrl+X` / `Ctrl+V` | Cut / paste the prompt selection |
+| `Ctrl+A` | Select all the prompt text |
+| `Shift+arrows`, `Shift+Home`/`End`, `Ctrl+Shift+arrows` | Extend the prompt selection by character, to the line edges, by word |
+| `Ctrl+Left` / `Ctrl+Right` | Word-by-word navigation in the prompt |
+| `Ctrl+Z` / `Ctrl+Y`, `Ctrl+Shift+Z` | Undo / redo a prompt edit |
 | `Shift+Tab` | Cycle the permission mode: ask → accept-edits → auto → plan |
 | `F2` | Rename this session (the same prompt as the `[≡]` menu) |
 | `F3` | Open the session-info modal (model, agent, mode, directory, created/last-active times, messages, compactions, tokens, context, how much shell output was cleaned); also `/usage` and the `[≡]` menu |
@@ -168,9 +173,14 @@ panel follows the newest output until you scroll up, and resumes following when
 you scroll back to the bottom.
 
 To copy a whole block, select it (click it or move to it) and press `Ctrl+C`.
-TermIDE captures the mouse, so to select arbitrary text with the mouse instead
-hold your terminal's bypass modifier (usually `Shift`, `Option`/`Alt` in some
-terminals) and drag as usual.
+In the prompt, `Ctrl+C` copies whatever is selected there instead — selected
+text is shown inverted, so it is clear what a copy will take.
+
+Mouse selection works inside the prompt box: press to place the cursor, drag to
+select (across wrapped rows), release, then copy or cut. TermIDE captures the
+mouse, so to select text in the *transcript* with the mouse instead hold your
+terminal's bypass modifier (usually `Shift`, `Option`/`Alt` in some terminals)
+and drag as usual.
 
 What the agent runs is captured cleanly for the model: colour and cursor
 escapes, progress-bar redraws, spinner frames and long runs of near-identical

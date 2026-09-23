@@ -40,7 +40,7 @@ use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
 use termide_ui::{
     ChoiceAction, ChoiceForm, ClickTracker, CompletionAction, CompletionItem, CompletionList,
-    InputBar, ScrollBar,
+    FieldEdit, InputBar, ScrollBar,
 };
 
 pub use transcript::{Item, NoticeKind, Transcript};
@@ -840,6 +840,53 @@ impl AgentPanel {
             placeholder,
             text: text.to_string(),
         });
+    }
+
+    /// Copy the prompt's selection to the clipboard. Returns whether there was
+    /// one to copy, so the caller knows whether the key was the prompt's.
+    fn copy_input_selection(&mut self) -> bool {
+        match self.input_area().selected_text() {
+            Some(text) => {
+                self.copy_text(&text);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Copy the prompt's selection and delete it.
+    fn cut_input_selection(&mut self) -> bool {
+        match self.input_area().selected_text() {
+            Some(text) => {
+                self.copy_text(&text);
+                self.input_area_mut().delete_selection();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Paste the clipboard into the prompt; a large paste is held as a
+    /// placeholder rather than flooding the input.
+    fn paste_clipboard(&mut self) -> bool {
+        match termide_ui::clipboard::paste() {
+            Some(text) => {
+                self.paste(&text);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Put `text` on the clipboard, telling the user when the clipboard refused.
+    fn copy_text(&mut self, text: &str) {
+        if let Err(error) = termide_ui::clipboard::copy(text) {
+            log::warn!("agent copy failed: {error}");
+            self.notice(
+                termide_i18n::t().agent_notice_clipboard_failed(),
+                NoticeKind::Warn,
+            );
+        }
     }
 
     /// Splice every held paste's full content back in place of its placeholder.
@@ -4340,9 +4387,20 @@ impl Panel for AgentPanel {
             return self.ask_delete_session();
         }
 
-        // The completion list gets the navigation keys while it is open.
+        // The completion list gets the navigation keys while it is open, except
+        // the `Shift`-held ones: those extend the prompt's selection.
+        let selecting = shift
+            && matches!(
+                key.code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Home
+                    | KeyCode::End
+            );
         let completion_action = match &mut self.completion {
-            Some(list) if !ctrl && !alt => list.handle_key(key),
+            Some(list) if !ctrl && !alt && !selecting => list.handle_key(key),
             _ => CompletionAction::NotHandled,
         };
         match completion_action {
@@ -4474,37 +4532,55 @@ impl Panel for AgentPanel {
             KeyCode::End if ctrl => self.follow = true,
             KeyCode::Up if ctrl => self.scroll_by(-1),
             KeyCode::Down if ctrl => self.scroll_by(1),
-            KeyCode::Up => {
-                // Past the first line, the arrow walks back through what was
-                // asked before, as in a shell.
-                if !self.input_area_mut().move_up() && !self.recall(true) {
+            KeyCode::Up | KeyCode::Down => {
+                // Past the first or last line, the arrow walks back through
+                // what was asked before, as in a shell; with Shift held the
+                // selection takes the arrow and history waits.
+                let up = key.code == KeyCode::Up;
+                if self.input.edit_field(0, key) == FieldEdit::NotHandled
+                    && !shift
+                    && !self.recall(up)
+                {
                     return vec![];
                 }
             }
-            KeyCode::Down => {
-                if !self.input_area_mut().move_down() && !self.recall(false) {
+            // Prompt clipboard: the panel owns these so a large paste keeps its
+            // placeholder handling and a failure can raise a notice.
+            KeyCode::Char('c') if ctrl => {
+                if !self.copy_input_selection() {
                     return vec![];
                 }
             }
-            KeyCode::Left => {
-                self.input_area_mut().move_left();
-            }
-            KeyCode::Right => {
-                self.input_area_mut().move_right();
-            }
-            KeyCode::Home => self.input_area_mut().move_home(),
-            KeyCode::End => self.input_area_mut().move_end(),
-            KeyCode::Backspace => {
-                self.input_area_mut().backspace();
+            KeyCode::Char('x') if ctrl => {
+                if !self.cut_input_selection() {
+                    return vec![];
+                }
                 self.after_edit();
             }
-            KeyCode::Delete => {
-                self.input_area_mut().delete();
+            KeyCode::Char('v') if ctrl => {
+                if !self.paste_clipboard() {
+                    return vec![];
+                }
                 self.after_edit();
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                self.input_area_mut().insert(c);
-                self.after_edit();
+            // Everything the prompt edits with: typing, deletion, character and
+            // word navigation and selection.
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Char(_)
+                if !alt =>
+            {
+                let edit = self.input.edit_field(0, key);
+                if edit == FieldEdit::NotHandled {
+                    return vec![];
+                }
+                if edit == FieldEdit::Edited {
+                    self.after_edit();
+                }
             }
             _ => return vec![],
         }
@@ -4526,6 +4602,22 @@ impl Panel for AgentPanel {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, _panel_area: Rect) -> Vec<PanelEvent> {
+        // The prompt box claims its own presses and drags: a press places the
+        // cursor, a drag selects the text under it. It is asked first because
+        // the bar sits below the transcript, whose rows would otherwise take
+        // every click, and because a release must reach the bar to end a drag
+        // that started in it — even after the pointer has been dragged up into
+        // the transcript. A pending question keeps its clicks to itself.
+        if self.pending.is_none() && self.input.mouse_hits(event) {
+            self.input.handle_mouse(event);
+            match event.kind {
+                MouseEventKind::Up(_) => return vec![],
+                _ => {
+                    self.chat_focus = false;
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+            }
+        }
         match event.kind {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
@@ -4713,26 +4805,36 @@ impl Panel for AgentPanel {
 
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {
         match cmd {
+            PanelCommand::Paste if !self.chat_focus => match self.paste_clipboard() {
+                true => {
+                    self.after_edit();
+                    CommandResult::Handled(true)
+                }
+                false => CommandResult::Handled(false),
+            },
             PanelCommand::PasteText { text } => {
                 self.paste(&text);
                 self.after_edit();
                 CommandResult::NeedsRedraw(true)
             }
-            // Copy the focused chat block. With the input focused instead, let
-            // the key fall through (the input has no selection of its own).
-            PanelCommand::Copy => match self.chat_focus.then(|| self.selected_block_text()) {
-                Some(Some(text)) if !text.trim().is_empty() => {
-                    if let Err(error) = termide_ui::clipboard::copy(&text) {
-                        log::warn!("agent copy failed: {error}");
-                        self.notice(
-                            termide_i18n::t().agent_notice_clipboard_failed(),
-                            NoticeKind::Warn,
-                        );
+            // Copy takes the chat block while the chat holds focus, and the
+            // prompt's selection while the input does.
+            PanelCommand::Copy => {
+                if self.chat_focus {
+                    match self.selected_block_text() {
+                        Some(text) if !text.trim().is_empty() => {
+                            self.copy_text(&text);
+                            CommandResult::Handled(true)
+                        }
+                        _ => CommandResult::Handled(false),
                     }
-                    CommandResult::Handled(true)
+                } else {
+                    CommandResult::Handled(self.copy_input_selection())
                 }
-                _ => CommandResult::Handled(false),
-            },
+            }
+            PanelCommand::Cut if !self.chat_focus => {
+                CommandResult::Handled(self.cut_input_selection())
+            }
             PanelCommand::SelectionMade { action, index } if action == RESUME_ACTION => {
                 CommandResult::Handled(self.resume_choice(index))
             }
@@ -5620,6 +5722,149 @@ mod tests {
         assert!(
             !panel.chat_focus,
             "a click on the input returns focus to it"
+        );
+    }
+
+    /// Select the tail of the prompt with Shift+arrows.
+    fn select_back(panel: &mut AgentPanel, steps: usize) {
+        for _ in 0..steps {
+            panel.handle_key(chord(KeyCode::Left, KeyModifiers::SHIFT));
+        }
+    }
+
+    #[test]
+    fn shift_arrows_select_the_prompt_and_ctrl_a_takes_it_all() {
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "fix the flaky test");
+        assert!(!panel.input_area().has_selection());
+        select_back(&mut panel, 4);
+        assert_eq!(
+            panel.input_area().selected_text(),
+            Some("test".to_string()),
+            "Shift+Left extends the selection back over what was typed"
+        );
+        // The selection survives a redraw and shows inverted in the prompt.
+        let rows = render_text(&mut panel, 30, 10);
+        assert!(
+            rows.iter().any(|row| row.contains("test")),
+            "the prompt still shows its text: {rows:?}"
+        );
+        // A plain arrow drops the selection instead of extending it.
+        panel.handle_key(chord(KeyCode::Left, KeyModifiers::NONE));
+        assert!(!panel.input_area().has_selection());
+        // Ctrl+A selects the whole prompt.
+        panel.handle_key(chord(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(
+            panel.input_area().selected_text(),
+            Some("fix the flaky test".to_string())
+        );
+    }
+
+    /// The one test that reaches the real system clipboard, so it is also the
+    /// one that pays for opening it (tens of seconds on some hosts). It puts
+    /// the clipboard back as it found it.
+    #[test]
+    fn ctrl_x_cuts_the_prompt_selection_and_ctrl_v_puts_it_back() {
+        let before = termide_ui::clipboard::paste();
+        let mut panel = panel(vec![]);
+        type_text(&mut panel, "fix the flaky test");
+        select_back(&mut panel, 5);
+        let events = panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert!(events.iter().any(|e| matches!(e, PanelEvent::NeedsRedraw)));
+        assert_eq!(panel.input_text(), "fix the flaky");
+        assert!(!panel.input_area().has_selection());
+
+        let events = panel.handle_key(chord(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert!(events.iter().any(|e| matches!(e, PanelEvent::NeedsRedraw)));
+        assert_eq!(panel.input_text(), "fix the flaky test");
+
+        // With nothing selected, the clipboard keys are the prompt's to ignore.
+        let events = panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert!(events.is_empty(), "nothing selected, nothing cut");
+        if let Some(text) = before {
+            let _ = termide_ui::clipboard::copy(&text);
+        }
+    }
+
+    /// The routing of the clipboard commands, kept off the real clipboard: what
+    /// is answered here is which side takes the key, not what it writes.
+    #[test]
+    fn the_clipboard_commands_answer_to_the_input_not_the_chat() {
+        let mut panel = panel(vec![reply("an answer")]);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let _ = render_text(&mut panel, 40, 12);
+
+        // Nothing selected in the prompt: the panel declines, so the key falls
+        // through to whatever the app has for it.
+        assert!(matches!(
+            panel.handle_command(PanelCommand::Copy),
+            CommandResult::Handled(false)
+        ));
+        assert!(matches!(
+            panel.handle_command(PanelCommand::Cut),
+            CommandResult::Handled(false)
+        ));
+
+        // A bracketed paste carries its own text, so no clipboard is read; it
+        // belongs to the prompt.
+        assert!(matches!(
+            panel.handle_command(PanelCommand::PasteText {
+                text: "pasted".into()
+            }),
+            CommandResult::NeedsRedraw(true)
+        ));
+        assert_eq!(panel.input_text(), "pasted");
+
+        // While the chat holds focus its block keeps the clipboard: `Copy`
+        // there is the block's, and the prompt is not asked.
+        panel.chat_focus = true;
+        assert!(matches!(
+            panel.handle_command(PanelCommand::Cut),
+            CommandResult::None
+        ));
+        assert!(matches!(
+            panel.handle_command(PanelCommand::Paste),
+            CommandResult::None
+        ));
+    }
+
+    #[test]
+    fn dragging_in_the_prompt_selects_and_hands_focus_back_from_the_chat() {
+        let mut panel = panel(vec![reply("Hello from the model")]);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let _ = render_text(&mut panel, 40, 12);
+        // A draft in the prompt to drag a selection through, typed before the
+        // chat takes focus (which swallows plain characters).
+        type_text(&mut panel, "one two three");
+        let _ = render_text(&mut panel, 40, 12);
+        panel.chat_focus = true;
+        let bar = panel.input_area;
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let press = at(
+            MouseEventKind::Down(MouseButton::Left),
+            bar.x + 4,
+            bar.y + bar.height - 1,
+        );
+        panel.handle_mouse(press, bar);
+        assert!(!panel.chat_focus, "a press on the prompt focuses the input");
+        // The prompt box is the bar's last row, so the drag stays on it.
+        let drag = at(
+            MouseEventKind::Drag(MouseButton::Left),
+            bar.x + 8,
+            bar.y + bar.height - 1,
+        );
+        let events = panel.handle_mouse(drag, bar);
+        assert!(events.iter().any(|e| matches!(e, PanelEvent::NeedsRedraw)));
+        assert!(
+            panel.input_area().has_selection(),
+            "the drag selected prompt text"
         );
     }
 
