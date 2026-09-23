@@ -268,18 +268,6 @@ enum Phase {
     Compact,
 }
 
-impl Phase {
-    /// Short label shown in the status bar and the block footer.
-    fn label(self) -> &'static str {
-        match self {
-            Phase::Prefill => "prefill",
-            Phase::Generating => "generating",
-            Phase::Tool => "tool",
-            Phase::Compact => "compacting",
-        }
-    }
-}
-
 /// Live state of the current run: the phase, when it started, and enough to
 /// estimate the generation speed until the authoritative `Usage` arrives.
 #[derive(Debug, Clone, Copy)]
@@ -1458,23 +1446,6 @@ impl AgentPanel {
             ],
         ));
         lines
-    }
-
-    /// The live phase text for the status bar: the phase, its ticking elapsed
-    /// time and, while generating, the estimated speed. `None` when idle.
-    fn activity_status(&self) -> Option<String> {
-        let activity = self.activity.as_ref()?;
-        let elapsed = activity.since.elapsed().as_secs_f32();
-        Some(if activity.phase == Phase::Generating {
-            let speed = if elapsed > 0.1 {
-                (activity.est_tokens() as f32 / elapsed).round() as u64
-            } else {
-                0
-            };
-            format!("{} {elapsed:.1}s · {speed} tok/s", activity.phase.label())
-        } else {
-            format!("{} {elapsed:.1}s", activity.phase.label())
-        })
     }
 
     fn apply(&mut self, event: AgentEvent) {
@@ -3506,7 +3477,17 @@ fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Token counts as the status line shows them: `32k`, `1.2M`.
+/// The provider's wire protocol as the status line names it.
+fn provider_label(kind: &str) -> &str {
+    match kind {
+        "openai_compatible" => "OpenAI Compatible",
+        "anthropic_compatible" => "Anthropic Compatible",
+        "claude_code" => "Claude Code",
+        "codex" => "Codex",
+        other => other,
+    }
+}
+
 /// An eight-cell fill bar for a 0–100 percentage, e.g. `▰▰▱▱▱▱▱▱` at 20%.
 fn context_bar(percent: u64) -> String {
     const CELLS: u64 = 8;
@@ -3606,6 +3587,7 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Token counts as the status line shows them: `32k`, `1.2M`.
 pub(crate) fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         let millions = tokens as f64 / 1_000_000.0;
@@ -4928,72 +4910,64 @@ impl Panel for AgentPanel {
 
     fn status_segments(&self) -> Vec<StatusSegment> {
         // Separators are the panel's job: the status bar concatenates the
-        // segments as given.
+        // segments as given. The knobs sit on the left, the figures flush
+        // right; a narrow bar cuts the knobs, never the figures. The live
+        // phase is not repeated here: each chat block carries its own byline.
         let sep = || StatusSegment::new(" │ ", SegmentKind::Label);
-        let mut segments = vec![StatusSegment::new(" ", SegmentKind::Label)];
-        if !self.external {
+        let mut segments = vec![
+            StatusSegment::new(" ", SegmentKind::Label),
+            StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
+            StatusSegment::clickable(self.agent.clone(), SegmentKind::Active, AGENT_ACTION),
+        ];
+        if self.external {
             // An external agent has its own model and permission model.
+            segments.push(StatusSegment::new(" (acp)", SegmentKind::Label));
+        } else {
             segments.extend([
+                sep(),
                 StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
                 StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
+                sep(),
+                StatusSegment::clickable("Reasoning: ", SegmentKind::Label, REASONING_ACTION),
+                StatusSegment::clickable(
+                    if self.model.reasoning { "on" } else { "off" },
+                    SegmentKind::Active,
+                    REASONING_ACTION,
+                ),
+                sep(),
+                StatusSegment::new("Provider: ", SegmentKind::Label),
+                StatusSegment::new(provider_label(&self.provider_kind), SegmentKind::Value),
             ]);
-            // The live phase sits right after the mode, so the phase/speed stays
-            // visible even when the bar is truncated on a narrow terminal. Its
-            // animated spinner is in the chat block, not here.
-            if let Some(text) = self.activity_status() {
-                segments.push(sep());
-                segments.push(StatusSegment::new(text, SegmentKind::Active));
-            } else if self.is_busy() {
-                segments.push(sep());
-                segments.push(StatusSegment::new("working", SegmentKind::Active));
-            }
+        }
+        // The agent's model over ACP, when it advertised any: clickable to
+        // switch, like the built-in loop's Model chip.
+        if !self.external || self.acp_has_models {
             segments.extend([
                 sep(),
                 StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
                 StatusSegment::clickable(self.model.id.clone(), SegmentKind::Active, MODEL_ACTION),
             ]);
-            if let Some(endpoint) = self.provider.endpoint() {
-                segments.push(StatusSegment::new(
-                    format!(" @ {endpoint}"),
-                    SegmentKind::Label,
-                ));
-            }
-            // A clickable reasoning toggle: bright when on, dim when off.
-            segments.push(sep());
-            let reasoning_kind = if self.model.reasoning {
-                SegmentKind::Active
-            } else {
-                SegmentKind::Inactive
-            };
-            segments.push(StatusSegment::clickable(
-                "reasoning",
-                reasoning_kind,
-                REASONING_ACTION,
-            ));
-            segments.push(sep());
         }
-        segments.extend([
-            StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
-            StatusSegment::clickable(self.agent.clone(), SegmentKind::Active, AGENT_ACTION),
-        ]);
-        if self.external {
-            segments.push(StatusSegment::new(" (acp)", SegmentKind::Label));
-            // The agent's model, when it advertised any over ACP: clickable to
-            // switch, like the built-in loop's Model chip.
-            if self.acp_has_models {
-                segments.extend([
-                    sep(),
-                    StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
-                    StatusSegment::clickable(
-                        self.model.id.clone(),
-                        SegmentKind::Active,
-                        MODEL_ACTION,
-                    ),
-                ]);
-            }
+        segments.push(StatusSegment::spacer());
+        let queued = self.queued.0 + self.queued.1;
+        if queued > 0 {
+            segments.push(StatusSegment::new(
+                format!("{queued} queued "),
+                SegmentKind::Inactive,
+            ));
+        }
+        // Session token totals: ↑ input (prefill), ↓ output (generated).
+        if !self.external && (self.session_input > 0 || self.session_output > 0) {
+            segments.push(StatusSegment::new(
+                format!(
+                    "↑{} ↓{} ",
+                    format_tokens(self.session_input),
+                    format_tokens(self.session_output)
+                ),
+                SegmentKind::Value,
+            ));
         }
         if !self.external && self.model.context_window > 0 {
-            segments.push(sep());
             let percent = ((self.context_tokens * 100) / self.model.context_window).min(100);
             let kind = if percent >= 80 {
                 SegmentKind::Warn
@@ -5001,28 +4975,13 @@ impl Panel for AgentPanel {
                 SegmentKind::Value
             };
             segments.push(StatusSegment::new(
-                format!("ctx {} {percent}%", context_bar(percent)),
-                kind,
-            ));
-        }
-        // Session token totals: ↑ input (prefill), ↓ output (generated).
-        if !self.external && (self.session_input > 0 || self.session_output > 0) {
-            segments.push(sep());
-            segments.push(StatusSegment::new(
                 format!(
-                    "↑{} ↓{}",
-                    format_tokens(self.session_input),
-                    format_tokens(self.session_output)
+                    "{}/{} {} ",
+                    format_tokens(self.context_tokens),
+                    format_tokens(self.model.context_window),
+                    context_bar(percent)
                 ),
-                SegmentKind::Value,
-            ));
-        }
-        let queued = self.queued.0 + self.queued.1;
-        if queued > 0 {
-            segments.push(sep());
-            segments.push(StatusSegment::new(
-                format!("{queued} queued"),
-                SegmentKind::Inactive,
+                kind,
             ));
         }
         segments
@@ -5387,15 +5346,19 @@ mod tests {
             "separator above the input"
         );
 
-        let chips: String = panel
-            .status_segments()
+        // The knobs on the left, the figures flush right after the spacer.
+        let segments = panel.status_segments();
+        let split = segments
             .iter()
-            .map(|s| s.text.as_str())
-            .collect();
+            .position(|s| s.kind == SegmentKind::Spacer)
+            .expect("a spacer");
+        let text =
+            |segs: &[StatusSegment]| segs.iter().map(|s| s.text.as_str()).collect::<String>();
         assert_eq!(
-            chips,
-            " Mode: ask │ Model: m │ reasoning │ Agent: default │ ctx ▰▱▱▱▱▱▱▱ 12% │ ↑100 ↓20"
+            text(&segments[..split]),
+            " Agent: default │ Mode: ask │ Reasoning: off │ Provider: OpenAI Compatible │ Model: m"
         );
+        assert_eq!(text(&segments[split + 1..]), "↑100 ↓20 120/1k ▰▱▱▱▱▱▱▱ ");
     }
 
     #[test]

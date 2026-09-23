@@ -192,18 +192,16 @@ the result summary. The full, untouched log is still
 written to a file whose path the tool reports, and you still see the raw
 stream live in the panel.
 
-The status chips show the permission mode, the model with the endpoint it is
-served from (`Qwen3.8-Flash… @ 127.0.0.1:10000`), a **reasoning** toggle (bright
-when on), the agent, the context window as a fill bar with its percentage (`ctx
-▰▱▱▱▱▱▱▱ 12%`) and the session's token totals (`↑` input / `↓` output). Mode,
-model, reasoning and agent are buttons, and the same entries sit in the `[≡]`
-menu. Clicking **reasoning** asks the model to reason (extended thinking /
-`reasoning_effort`) from the next request; the choice is remembered in the
-session, so a resume comes back with it.
-
-While the agent works, a live indicator right after the mode names what it is
-doing and for how long — `prefill 0.6s`, `generating 3.1s · 88 tok/s`, `tool
-5.1s`, `compacting 2.0s` — the elapsed time ticking as it goes.
+The status chips run, left to right: the agent, the permission mode, a
+**Reasoning** toggle (`on`/`off`), the provider (`OpenAI Compatible`) and the
+model. The session's token totals (`↑` input / `↓` output) and the context
+window — tokens used of the window with a fill bar, `35k/262k ▰▰▱▱▱▱▱▱` — sit
+flush right; on a narrow terminal the chips on the left are cut, never these.
+Agent, mode, reasoning and model are buttons, and the same entries sit in the
+`[≡]` menu. Clicking **Reasoning** asks the model to reason (extended thinking
+/ `reasoning_effort`) from the next request; the choice is remembered in the
+session, so a resume comes back with it. What the agent is doing right now is
+not repeated in the status bar: each chat block carries it in its byline.
 
 Typing `/` opens a list of the matching prompt templates above the input;
 `↑`/`↓` move in it, `Tab` or `Enter` complete the highlighted one, and `Enter`
