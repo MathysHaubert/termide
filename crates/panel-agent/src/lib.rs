@@ -1073,6 +1073,9 @@ impl AgentPanel {
                 self.clear_input();
                 if self.paused {
                     self.resume();
+                } else if self.pause_requested {
+                    // The run has not reached the pause yet: withdraw it.
+                    self.cancel_pause();
                 } else if self.is_busy() {
                     self.notice(
                         termide_i18n::t().agent_notice_already_running(),
@@ -1187,7 +1190,7 @@ impl AgentPanel {
                     if self.is_busy() {
                         names.push(PAUSE_COMMAND.to_string());
                     }
-                    if self.paused {
+                    if self.paused || self.pause_requested {
                         names.push(CONTINUE_COMMAND.to_string());
                     }
                     names.push(LOOP_COMMAND.to_string());
@@ -2844,7 +2847,7 @@ impl AgentPanel {
                     .with_description(termide_i18n::t().agent_cmd_desc_pause()),
             );
         }
-        if self.paused && CONTINUE_COMMAND.starts_with(prefix) {
+        if (self.paused || self.pause_requested) && CONTINUE_COMMAND.starts_with(prefix) {
             items.push(
                 CompletionItem::new(CONTINUE_COMMAND)
                     .with_label(format!("/{CONTINUE_COMMAND}"))
@@ -5760,6 +5763,15 @@ mod tests {
         let row = panel.pause_row.expect("the strip shows the pending pause");
         click(&mut panel, row);
         assert!(!panel.pause_requested, "the pending pause is withdrawn");
+        // `/continue` withdraws a pending pause too.
+        click(&mut panel, y);
+        assert!(panel.pause_requested);
+        type_text(&mut panel, "/continue");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            !panel.pause_requested,
+            "/continue withdraws the pending pause"
+        );
         // Asked again, the pause goes ahead.
         click(&mut panel, y);
         assert!(panel.pause_requested);

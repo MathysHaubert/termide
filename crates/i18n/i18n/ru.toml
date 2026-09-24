@@ -432,7 +432,7 @@ agent_cmd_desc_new = "Начать свежую сессию, сохранив �
 agent_cmd_desc_clear = "Удалить текущую сессию и начать свежую"
 agent_cmd_desc_rename = "Переименовать эту сессию"
 agent_cmd_desc_pause = "Приостановить после текущего шага"
-agent_cmd_desc_continue = "Продолжить приостановленное выполнение"
+agent_cmd_desc_continue = "Продолжить приостановленное выполнение или отменить ожидающую паузу"
 agent_cmd_desc_loop = "Перезапускать промпт по интервалу или остановить цикл"
 agent_cmd_desc_goal = "Автономно работать к цели, пока судья не подтвердит достижение"
 agent_cmd_desc_handoff = "Составить бриф недоделанной работы для новой сессии или агента"
@@ -441,7 +441,7 @@ agent_cmd_desc_prompt = "Открыть собранный системный п
 # Agent panel — transient notices
 agent_notice_busy = "сначала завершите или остановите текущую задачу"
 agent_notice_no_log_to_name = "у этой сессии нет журнала для названия"
-agent_notice_will_pause = "приостановлю после текущего шага"
+agent_notice_will_pause = "приостановлю после текущего шага; /continue для отмены"
 agent_notice_nothing_to_pause = "нечего приостанавливать"
 agent_notice_already_running = "уже выполняется"
 agent_notice_nothing_to_continue = "нечего продолжать"
