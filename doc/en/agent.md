@@ -145,6 +145,19 @@ block above the answer, and its text wraps to the width. Every block except your
 message opens with a dim dashed rule that sets it apart from the one before. A
 folded block is marked with `▸`, an unfolded one with `▾`.
 
+When a run finishes, a closing line after its last block tells how long the
+whole run took since the request was sent and when it ended — `✻ Worked for
+3m41s · done at 21:03:41 ✓`, or `✗` when it failed or was aborted. The figures
+under each block describe that block alone; this line is the run's total.
+
+The closing line is one kind of annotation — a line that marks a moment in the
+conversation rather than holding content. The others are the panel's notices:
+`·` for information (a model switch, a finished compaction), `!` for a warning
+(a stopped goal, a busy agent), `✗` for an error outside a block (a failed
+compaction, an MCP error). An error inside a turn stays in its answer block.
+Annotations never fold, their text wraps to the width, consecutive ones share a
+single dashed rule, and the chat cursor passes over them.
+
 The system prompt in effect is shown as a folded `# ` block at the start of a
 session and again whenever it changes before your next message (switching agent
 or mode, for instance), so what the model was told is always in view.

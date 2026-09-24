@@ -26,7 +26,7 @@ use termide_agent_core::{
     CompactionPolicy, CompactionPrompts, Decision, EntryKind, GoalPrompt, HandoffPrompt, Hooks,
     LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
     PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard, PlanPrompt,
-    PromptTemplate, Provider, Session, SessionSummary, StreamEvent, Tool, ToolRegistry,
+    PromptTemplate, Provider, Session, SessionSummary, StopReason, StreamEvent, Tool, ToolRegistry,
     ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
@@ -488,6 +488,10 @@ pub struct AgentPanel {
     /// The current goal work turn ended in an error, so the goal loop stops
     /// instead of judging and retrying. Reset at the start of each work turn.
     goal_errored: bool,
+    /// When the current run started (`AgentStart`), for its closing line.
+    run_start: Option<Instant>,
+    /// The current run hit an error or was aborted, so its closing line is `✗`.
+    run_failed: bool,
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
@@ -650,6 +654,8 @@ impl AgentPanel {
             loop_task: None,
             goal_task: None,
             goal_errored: false,
+            run_start: None,
+            run_failed: false,
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
@@ -1453,6 +1459,8 @@ impl AgentPanel {
             AgentEvent::AgentStart => {
                 self.busy = true;
                 self.paused = false;
+                self.run_start = Some(Instant::now());
+                self.run_failed = false;
             }
             AgentEvent::Paused => {
                 self.paused = true;
@@ -1461,6 +1469,13 @@ impl AgentPanel {
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.activity = None;
+                if let Some(start) = self.run_start.take() {
+                    self.transcript.push(Item::RunEnd {
+                        elapsed_ms: start.elapsed().as_millis().min(u32::MAX as u128) as u32,
+                        at: now_hms(),
+                        ok: !self.run_failed,
+                    });
+                }
                 self.queued = self.runtime.queue_lens();
                 if let Some(store) = &self.checkpoints {
                     store.lock().unwrap().end_run();
@@ -1544,6 +1559,14 @@ impl AgentPanel {
                         // retried on the failure; note it for `AgentEnd`.
                         if error.is_some() && self.goal_task.is_some() {
                             self.goal_errored = true;
+                        }
+                        if error.is_some()
+                            || matches!(
+                                assistant.stop_reason,
+                                StopReason::Error | StopReason::Aborted
+                            )
+                        {
+                            self.run_failed = true;
                         }
                         // The answer always carries the wall-clock time; a
                         // reasoning block, if any, carries the prefill/generation
@@ -2007,8 +2030,15 @@ impl AgentPanel {
         if self.external || self.mode.get() != Mode::Plan || self.pending.is_some() {
             return;
         }
+        // The run's closing line sits after the answer; look past it.
+        let last = self
+            .transcript
+            .items()
+            .iter()
+            .rev()
+            .find(|item| !matches!(item, Item::RunEnd { .. }));
         let answered = matches!(
-            self.transcript.items().last(),
+            last,
             Some(Item::Assistant { text, error: None, .. }) if !text.trim().is_empty()
         );
         if !answered {
@@ -2435,6 +2465,7 @@ impl AgentPanel {
             | Item::Thinking { text, .. }
             | Item::System { text } => text.clone(),
             Item::Notice { text, .. } => text.clone(),
+            Item::RunEnd { elapsed_ms, at, .. } => transcript::run_end_text(*elapsed_ms, at),
             Item::Tool {
                 result, live, call, ..
             } => result
@@ -2474,7 +2505,7 @@ impl AgentPanel {
             Item::Thinking { text, .. } => (text.clone(), "agent-thinking.md".to_string()),
             Item::System { text } => (text.clone(), "system-prompt.md".to_string()),
             Item::User { text, .. } => (text.clone(), "message.txt".to_string()),
-            Item::Notice { .. } => return vec![PanelEvent::NeedsRedraw],
+            Item::Notice { .. } | Item::RunEnd { .. } => return vec![PanelEvent::NeedsRedraw],
         };
         if content.trim().is_empty() {
             self.notice(
@@ -4221,7 +4252,10 @@ impl Panel for AgentPanel {
         let item_count = self.transcript.items().len();
         let mut selected_range: Option<(usize, usize)> = None;
         if self.chat_focus && item_count > 0 {
-            self.selected = self.selected.min(item_count - 1);
+            self.selected = self
+                .transcript
+                .selectable_near(self.selected)
+                .unwrap_or(item_count - 1);
             // Scrolling stays free while a block is selected: the view is
             // brought to a block only when the selection moves (see
             // `scroll_selected_into_view`), not on every frame. Here we only
@@ -4421,14 +4455,21 @@ impl Panel for AgentPanel {
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::Up if !ctrl => {
-                    self.selected = self.selected.saturating_sub(1);
+                    if let Some(prev) = (0..self.selected)
+                        .rev()
+                        .find(|&i| self.transcript.is_selectable(i))
+                    {
+                        self.selected = prev;
+                    }
                     self.follow = false;
                     self.scroll_selected_into_view();
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::Down if !ctrl => {
-                    if self.selected + 1 < count {
-                        self.selected += 1;
+                    if let Some(next) =
+                        (self.selected + 1..count).find(|&i| self.transcript.is_selectable(i))
+                    {
+                        self.selected = next;
                     }
                     self.follow = false;
                     self.scroll_selected_into_view();
@@ -4459,11 +4500,18 @@ impl Panel for AgentPanel {
                 _ => return vec![],
             }
         }
-        // From the input, Tab moves focus into the chat when there is one.
-        if key.code == KeyCode::Tab && !self.transcript.items().is_empty() {
+        // From the input, Tab moves focus into the chat when it has a block
+        // (annotations alone give the cursor nowhere to stop).
+        let last_block = self
+            .transcript
+            .items()
+            .len()
+            .checked_sub(1)
+            .and_then(|last| self.transcript.selectable_near(last));
+        if let (KeyCode::Tab, Some(last_block)) = (key.code, last_block) {
             self.chat_focus = true;
             self.follow = false;
-            self.selected = self.transcript.items().len() - 1;
+            self.selected = last_block;
             return vec![PanelEvent::NeedsRedraw];
         }
 
@@ -4674,7 +4722,12 @@ impl Panel for AgentPanel {
                     return vec![];
                 }
                 let line = self.top + (event.row - area.y) as usize;
-                let Some(index) = self.transcript.item_at_line(line) else {
+                // A click on a run's closing line selects the block above it.
+                let Some(index) = self
+                    .transcript
+                    .item_at_line(line)
+                    .and_then(|index| self.transcript.selectable_near(index))
+                else {
                     return vec![];
                 };
                 // A click focuses the chat and selects the clicked block; a
@@ -7153,15 +7206,22 @@ mod tests {
         assert!(!panel.chat_focus);
 
         // Tab moves focus to the chat, on the last (answer) block, which is not
-        // foldable. Blocks are user(0), thinking(1), answer(2).
+        // foldable. Blocks are user(0), thinking(1), answer(2); the run's
+        // closing line (3) is not a block, so the cursor passes over it.
+        assert!(matches!(
+            panel.transcript().items()[3],
+            Item::RunEnd { ok: true, .. }
+        ));
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
         assert!(panel.chat_focus);
-        assert_eq!(panel.selected, panel.transcript().items().len() - 1);
+        assert_eq!(panel.selected, 2);
+        panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(panel.selected, 2);
 
         // Up walks to the reasoning block, which folds; Space expands it, again
         // folds it.
         panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(panel.selected, panel.transcript().items().len() - 2);
+        assert_eq!(panel.selected, 1);
         assert!(!panel.transcript().any_expanded());
         panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
         assert!(panel.transcript().any_expanded());

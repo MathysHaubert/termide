@@ -60,7 +60,7 @@ fn foldable_lines(item: &Item) -> usize {
             let command = shell_command(call).map_or(0, |c| c.lines().count());
             output.max(command)
         }
-        Item::Notice { .. } => 0,
+        Item::Notice { .. } | Item::RunEnd { .. } => 0,
     }
 }
 
@@ -68,6 +68,13 @@ fn foldable_lines(item: &Item) -> usize {
 /// full and ignore the collapse flag, so they carry no fold marker.
 fn is_foldable(item: &Item) -> bool {
     foldable_lines(item) > FOLD_THRESHOLD
+}
+
+/// Whether `item` is an annotation — a notice or a run's closing line — rather
+/// than a block: it marks a moment in the flow, never folds, and the chat
+/// cursor passes over it.
+fn is_annotation(item: &Item) -> bool {
+    matches!(item, Item::Notice { .. } | Item::RunEnd { .. })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,11 +140,24 @@ pub enum Item {
         text: String,
         kind: NoticeKind,
     },
+    /// The closing line of a finished run: the wall-clock time from the
+    /// request to the end of the run, not any one block's cost.
+    RunEnd {
+        /// How long the run took, in ms.
+        elapsed_ms: u32,
+        /// Local wall-clock time the run finished.
+        at: String,
+        /// Whether the run ended without an error or an abort.
+        ok: bool,
+    },
 }
 
 struct Cached {
     width: u16,
     is_light: bool,
+    /// Whether the item followed an annotation when rendered: consecutive
+    /// annotations share one rule, so a changed neighbour re-renders it.
+    after_annotation: bool,
     lines: Vec<Line<'static>>,
 }
 
@@ -189,10 +209,11 @@ impl Transcript {
     }
 
     pub fn push(&mut self, item: Item) {
-        // Everything folds by default except a notice (already one line);
+        // Everything folds by default except an annotation (a notice, a run's
+        // closing line);
         // an item's primary content still shows, only its detail is hidden.
         // With autofold off nothing folds.
-        let collapsed = self.autofold && !matches!(item, Item::Notice { .. });
+        let collapsed = self.autofold && !is_annotation(&item);
         self.items.push(item);
         self.collapsed.push(collapsed);
         self.cache.push(None);
@@ -409,7 +430,7 @@ impl Transcript {
     /// Expand (`value` true) or collapse every foldable item at once.
     pub fn set_all_expanded(&mut self, value: bool) {
         for index in 0..self.items.len() {
-            if matches!(self.items[index], Item::Notice { .. }) {
+            if is_annotation(&self.items[index]) {
                 continue;
             }
             if self.collapsed[index] == value {
@@ -426,6 +447,25 @@ impl Transcript {
             .iter()
             .enumerate()
             .any(|(index, item)| is_foldable(item) && !self.collapsed[index])
+    }
+
+    /// Whether the chat cursor can stop on item `index`. An annotation is not
+    /// a block, so selection passes over it.
+    #[must_use]
+    pub fn is_selectable(&self, index: usize) -> bool {
+        self.items
+            .get(index)
+            .is_some_and(|item| !is_annotation(item))
+    }
+
+    /// The nearest selectable item at or before `index`, else after it.
+    #[must_use]
+    pub fn selectable_near(&self, index: usize) -> Option<usize> {
+        let index = index.min(self.items.len().checked_sub(1)?);
+        (0..=index)
+            .rev()
+            .chain(index + 1..self.items.len())
+            .find(|&i| self.is_selectable(i))
     }
 
     /// Item index shown on flattened line `line`.
@@ -445,21 +485,34 @@ impl Transcript {
     pub fn lines(&mut self, width: u16, colors: &ThemeColors, is_light: bool) -> &[Line<'static>] {
         let width = width.max(1);
         for index in 0..self.items.len() {
+            let after_annotation = index
+                .checked_sub(1)
+                .is_some_and(|prev| is_annotation(&self.items[prev]));
             let stale = match &self.cache[index] {
-                Some(cached) => cached.width != width || cached.is_light != is_light,
+                Some(cached) => {
+                    cached.width != width
+                        || cached.is_light != is_light
+                        || cached.after_annotation != after_annotation
+                }
                 None => true,
             };
             if stale {
-                let lines = render_item(
+                let mut lines = render_item(
                     &self.items[index],
                     self.collapsed[index],
                     width,
                     colors,
                     is_light,
                 );
+                // A run of annotations sits under one rule: the ones after the
+                // first drop their own.
+                if after_annotation && is_annotation(&self.items[index]) && !lines.is_empty() {
+                    lines.remove(0);
+                }
                 self.cache[index] = Some(Cached {
                     width,
                     is_light,
+                    after_annotation,
                     lines,
                 });
                 self.flat_dirty = true;
@@ -1175,20 +1228,85 @@ fn render_item(
             lines
         }
         Item::Notice { text, kind } => {
-            let color = match kind {
-                NoticeKind::Info => colors.disabled,
-                NoticeKind::Warn => colors.warning,
-                NoticeKind::Error => colors.error,
+            let (glyph, glyph_color, text_color) = match kind {
+                NoticeKind::Info => ("·", colors.info, colors.disabled),
+                NoticeKind::Warn => ("!", colors.warning, colors.warning),
+                NoticeKind::Error => ("✗", colors.error, colors.error),
             };
-            vec![
-                separator(width, colors),
-                Line::styled(
-                    format!("· {text}"),
-                    Style::default().fg(color).add_modifier(Modifier::ITALIC),
+            let mut lines = vec![separator(width, colors)];
+            lines.extend(annotation(
+                Span::styled(
+                    format!("{glyph} "),
+                    Style::default()
+                        .fg(glyph_color)
+                        .add_modifier(Modifier::BOLD),
                 ),
-            ]
+                text.trim(),
+                Style::default().fg(text_color),
+                None,
+                width,
+                colors,
+                is_light,
+            ));
+            lines
+        }
+        Item::RunEnd { elapsed_ms, at, ok } => {
+            // Left-aligned like every annotation, so it reads as the run's
+            // total rather than one more right-aligned block figure.
+            let mut lines = vec![separator(width, colors)];
+            lines.extend(annotation(
+                Span::styled(
+                    "✻ ",
+                    Style::default()
+                        .fg(colors.info)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                &run_end_text(*elapsed_ms, at),
+                dim,
+                Some(status_span(*ok, colors)),
+                width,
+                colors,
+                is_light,
+            ));
+            lines
         }
     }
+}
+
+/// The lines of an annotation: `glyph` then `text` wrapped under it, with an
+/// optional trailing status glyph after the last word.
+fn annotation(
+    glyph: Span<'static>,
+    text: &str,
+    style: Style,
+    status: Option<Span<'static>>,
+    width: u16,
+    colors: &ThemeColors,
+    is_light: bool,
+) -> Vec<Line<'static>> {
+    let mut builder = Builder::new(width.saturating_sub(2), colors, is_light);
+    builder.push_style(style);
+    builder.text(text);
+    builder.pop_style();
+    if let Some(status) = status {
+        builder.styled(status.content, status.style);
+    }
+    builder.end_paragraph();
+    let mut lines = builder.finish().lines;
+    for (i, line) in lines.iter_mut().enumerate() {
+        let lead = if i == 0 {
+            glyph.clone()
+        } else {
+            Span::raw("  ")
+        };
+        line.spans.insert(0, lead);
+    }
+    lines
+}
+
+/// The text of a run's closing line, e.g. `Worked for 3m41s · done at 21:03:16`.
+pub(crate) fn run_end_text(elapsed_ms: u32, at: &str) -> String {
+    termide_i18n::t().agent_run_done(&fmt_dur(elapsed_ms), at)
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
@@ -1461,111 +1579,6 @@ mod tests {
     }
 
     #[test]
-    fn errors_and_notices_are_visible() {
-        let colors = ThemeColors::default();
-        let mut transcript = Transcript::default();
-        transcript.finish_assistant(
-            String::new(),
-            Some("HTTP 500".into()),
-            None,
-            "12:00:00".into(),
-            false,
-        );
-        transcript.push(Item::Notice {
-            text: "compacted 1200 tokens".into(),
-            kind: NoticeKind::Info,
-        });
-        transcript.push(Item::Tool {
-            call: call("bash", json!({ "command": "exit 1" })),
-            result: Some(ToolResultMessage::error(
-                &call("bash", json!({})),
-                "[exit code 1]",
-            )),
-            live: None,
-            at: "12:00:05".into(),
-            duration_ms: Some(500),
-        });
-        let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
-        assert!(lines.iter().any(|l| l.contains("· compacted 1200 tokens")));
-        // Shell headline uses `$`; the failed status sits in the tool's meta
-        // beside how long it took (`🕒`).
-        assert!(lines.iter().any(|l| l.contains("$ exit 1")));
-        assert!(lines.iter().any(|l| l.contains("🕒") && l.contains('✗')));
-    }
-
-    #[test]
-    fn a_turn_error_after_reasoning_shows_on_the_answer() {
-        let colors = ThemeColors::default();
-        let mut transcript = Transcript::default();
-        // Reasoning streams, then the turn fails with no answer text.
-        transcript.stream_thinking("weighing it\nl2\nl3\nl4\nl5\nl6");
-        transcript.finish_thinking("12:00:00", None);
-        transcript.finish_assistant(
-            String::new(),
-            Some("HTTP 500".into()),
-            None,
-            "12:00:01".into(),
-            true,
-        );
-        // The error and its failed status land on an answer block, even though
-        // the answer text is empty; the reasoning block carries no status.
-        let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
-        assert!(lines
-            .iter()
-            .any(|l| l.contains("12:00:01") && l.contains('✗')));
-    }
-
-    #[test]
-    fn a_long_error_wraps_to_the_width() {
-        let colors = ThemeColors::default();
-        let mut transcript = Transcript::default();
-        let error = "the request failed because the endpoint is unreachable and \
-             the retries were exhausted after several attempts"
-            .to_string();
-        transcript.finish_assistant(String::new(), Some(error), None, "12:00:01".into(), true);
-        let width = 30;
-        let lines = text_of(transcript.lines(width, &colors, false));
-        // The error is marked with `✗` and reflows instead of spilling past the
-        // width; every wrapped row stays within it.
-        assert!(lines.iter().any(|l| l.contains('✗')));
-        let wrapped = lines
-            .iter()
-            .filter(|l| l.contains("request") || l.contains("retries"))
-            .count();
-        assert!(wrapped >= 2, "a long error should wrap to several rows");
-        assert!(lines.iter().all(|l| l.chars().count() <= width as usize));
-    }
-
-    #[test]
-    fn the_system_prompt_folds_with_a_marker() {
-        let colors = ThemeColors::default();
-        let mut transcript = Transcript::default();
-        let prompt = (1..=8)
-            .map(|n| format!("rule {n}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        transcript.push(Item::System { text: prompt });
-        // Collapsed: a `▸` marker before the `#`, the first line, a note, then
-        // the last few — the ellipsis sits between the first and the last few.
-        let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("▸ # rule 1")));
-        assert!(lines.iter().any(|l| l.contains("… 3 more lines")));
-        assert!(lines.iter().any(|l| l.contains("rule 5")));
-        assert!(lines.iter().any(|l| l.contains("rule 8")));
-        // The middle lines are the hidden ones.
-        assert!(!lines.iter().any(|l| l.contains("rule 2")));
-        assert!(!lines.iter().any(|l| l.contains("rule 4")));
-        // Expanded: a `▾` marker and the whole prompt.
-        assert!(transcript.toggle_expanded(0));
-        let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("▾ # rule 1")));
-        assert!(lines.iter().any(|l| l.contains("rule 4")));
-        assert!(lines.iter().any(|l| l.contains("rule 8")));
-    }
-
-    #[test]
     fn a_long_command_wraps_under_its_prompt() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
@@ -1655,6 +1668,185 @@ mod tests {
         assert_eq!(style_of("--- a/a.rs").0.fg, Some(colors.info));
         assert_eq!(style_of(" keep").0.fg, Some(colors.fg));
         assert_eq!(style_of("Edited a.rs (1 replacement).").0.bg, None);
+    }
+
+    #[test]
+    fn a_run_closes_with_its_total_time() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User {
+            text: "go".into(),
+            at: "21:00:00".into(),
+        });
+        transcript.push(Item::RunEnd {
+            elapsed_ms: 221_000,
+            at: "21:03:41".into(),
+            ok: true,
+        });
+        let lines = text_of(transcript.lines(60, &colors, false));
+        let last = lines.last().unwrap();
+        assert!(last.starts_with("✻ "), "{lines:?}");
+        assert!(
+            last.contains("3m41s") && last.contains("21:03:41"),
+            "{last}"
+        );
+        assert!(last.ends_with('✓'));
+        // It is a closing line, not a block: never folded, never selected.
+        assert!(!transcript.toggle_expanded(1));
+        assert!(!transcript.is_selectable(1));
+        assert_eq!(transcript.selectable_near(1), Some(0));
+    }
+
+    #[test]
+    fn consecutive_annotations_share_one_rule() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::Assistant {
+            text: "done".into(),
+            streaming: false,
+            error: None,
+            at: String::new(),
+            cost: None,
+        });
+        transcript.push(Item::RunEnd {
+            elapsed_ms: 5000,
+            at: "12:00:05".into(),
+            ok: false,
+        });
+        transcript.push(Item::Notice {
+            text: "goal stopped".into(),
+            kind: NoticeKind::Warn,
+        });
+        let rule = |lines: &[String]| lines.iter().filter(|l| l.starts_with('╌')).count();
+        let lines = text_of(transcript.lines(40, &colors, false));
+        // One rule above the answer, one above the annotation group.
+        assert_eq!(rule(&lines), 2, "{lines:?}");
+        assert!(lines[lines.len() - 2].starts_with("✻ ") && lines[lines.len() - 2].ends_with('✗'));
+        assert_eq!(lines[lines.len() - 1], "! goal stopped");
+        // A block after the group opens its own rule again.
+        transcript.push(Item::User {
+            text: "next".into(),
+            at: String::new(),
+        });
+        transcript.push(Item::Notice {
+            text: "a long notice that has to wrap onto a second row".into(),
+            kind: NoticeKind::Info,
+        });
+        let lines = text_of(transcript.lines(20, &colors, false));
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("· a long"))
+            .unwrap();
+        assert!(lines[at - 1].starts_with('╌'));
+        assert!(lines[at + 1].starts_with("  "), "{lines:?}");
+        assert!(lines.iter().all(|l| width_of(l) <= 20), "{lines:?}");
+    }
+
+    #[test]
+    fn errors_and_notices_are_visible() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.finish_assistant(
+            String::new(),
+            Some("HTTP 500".into()),
+            None,
+            "12:00:00".into(),
+            false,
+        );
+        transcript.push(Item::Notice {
+            text: "compacted 1200 tokens".into(),
+            kind: NoticeKind::Info,
+        });
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "exit 1" })),
+            result: Some(ToolResultMessage::error(
+                &call("bash", json!({})),
+                "[exit code 1]",
+            )),
+            live: None,
+            at: "12:00:05".into(),
+            duration_ms: Some(500),
+        });
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
+        assert!(lines.iter().any(|l| l.contains("· compacted 1200 tokens")));
+        // A notice is an annotation: the chat cursor passes over it.
+        assert!(!transcript.is_selectable(1));
+        // Shell headline uses `$`; the failed status sits in the tool's meta
+        // beside how long it took (`🕒`).
+        assert!(lines.iter().any(|l| l.contains("$ exit 1")));
+        assert!(lines.iter().any(|l| l.contains("🕒") && l.contains('✗')));
+    }
+
+    #[test]
+    fn a_turn_error_after_reasoning_shows_on_the_answer() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        // Reasoning streams, then the turn fails with no answer text.
+        transcript.stream_thinking("weighing it\nl2\nl3\nl4\nl5\nl6");
+        transcript.finish_thinking("12:00:00", None);
+        transcript.finish_assistant(
+            String::new(),
+            Some("HTTP 500".into()),
+            None,
+            "12:00:01".into(),
+            true,
+        );
+        // The error and its failed status land on an answer block, even though
+        // the answer text is empty; the reasoning block carries no status.
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("12:00:01") && l.contains('✗')));
+    }
+
+    #[test]
+    fn a_long_error_wraps_to_the_width() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        let error = "the request failed because the endpoint is unreachable and \
+             the retries were exhausted after several attempts"
+            .to_string();
+        transcript.finish_assistant(String::new(), Some(error), None, "12:00:01".into(), true);
+        let width = 30;
+        let lines = text_of(transcript.lines(width, &colors, false));
+        // The error is marked with `✗` and reflows instead of spilling past the
+        // width; every wrapped row stays within it.
+        assert!(lines.iter().any(|l| l.contains('✗')));
+        let wrapped = lines
+            .iter()
+            .filter(|l| l.contains("request") || l.contains("retries"))
+            .count();
+        assert!(wrapped >= 2, "a long error should wrap to several rows");
+        assert!(lines.iter().all(|l| l.chars().count() <= width as usize));
+    }
+
+    #[test]
+    fn the_system_prompt_folds_with_a_marker() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        let prompt = (1..=8)
+            .map(|n| format!("rule {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        transcript.push(Item::System { text: prompt });
+        // Collapsed: a `▸` marker before the `#`, the first line, a note, then
+        // the last few — the ellipsis sits between the first and the last few.
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("▸ # rule 1")));
+        assert!(lines.iter().any(|l| l.contains("… 3 more lines")));
+        assert!(lines.iter().any(|l| l.contains("rule 5")));
+        assert!(lines.iter().any(|l| l.contains("rule 8")));
+        // The middle lines are the hidden ones.
+        assert!(!lines.iter().any(|l| l.contains("rule 2")));
+        assert!(!lines.iter().any(|l| l.contains("rule 4")));
+        // Expanded: a `▾` marker and the whole prompt.
+        assert!(transcript.toggle_expanded(0));
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("▾ # rule 1")));
+        assert!(lines.iter().any(|l| l.contains("rule 4")));
+        assert!(lines.iter().any(|l| l.contains("rule 8")));
     }
 
     #[test]

@@ -625,6 +625,9 @@ pub trait Translation: Send + Sync {
     fn agent_more_lines_above(&self, count: usize) -> String;
     /// Agent transcript: hidden lines below a folded message/output preview.
     fn agent_more_lines(&self, count: usize) -> String;
+    /// Agent transcript: the closing line of a finished run — how long it
+    /// took since the request was sent, and when it finished.
+    fn agent_run_done(&self, duration: &str, at: &str) -> String;
     /// Agent transcript: unit for seconds in a block's meta line.
     fn agent_unit_secs(&self) -> &str;
     /// Agent transcript: unit for minutes in a block's meta line.

@@ -1174,6 +1174,10 @@ impl Translation for RuntimeTranslation {
         self.format("agent_more_lines", &[("count", &count.to_string())])
     }
 
+    fn agent_run_done(&self, duration: &str, at: &str) -> String {
+        self.format("agent_run_done", &[("duration", duration), ("at", at)])
+    }
+
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {
         self.get_string("git_commit_title")
             .replace("{count}", &count.to_string())
