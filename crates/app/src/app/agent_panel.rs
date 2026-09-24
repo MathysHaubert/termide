@@ -18,7 +18,8 @@ use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
 use termide_agent_tools::{builtin_tools, SkillTool, SubagentRun, TaskTool};
-use termide_config::AiSettings;
+use termide_agent_web::{web_tools, Web, WebConfig};
+use termide_config::{AiSettings, WebSettings};
 use termide_panel_agent::{
     AgentCatalog, AgentEntry, AgentPanel, AgentPanelSetup, AgentProfile, BackendFactory,
     HooksFactory,
@@ -109,6 +110,8 @@ struct FsCatalog {
     /// Builds and runs a named agent as a subagent for the `task` tool;
     /// set once the provider and settings are known.
     subagents: Option<Arc<Subagents>>,
+    /// The web tools' service; set once the settings are known.
+    web: Option<Arc<Web>>,
 }
 
 impl FsCatalog {
@@ -132,6 +135,7 @@ impl FsCatalog {
             mcp: Connections::new(dirs.mcp_servers()),
             dirs,
             subagents: None,
+            web: None,
         }
     }
 }
@@ -174,7 +178,7 @@ impl AgentCatalog for FsCatalog {
         let mut tools = if backend.is_some() {
             termide_agent_core::ToolRegistry::new()
         } else {
-            builtin_tools(self.dirs.shims_dir())
+            base_tools(&self.dirs, self.web.as_ref())
         };
         restrict_tools(&mut tools, &definition.spec.tools, name);
         // Skills are instructions, not a capability, so an agent's `tools`
@@ -236,6 +240,54 @@ impl FsCatalog {
     }
 }
 
+/// The built-in tools followed by the web tools, before an agent's `tools`
+/// list narrows them.
+fn base_tools(dirs: &AgentDirs, web: Option<&Arc<Web>>) -> ToolRegistry {
+    let mut tools = builtin_tools(dirs.shims_dir());
+    for tool in web.map(web_tools).unwrap_or_default() {
+        tools.insert(tool);
+    }
+    tools
+}
+
+/// The web service every agent of the process shares, so one browser serves
+/// them all. It is rebuilt only when the settings that shape it change; a
+/// panel still holding the old one keeps it until it closes.
+fn shared_web(settings: &WebSettings, dirs: &AgentDirs) -> Arc<Web> {
+    static SHARED: std::sync::Mutex<Option<(WebConfig, Arc<Web>)>> = std::sync::Mutex::new(None);
+    let config = web_config(settings, dirs);
+    let mut shared = SHARED.lock().unwrap();
+    match shared.as_ref() {
+        Some((current, web)) if *current == config => Arc::clone(web),
+        _ => {
+            let web = Web::new(config.clone());
+            *shared = Some((config, Arc::clone(&web)));
+            web
+        }
+    }
+}
+
+fn web_config(settings: &WebSettings, dirs: &AgentDirs) -> WebConfig {
+    let engine = dirs.web_engine(&settings.engine).and_then(|text| {
+        termide_agent_web::Engine::from_toml(&text)
+            .map_err(|error| log::warn!("search engine {}: {error}", settings.engine))
+            .ok()
+    });
+    if engine.is_none() {
+        log::warn!("no usable search engine named {}", settings.engine);
+    }
+    WebConfig {
+        backend: termide_agent_web::Backend::parse(&settings.backend),
+        engine,
+        chrome_path: (!settings.chrome_path.trim().is_empty())
+            .then(|| PathBuf::from(settings.chrome_path.trim())),
+        display: termide_agent_web::Display::parse(&settings.display),
+        profile: dirs
+            .browser_profile()
+            .unwrap_or_else(|| std::env::temp_dir().join("termide-browser")),
+    }
+}
+
 /// Drop every tool not in `allowed`, warning about names that match none;
 /// `None` keeps them all. Shared by the catalog and the subagent builder so
 /// an agent's `tools` list means the same in both.
@@ -263,6 +315,7 @@ fn restrict_tools(tools: &mut ToolRegistry, allowed: &Option<Vec<String>>, agent
 struct Subagents {
     provider: Arc<dyn Provider>,
     dirs: AgentDirs,
+    web: Arc<Web>,
     cwd: PathBuf,
     project_root: PathBuf,
     rules: PermissionRules,
@@ -290,7 +343,7 @@ impl Subagents {
                 "{name} is an external agent and cannot be run as a subagent"
             ));
         }
-        let mut tools = builtin_tools(self.dirs.shims_dir());
+        let mut tools = base_tools(&self.dirs, Some(&self.web));
         restrict_tools(&mut tools, &definition.spec.tools, name);
         let skills = self.dirs.skills();
         if !skills.is_empty() {
@@ -426,11 +479,14 @@ fn agent_setup(
     let provider: Arc<dyn Provider> = build_provider(&provider_settings, api_key);
 
     let mut catalog = FsCatalog::new(&cwd, project_root);
+    let web = shared_web(&settings.web, &catalog.dirs);
+    catalog.web = Some(Arc::clone(&web));
     // The subagent runner shares the provider, the rules and the model
     // defaults, so a delegated agent runs like the panel would run it.
     catalog.subagents = Some(Arc::new(Subagents {
         provider: Arc::clone(&provider) as Arc<dyn Provider>,
         dirs: catalog.dirs.clone(),
+        web,
         cwd: cwd.clone(),
         project_root: project_root.to_path_buf(),
         rules: settings.permissions.clone(),
@@ -572,7 +628,8 @@ pub fn run_agent_headless(
         return 2;
     }
 
-    let mut tools = builtin_tools(dirs.shims_dir());
+    let web = shared_web(&settings.web, &dirs);
+    let mut tools = base_tools(&dirs, Some(&web));
     restrict_tools(&mut tools, &definition.spec.tools, name);
     let skills = dirs.skills();
     if !skills.is_empty() {

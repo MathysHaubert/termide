@@ -4911,6 +4911,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "termide-agent-web"
+version = "0.35.0"
+dependencies = [
+ "base64",
+ "html5ever",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "termide-agent-core",
+ "termide-fetch",
+ "toml",
+ "url",
+]
+
+[[package]]
 name = "termide-app"
 version = "0.35.0"
 dependencies = [
@@ -4930,6 +4946,7 @@ dependencies = [
  "termide-agent-mcp",
  "termide-agent-providers",
  "termide-agent-tools",
+ "termide-agent-web",
  "termide-app-core",
  "termide-clipboard",
  "termide-config",

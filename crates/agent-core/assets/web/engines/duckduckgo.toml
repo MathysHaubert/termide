@@ -1,0 +1,10 @@
+# DuckDuckGo's HTML endpoint: plain markup, no JavaScript needed.
+# Selectors run in the page; see doc/en/agent.md, "Web tools".
+name = "DuckDuckGo"
+url = "https://html.duckduckgo.com/html/?q={query}"
+item = ".result:not(.result--ad)"
+title = ".result__a"
+link = ".result__a"
+link_param = "uddg"
+snippet = ".result__snippet"
+challenge = ["#challenge-form", ".anomaly-modal"]

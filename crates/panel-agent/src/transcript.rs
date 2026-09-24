@@ -889,6 +889,14 @@ fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<
             Span::styled(format!("{} ", t.agent_tool_edit()), fg),
             Span::styled(arg("path"), fg),
         ],
+        "fetch" => vec![
+            Span::styled(format!("{} ", t.agent_tool_fetch()), fg),
+            Span::styled(arg("url"), fg),
+        ],
+        "web_search" => vec![
+            Span::styled(format!("{} ", t.agent_tool_web_search()), fg),
+            Span::styled(arg("query"), fg),
+        ],
         _ => vec![
             Span::styled(
                 call.name.clone(),
@@ -1330,12 +1338,15 @@ pub(crate) fn run_end_text(elapsed_ms: u32, at: &str, paused: bool) -> String {
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
-/// path for file tools, compact JSON otherwise.
+/// path for file tools, the URL or query for web tools, compact JSON
+/// otherwise.
 #[must_use]
 pub fn summarize_call(call: &ToolCall, max_chars: usize) -> String {
     let text = match call.name.as_str() {
         "bash" => call.arguments["command"].as_str().unwrap_or("").to_string(),
         "read" | "edit" | "write" => call.arguments["path"].as_str().unwrap_or("").to_string(),
+        "fetch" => call.arguments["url"].as_str().unwrap_or("").to_string(),
+        "web_search" => call.arguments["query"].as_str().unwrap_or("").to_string(),
         _ => match &call.arguments {
             Value::Object(map) if map.is_empty() => String::new(),
             other => other.to_string(),
@@ -1884,6 +1895,17 @@ mod tests {
         assert_eq!(
             summarize_call(&call("edit", json!({ "path": "a.rs" })), 40),
             "a.rs"
+        );
+        assert_eq!(
+            summarize_call(&call("fetch", json!({ "url": "https://docs.rs" })), 40),
+            "https://docs.rs"
+        );
+        assert_eq!(
+            summarize_call(
+                &call("web_search", json!({ "query": "rust tui", "limit": 5 })),
+                40
+            ),
+            "rust tui"
         );
         assert_eq!(summarize_call(&call("mcp", json!({})), 40), "");
         assert_eq!(

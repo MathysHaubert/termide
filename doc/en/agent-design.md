@@ -78,6 +78,151 @@ token), and the parent's cancel aborts the sub-run. Not done yet: parallel
 delegation (the loop runs one tool at a time) and streaming the sub-run as a
 foldable sub-transcript rather than the plain text it reports.
 
+## 3b. Web tools
+
+Most requests that reach outside the checkout are searches, and `curl` fails
+them: a search engine answers a script with a block page, a JavaScript page
+comes back as an empty shell, and a real page is hundreds of kilobytes of
+markup the model has to wade through.
+
+| Agent | Search | Reading a page |
+|---|---|---|
+| Claude Code | `WebSearch`, run by the provider | `WebFetch`: HTML to markdown, then a small model condenses it *(unverified)* |
+| Codex CLI | the provider's `web_search` | none; the shell *(unverified)* |
+| Gemini CLI | `google_web_search` through the Gemini API | `web_fetch` *(unverified)* |
+| OpenCode | `websearch` through an external API | `webfetch`, HTML to markdown *(unverified)* |
+| pi | none built in | none built in |
+| Cline | none | `browser_action` on Puppeteer: screenshot and click by coordinates *(unverified)* |
+
+Everyone who searches does it through an API (the model provider's, or a
+search service); only Cline drives a browser, and it does so for interaction,
+not for search. An API does not work for a user with a local model and no
+search key, which is the first target here, so the search goes through a real
+browser instead.
+
+Decision: two tools, `web_search` and `fetch`, in a crate of their own
+(`crates/agent-web`) so the tools crate stays free of the browser.
+
+- `fetch(url, offset, limit)` loads a page and returns it as markdown
+  (headings, paragraphs, lists, code, links made absolute; scripts, styles and
+  navigation chrome dropped), headed by the final URL and the title. Text
+  types other than HTML come back as they are, binary types are refused.
+  Output is paged by line like `read` (2000 lines or 64 KB), and the last
+  converted pages are cached so paging does not reload.
+- `web_search(query, limit)` returns a numbered list of title, URL and
+  snippet. The model reads a result with `fetch`. Two tools rather than one
+  `web(query | url)`: the inputs differ, a known URL needs no search, and
+  mutually exclusive arguments are a known weak spot of tool schemas across
+  providers.
+
+The model sees the same two tools whatever does the work; the backend is a
+setting.
+
+```toml
+[ai.web]
+backend = "auto"         # auto | chrome | http
+engine = "duckduckgo"    # an engine file under ai/web/engines/
+chrome_path = ""         # empty: look in the usual places
+display = "minimized"    # minimized | headless | visible
+```
+
+- `http` loads pages with `termide-fetch` (GET only, time and size limits, no
+  https downgrade). It cannot search, so `web_search` is not registered: the
+  model never sees a tool that cannot work.
+- `chrome` drives a local Chrome or Chromium over the DevTools protocol.
+- `auto` is `chrome` when a browser is found and `http` otherwise.
+
+The browser is spoken to over `--remote-debugging-pipe` (file descriptors 3
+and 4, NUL-separated JSON), the way Playwright drives a browser it launched:
+no WebSocket, no open port, and no other process on the machine can attach to
+the agent's browser. One browser serves every agent of the termide process (calls take turns); it
+starts on first use and quits after five idle minutes and on exit. It keeps a
+profile of its own in `<config>/ai/web/browser/`, never a copy of the user's: the
+agent reads untrusted pages and has a shell, so it must not hold the user's
+mail and bank sessions. Nor does it touch the user's keychain: Chrome
+encrypts cookies with a key it keeps in the OS keychain, and a fresh profile
+asks for access to it (on macOS, with a relocated `HOME`, even to create a new
+keychain), so the browser runs with `--use-mock-keychain` on macOS and
+`--password-store=basic` on Linux, as Playwright does. Cookies the agent's
+profile gathers (a consent page
+passed once, a solved captcha) persist between runs. If the profile is in use
+by another termide instance, a throwaway profile is used for that run.
+
+There is no stealth: no spoofed user agent, no patched fingerprint. Detection
+is an arms race that a coding tool should not join, and it breaks the search
+engines' terms.
+
+What that costs was measured (Chrome 154, macOS, a fresh profile, one query
+per engine): headless, only Bing answered; DuckDuckGo (both endpoints),
+Google, Yandex, Brave Search, Startpage and Mojeek answered with a captcha or
+a block page, headless Chrome naming itself in its user agent. The same
+browser with a real window got results from DuckDuckGo and Yandex as well;
+Google still asked for a captcha, the address having been flagged by then.
+So the default display is `minimized`: a real window, created in the
+background and minimized before the page loads, which leaves the terminal
+focused (checked: the frontmost application stayed the terminal throughout).
+`headless` remains for machines without a display server and is chosen there
+automatically; `visible` keeps the window on screen.
+
+When an engine answers with a challenge anyway, its window is restored and
+brought to the front, the tool reports the wait while it lasts, and the page
+is watched until the challenge is gone; after five minutes or on cancel the
+search fails. A headless browser that meets a challenge has no window to
+show, so it is closed and relaunched minimized for the rest of the process.
+
+A search page is ready when the engine's result or challenge selectors match,
+not when the document finishes loading (Yandex never does); a list rendered
+in pieces is read once its length holds for three polls, at most three
+seconds. `fetch` waits for the document to load (or for five seconds of
+`interactive`), then for its visible text to stop changing, at most three
+seconds more. A loaded page with no text at all is an application still
+fetching its content (crates.io showed an empty shell of constant size for
+about three seconds), so it gets up to ten more seconds to render; measuring
+the HTML's size instead took that shell for the page.
+
+An engine is data, not code, so a markup change is fixed by editing a file,
+and a user can add an engine (an intranet search, say):
+
+```toml
+# ai/web/engines/duckduckgo.toml
+name = "DuckDuckGo"
+url = "https://html.duckduckgo.com/html/?q={query}"
+item = ".result:not(.result--ad)"   # one element per result
+title = ".result__a"          # relative to the item; "" is the item itself
+link = ".result__a"           # its href
+link_param = "uddg"           # the real URL is this query parameter of the href
+snippet = ".result__snippet"
+challenge = ["#challenge-form", ".anomaly-modal"]   # any match means a captcha
+```
+
+Two more keys cover the other engines: `link_param_prefix` and
+`link_param_base64` decode Bing's `u=a1<base64>` redirects, and `exclude`
+drops results whose URL contains a fragment (Yandex's ad redirects).
+`challenge_url` matches the address of a challenge page (Google's `/sorry/`).
+
+The selectors run in the page (`querySelectorAll` in a `Runtime.evaluate`),
+so no CSS engine is linked in. DuckDuckGo, Google, Bing and Yandex ship as
+seeds under `<config>/ai/web/engines/`, reconciled like the other seeds
+(`.seeds.toml`), and a same-named file at a higher level overrides one below.
+DuckDuckGo is the default: its HTML endpoint needs no JavaScript and answered
+a windowed browser at once. The DuckDuckGo, Bing and Yandex selectors were
+checked against live results; Google's could not be, since it answered every
+probe with a captcha, and are marked so in the file.
+
+Permissions: both tools ask by default. The subject of `fetch` is the URL and
+its suggested rule `https://host/*`; the subject of `web_search` is the query
+and its suggested rule `*`. Both count as read-only, so plan mode lets them
+through. Nothing blocks private addresses: the shell can reach them anyway,
+and the prompt is the gate.
+
+Not done: the `chrome` backend on Windows (passing descriptors 3 and 4 to a
+child needs the CRT's inherited-handle block; `auto` falls back to `http`
+there), API backends (the provider's own search, SearXNG, Brave), and
+interaction with a page (clicks, forms), which Playwright MCP already covers
+through the MCP client; if it is ever built in, the shape to follow is an
+accessibility snapshot with element references and Playwright's
+actionability waits, not screenshots and coordinates.
+
 ## 4. Permissions
 
 | Agent | Model |

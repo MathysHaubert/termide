@@ -78,7 +78,8 @@ pub const PLAN_MODE_REASON: &str =
 #[must_use]
 pub fn is_read_only_call(call: &ToolCall) -> bool {
     match call.name.as_str() {
-        "read" | "skill" => true,
+        // The web tools read the web; nothing on this machine changes.
+        "read" | "skill" | "fetch" | "web_search" => true,
         "bash" => {
             let parsed = split_shell(call.arguments["command"].as_str().unwrap_or(""));
             !parsed.has_substitution
@@ -495,6 +496,12 @@ pub fn subject_of(call: &ToolCall, ctx: &ToolContext) -> String {
             let raw = call.arguments["path"].as_str().unwrap_or("");
             relative_to_project(raw, &ctx.cwd)
         }
+        "fetch" => call.arguments["url"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        "web_search" => call.arguments["query"].as_str().unwrap_or("").to_string(),
         _ => match &call.arguments {
             Value::Object(map) => map
                 .values()
@@ -545,6 +552,21 @@ fn inside_project(call: &ToolCall, ctx: &ToolContext) -> bool {
 /// command's leading words for `bash`, the exact path for file tools.
 #[must_use]
 pub fn suggested_pattern(tool: &str, subject: &str) -> String {
+    match tool {
+        // Trust a site, not one page of it.
+        "fetch" => {
+            return match subject.split_once("://") {
+                Some((scheme, rest)) => {
+                    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+                    format!("{scheme}://{host}/*")
+                }
+                None => "*".to_string(),
+            };
+        }
+        // A query is never repeated word for word.
+        "web_search" => return "*".to_string(),
+        _ => {}
+    }
     if tool != "bash" {
         return if subject.is_empty() {
             "*".to_string()
@@ -997,6 +1019,25 @@ mod tests {
         );
         assert_eq!(suggested_pattern("edit", "src/lib.rs"), "src/lib.rs");
         assert_eq!(suggested_pattern("other", ""), "*");
+        assert_eq!(
+            suggested_pattern("fetch", "https://docs.rs/ratatui/latest/?x=1"),
+            "https://docs.rs/*"
+        );
+        assert_eq!(
+            suggested_pattern("fetch", "http://127.0.0.1:8080"),
+            "http://127.0.0.1:8080/*"
+        );
+        assert_eq!(suggested_pattern("web_search", "rust tui"), "*");
+    }
+
+    #[test]
+    fn web_tools_are_judged_by_url_and_query() {
+        let fetch = call("fetch", json!({ "url": " https://docs.rs/a " }));
+        assert_eq!(subject_of(&fetch, &ctx()), "https://docs.rs/a");
+        let search = call("web_search", json!({ "query": "rust tui", "limit": 3 }));
+        assert_eq!(subject_of(&search, &ctx()), "rust tui");
+        assert!(is_read_only_call(&fetch));
+        assert!(is_read_only_call(&search));
     }
 
     #[test]

@@ -1,0 +1,13 @@
+# Google. It challenges automated browsers readily; solve the captcha in the
+# window once and the agent's profile keeps the clearance for a while. In the
+# EU the first visit also shows consent.google.com, which is passed the same
+# way. The results markup changes often; each result is taken from the link
+# that holds its heading, and there is no stable snippet selector.
+name = "Google"
+url = "https://www.google.com/search?q={query}&hl=en"
+item = "#search a:has(> h3)"
+title = "h3"
+link = ""
+exclude = ["//www.google.com/", "//support.google.com/", "//accounts.google.com/"]
+challenge = ["#captcha-form", "form[action*='/sorry/']"]
+challenge_url = ["/sorry/", "consent.google.com"]

@@ -1,0 +1,23 @@
+[package]
+name = "termide-agent-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web tools of the termide coding agent: fetch and web_search, over HTTP or a local Chrome"
+
+[dependencies]
+base64.workspace = true
+html5ever.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+url.workspace = true
+
+termide-agent-core = { path = "../agent-core" }
+termide-fetch = { path = "../fetch" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

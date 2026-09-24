@@ -56,6 +56,22 @@ pub const SYSTEM_DIR: &str = "system";
 /// Only the configuration level is honoured — a shim runs silently on every
 /// matching command, so a project must not be able to plant one.
 pub const SHIMS_DIR: &str = "shims";
+/// Search engines for `web_search`, one `<name>.toml` each.
+pub const WEB_ENGINES_DIR: &str = "web/engines";
+/// The web tools' browser profile, at the configuration level only: the
+/// agent's own cookies, never the user's browser profile.
+pub const BROWSER_PROFILE_DIR: &str = "web/browser";
+
+/// The shipped search engines, by name.
+pub const SEED_ENGINES: [(&str, &str); 4] = [
+    (
+        "duckduckgo",
+        include_str!("../assets/web/engines/duckduckgo.toml"),
+    ),
+    ("bing", include_str!("../assets/web/engines/bing.toml")),
+    ("google", include_str!("../assets/web/engines/google.toml")),
+    ("yandex", include_str!("../assets/web/engines/yandex.toml")),
+];
 
 /// One prompt template: `/<name> args` in the input expands to `body` with
 /// `$ARGUMENTS` and `$1`…`$9` filled in.
@@ -154,15 +170,21 @@ pub fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
 /// The shipped assets written into the configuration's `ai` directory, as
 /// `(relative path, contents)`. The single source of truth for what
 /// [`ensure_global_layout`] seeds and keeps up to date.
-fn shipped_assets() -> [(String, &'static str); 6] {
-    [
+fn shipped_assets() -> Vec<(String, &'static str)> {
+    let mut assets = vec![
         (ROOT_SOUL_FILE.to_string(), SEED_TEMPLATE),
         (format!("{SYSTEM_DIR}/compact.md"), SEED_COMPACT),
         (format!("{SYSTEM_DIR}/compacted.md"), SEED_COMPACTED),
         (format!("{SYSTEM_DIR}/plan.md"), SEED_PLAN),
         (format!("{SYSTEM_DIR}/goal.md"), SEED_GOAL),
         (format!("{SYSTEM_DIR}/handoff.md"), SEED_HANDOFF),
-    ]
+    ];
+    assets.extend(
+        SEED_ENGINES
+            .iter()
+            .map(|(name, seed)| (format!("{WEB_ENGINES_DIR}/{name}.toml"), *seed)),
+    );
+    assets
 }
 
 /// Records the hash of each shipped asset as termide last wrote it, so an
@@ -211,6 +233,7 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
         COMMANDS_DIR,
         SYSTEM_DIR,
         SHIMS_DIR,
+        WEB_ENGINES_DIR,
     ] {
         std::fs::create_dir_all(global.join(dir))?;
     }
@@ -383,6 +406,29 @@ impl AgentDirs {
     pub fn shims_dir(&self) -> Option<PathBuf> {
         let dir = self.global.as_ref()?.join(SHIMS_DIR);
         dir.is_dir().then_some(dir)
+    }
+
+    /// Where the web tools' browser keeps its profile; `None` without a
+    /// configuration level. Not created here: the browser does that on first
+    /// use.
+    #[must_use]
+    pub fn browser_profile(&self) -> Option<PathBuf> {
+        Some(self.global.as_ref()?.join(BROWSER_PROFILE_DIR))
+    }
+
+    /// The text of search engine `name`: `web/engines/<name>.toml` from the
+    /// highest level that has it, else the shipped seed of that name.
+    #[must_use]
+    pub fn web_engine(&self, name: &str) -> Option<String> {
+        let file = self
+            .find_file(Path::new(WEB_ENGINES_DIR).join(format!("{name}.toml")))
+            .and_then(|path| std::fs::read_to_string(&path).ok());
+        file.or_else(|| {
+            SEED_ENGINES
+                .iter()
+                .find(|(seed, _)| *seed == name)
+                .map(|(_, text)| (*text).to_string())
+        })
     }
 
     /// `system/<name>` from the first level that has a non-empty one, else

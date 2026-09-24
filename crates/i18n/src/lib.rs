@@ -645,6 +645,10 @@ pub trait Translation: Send + Sync {
     fn agent_tool_write(&self) -> &str;
     /// Agent transcript: the action verb for an `edit` tool call.
     fn agent_tool_edit(&self) -> &str;
+    /// Agent transcript: the action verb for a `fetch` tool call.
+    fn agent_tool_fetch(&self) -> &str;
+    /// Agent transcript: the action verb for a `web_search` tool call.
+    fn agent_tool_web_search(&self) -> &str;
     /// Settings modal: the Agent tab label.
     fn settings_tab_agent(&self) -> &str;
     /// Settings modal: Agent tab field labels.
@@ -656,6 +660,11 @@ pub trait Translation: Send + Sync {
     fn settings_agent_max_tokens(&self) -> &str;
     fn settings_agent_reasoning(&self) -> &str;
     fn settings_agent_autofold(&self) -> &str;
+    /// Settings modal: AI tab, web tools field labels.
+    fn settings_web_backend(&self) -> &str;
+    fn settings_web_engine(&self) -> &str;
+    fn settings_web_display(&self) -> &str;
+    fn settings_web_chrome_path(&self) -> &str;
     fn tools_open(&self) -> &str;
     fn tools_open_prompt(&self) -> &str;
 
