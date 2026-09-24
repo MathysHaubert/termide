@@ -4485,7 +4485,16 @@ impl Panel for AgentPanel {
     }
 
     fn handle_key(&mut self, chord: KeyChord) -> Vec<PanelEvent> {
-        let key = chord.raw;
+        // A shortcut — a Ctrl/Alt chord, or any key while the chat has focus
+        // and nothing is being typed — matches on the canonical form, so it
+        // works on a non-Latin layout too (`Ctrl+щ` is `Ctrl+O`). Typing into
+        // the input or a pending question keeps the raw key.
+        let raw = chord.raw;
+        let shortcut = raw
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            || (self.chat_focus && self.pending.is_none());
+        let key = if shortcut { chord.canonical } else { raw };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -5575,6 +5584,40 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    #[test]
+    fn shortcuts_work_on_a_cyrillic_layout() {
+        // As the dispatcher builds it: the raw Cyrillic key, and its Latin
+        // canonical form.
+        let key = |c, latin, modifiers| KeyChord {
+            raw: KeyEvent::new(KeyCode::Char(c), modifiers),
+            canonical: KeyEvent::new(KeyCode::Char(latin), modifiers),
+        };
+        let mut panel = panel(vec![]);
+        let long = (1..=8)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let call = ToolCall {
+            id: "t1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({ "command": "ls" }),
+        };
+        panel.transcript.push(Item::Tool {
+            call: call.clone(),
+            result: Some(ToolResultMessage::text(&call, long)),
+            live: None,
+            at: "12:00:00".into(),
+            duration_ms: Some(10),
+        });
+        // `Ctrl+щ` is `Ctrl+O`: unfold everything.
+        assert!(!panel.transcript.any_expanded());
+        panel.handle_key(key('щ', 'o', KeyModifiers::CONTROL));
+        assert!(panel.transcript.any_expanded());
+        // Typed into the input, the same letter stays Cyrillic.
+        panel.handle_key(key('щ', 'o', KeyModifiers::NONE));
+        assert_eq!(panel.input_text(), "щ");
     }
 
     #[test]
