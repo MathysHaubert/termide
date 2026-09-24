@@ -73,5 +73,7 @@ pub use permissions::{
 pub use plan::{PlanPrompt, SEED_PLAN};
 pub use provider::{ModelInfo, ModelSpec, Provider, Request, StreamEvent, ThinkingLevel, ToolSpec};
 pub use runtime::{AgentRuntime, Backend, BackendModel, BackendSetup, PromptError};
-pub use session::{Entry, EntryKind, Session, SessionHeader, SessionModel, SessionSummary};
+pub use session::{
+    Entry, EntryKind, LoggedMessage, Session, SessionHeader, SessionModel, SessionSummary, Timing,
+};
 pub use tool::{LateTools, Tool, ToolContext, ToolRegistry, ToolUpdate};

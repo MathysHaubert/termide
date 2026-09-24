@@ -35,12 +35,36 @@ pub struct SessionHeader {
     pub name: Option<String>,
 }
 
+/// How long a logged message took to produce, recorded by the UI so a
+/// reopened session shows the same figures. Token counts are not repeated
+/// here: a model turn's already travel in its `usage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Timing {
+    /// A model turn: from the request to the first token, and from there to
+    /// the end of the reply.
+    Turn { prefill_ms: u32, gen_ms: u32 },
+    /// A tool call, from its start to its result.
+    Tool { duration_ms: u32 },
+}
+
+/// A message on the current branch as the log recorded it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoggedMessage {
+    pub message: Message,
+    /// When the entry was written (millis).
+    pub timestamp: u64,
+    pub timing: Option<Timing>,
+}
+
 /// Payload of a tree entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EntryKind {
     Message {
         message: Message,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timing: Option<Timing>,
     },
     /// The model the branch runs on from here. The context window is the
     /// figure the panel knew at the time (configured or reported by the
@@ -60,19 +84,13 @@ pub enum EntryKind {
     },
     /// A name the user gave this conversation. The last one on the branch
     /// wins, so renaming is just another entry.
-    SessionName {
-        name: String,
-    },
+    SessionName { name: String },
     /// The agent definition the branch runs as from here, so a reopened
     /// session comes back with the same prompt and tools.
-    AgentChange {
-        agent: String,
-    },
+    AgentChange { agent: String },
     /// Whether the branch prefers reasoning from here, so a reopened session
     /// comes back with the same choice (toggled live from the status bar).
-    ReasoningChange {
-        reasoning: bool,
-    },
+    ReasoningChange { reasoning: bool },
     /// The user undid a request: the branch continues from this entry's
     /// parent, the undone messages stay in the file on a dead branch.
     Rewind,
@@ -335,8 +353,19 @@ impl Session {
     }
 
     pub fn append_message(&mut self, message: &Message) -> std::io::Result<String> {
+        self.append_timed_message(message, None)
+    }
+
+    /// [`Session::append_message`] with how long the message took, so a
+    /// reopened session can show it.
+    pub fn append_timed_message(
+        &mut self,
+        message: &Message,
+        timing: Option<Timing>,
+    ) -> std::io::Result<String> {
         self.append(EntryKind::Message {
             message: message.clone(),
+            timing,
         })
     }
 
@@ -400,7 +429,7 @@ impl Session {
         let mut messages: Vec<Message> = Vec::new();
         for entry in self.branch() {
             match &entry.kind {
-                EntryKind::Message { message } => messages.push(message.clone()),
+                EntryKind::Message { message, .. } => messages.push(message.clone()),
                 EntryKind::ModelChange { .. }
                 | EntryKind::SessionName { .. }
                 | EntryKind::AgentChange { .. }
@@ -419,15 +448,20 @@ impl Session {
         messages
     }
 
-    /// [`Session::context_messages_with`] paired with each message's wall-clock
-    /// timestamp (millis), so a reopened conversation can show when each block
-    /// was written. A compaction summary carries the compaction entry's time.
+    /// [`Session::context_messages_with`] with each message's wall-clock
+    /// timestamp (millis) and recorded timing, so a reopened conversation can
+    /// show when each block was written and how long it took. A compaction
+    /// summary carries the compaction entry's time and no timing.
     #[must_use]
-    pub fn context_messages_with_times(&self, prompts: &CompactionPrompts) -> Vec<(Message, u64)> {
-        let mut messages: Vec<(Message, u64)> = Vec::new();
+    pub fn context_messages_with_times(&self, prompts: &CompactionPrompts) -> Vec<LoggedMessage> {
+        let mut messages: Vec<LoggedMessage> = Vec::new();
         for entry in self.branch() {
             match &entry.kind {
-                EntryKind::Message { message } => messages.push((message.clone(), entry.timestamp)),
+                EntryKind::Message { message, timing } => messages.push(LoggedMessage {
+                    message: message.clone(),
+                    timestamp: entry.timestamp,
+                    timing: *timing,
+                }),
                 EntryKind::ModelChange { .. }
                 | EntryKind::SessionName { .. }
                 | EntryKind::AgentChange { .. }
@@ -438,7 +472,11 @@ impl Session {
                 } => {
                     let start = messages.len().saturating_sub(*keep_last);
                     let tail = messages.split_off(start);
-                    messages = vec![(prompts.summary_message(summary), entry.timestamp)];
+                    messages = vec![LoggedMessage {
+                        message: prompts.summary_message(summary),
+                        timestamp: entry.timestamp,
+                        timing: None,
+                    }];
                     messages.extend(tail);
                 }
             }
@@ -603,7 +641,7 @@ pub struct SessionSummary {
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
         let messages = session.entries.iter().filter_map(|e| match &e.kind {
-            EntryKind::Message { message } => Some(message),
+            EntryKind::Message { message, .. } => Some(message),
             EntryKind::ModelChange { .. }
             | EntryKind::Compaction { .. }
             | EntryKind::SessionName { .. }
@@ -825,6 +863,30 @@ mod tests {
         assert!(Session::list(&dir.path().join("missing"))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn a_message_timing_survives_reopen_and_is_optional() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), Path::new("/work")).unwrap();
+        session
+            .append_message(&Message::User(UserMessage::text("hi")))
+            .unwrap();
+        let timing = Timing::Turn {
+            prefill_ms: 800,
+            gen_ms: 2400,
+        };
+        session
+            .append_timed_message(&Message::Assistant(text_reply("hello")), Some(timing))
+            .unwrap();
+        let reopened = Session::open(session.path()).unwrap();
+        let logged = reopened.context_messages_with_times(&CompactionPrompts::default());
+        assert_eq!(logged.len(), 2);
+        assert_eq!(logged[0].timing, None);
+        assert_eq!(logged[1].timing, Some(timing));
+        // An untimed entry writes no `timing` key, so older logs read the same.
+        let text = std::fs::read_to_string(session.path()).unwrap();
+        assert_eq!(text.matches("\"timing\"").count(), 1, "{text}");
     }
 
     #[test]

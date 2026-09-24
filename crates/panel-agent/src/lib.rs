@@ -24,10 +24,10 @@ use termide_agent_core::{
     civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendModel,
     BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript,
     CompactionPolicy, CompactionPrompts, Decision, EntryKind, GoalPrompt, HandoffPrompt, Hooks,
-    LateTools, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
+    LateTools, LoggedMessage, Message, Mode, ModeHandle, ModelInfo, ModelSpec, PermissionAnswer,
     PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule, PlanGuard, PlanPrompt,
-    PromptTemplate, Provider, Session, SessionSummary, StopReason, StreamEvent, Tool, ToolRegistry,
-    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    PromptTemplate, Provider, Session, SessionSummary, StopReason, StreamEvent, Timing, Tool,
+    ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -1437,19 +1437,11 @@ impl AgentPanel {
     /// check, an animated spinner. Sits after the last block, animating on the
     /// panel's ~10 fps redraw while busy; `None` when idle.
     fn live_footer_lines(&self, width: u16) -> Vec<Line<'static>> {
-        const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let Some(activity) = self.activity.as_ref() else {
             return Vec::new();
         };
         let dim = Style::default().fg(self.colors.disabled);
         let mut lines: Vec<Line<'static>> = Vec::new();
-        // When the footer stands on its own — a fresh turn's prefill, or the gap
-        // after a finished tool — a dividing rule sets it apart from the block
-        // above, so its clock does not stack under that block's own meta. While
-        // a block is streaming the footer is its live meta and needs no rule.
-        if !self.transcript.tail_is_streaming() {
-            lines.push(transcript::separator(width, &self.colors));
-        }
         // While tokens stream (an answer or reasoning), a generation line in the
         // same shape as a finished block's `✍️` meta, with the live estimate.
         // Input tokens are only known once the turn ends, so the `⏫` prefill
@@ -1470,29 +1462,24 @@ impl AgentPanel {
                 )],
             ));
         }
-        // The clock line: the message's total elapsed time and the spinner.
-        let elapsed = activity.msg_start.elapsed();
-        let frame = (elapsed.as_millis() / 80) as usize % SPINNER.len();
-        let glyph = match activity.phase {
-            Phase::Tool => "⚙\u{fe0f} ",
-            _ => "🕒 ",
-        };
+        // The run clock: an animated glyph and the time since the request.
+        // Its own glyph keeps it apart from a block's `🕒`, and when the run
+        // ends it freezes on the answer (or on the run's closing line).
+        let elapsed = self
+            .run_start
+            .map_or_else(|| activity.msg_start.elapsed(), |start| start.elapsed());
+        let frames = transcript::RUN_FRAMES;
+        let frame = (elapsed.as_millis() / 120) as usize % frames.len();
         lines.push(transcript::right_meta(
             width,
             vec![
                 Span::styled(
-                    format!(
-                        "{glyph}{} ",
-                        transcript::fmt_dur(elapsed.as_millis() as u32)
-                    ),
-                    dim,
-                ),
-                Span::styled(
-                    SPINNER[frame].to_string(),
+                    format!("{} ", frames[frame]),
                     Style::default()
                         .fg(self.colors.info)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(transcript::fmt_dur(elapsed.as_millis() as u32), dim),
             ],
         ));
         lines
@@ -1518,12 +1505,12 @@ impl AgentPanel {
                 self.busy = false;
                 self.activity = None;
                 if let Some(start) = self.run_start.take() {
-                    self.transcript.push(Item::RunEnd {
-                        elapsed_ms: start.elapsed().as_millis().min(u32::MAX as u128) as u32,
-                        at: now_hms(),
-                        ok: !self.run_failed,
-                        paused: self.run_paused,
-                    });
+                    self.transcript.end_run(
+                        start.elapsed().as_millis().min(u32::MAX as u128) as u32,
+                        &now_hms(),
+                        !self.run_failed,
+                        self.run_paused,
+                    );
                 }
                 self.pause_requested = false;
                 self.set_queued(self.runtime.queue_lens());
@@ -1588,11 +1575,16 @@ impl AgentPanel {
             ),
             AgentEvent::MessageUpdate(_) => {}
             AgentEvent::MessageEnd(message) => {
-                match &message {
-                    Message::User(user) => self.transcript.push(Item::User {
-                        text: user.plain_text(),
-                        at: now_hms(),
-                    }),
+                // How long the message took, logged with it so a reopened
+                // session shows the same figures.
+                let timing = match &message {
+                    Message::User(user) => {
+                        self.transcript.push(Item::User {
+                            text: user.plain_text(),
+                            at: now_hms(),
+                        });
+                        None
+                    }
                     Message::Assistant(assistant) => {
                         if assistant.usage.total() > 0 {
                             self.context_tokens = assistant.usage.total();
@@ -1631,11 +1623,19 @@ impl AgentPanel {
                             at,
                             had_thinking,
                         );
+                        cost.map(|cost| Timing::Turn {
+                            prefill_ms: cost.prefill_ms,
+                            gen_ms: cost.gen_ms,
+                        })
                     }
-                    Message::ToolResult(_) => {}
-                }
+                    // The call's end came first and timed it.
+                    Message::ToolResult(result) => self
+                        .transcript
+                        .tool_duration(&result.tool_call_id)
+                        .map(|duration_ms| Timing::Tool { duration_ms }),
+                };
                 if let Some(session) = &mut self.session {
-                    if let Err(error) = session.append_message(&message) {
+                    if let Err(error) = session.append_timed_message(&message, timing) {
                         log::warn!("agent session write failed: {error}");
                     }
                 }
@@ -2515,12 +2515,7 @@ impl AgentPanel {
             | Item::Thinking { text, .. }
             | Item::System { text } => text.clone(),
             Item::Notice { text, .. } => text.clone(),
-            Item::RunEnd {
-                elapsed_ms,
-                at,
-                paused,
-                ..
-            } => transcript::run_end_text(*elapsed_ms, at, *paused),
+            Item::RunEnd { elapsed_ms, at, .. } => transcript::run_end_text(*elapsed_ms, at),
             Item::Tool {
                 result, live, call, ..
             } => result
@@ -4012,10 +4007,10 @@ fn spawn_runtime(
     let history = session
         .map(|s| s.context_messages_with_times(compaction_prompts))
         .unwrap_or_default();
-    for (message, ts) in &history {
-        push_history(&mut transcript, message, hms_from_millis(*ts));
+    for logged in &history {
+        push_history(&mut transcript, logged);
     }
-    let messages: Vec<Message> = history.into_iter().map(|(message, _)| message).collect();
+    let messages: Vec<Message> = history.into_iter().map(|logged| logged.message).collect();
 
     if let Some(factory) = backend {
         // The external agent gets its own prompter on a channel of its own,
@@ -4089,21 +4084,29 @@ fn spawn_runtime(
 }
 
 /// Mirror a session's message into transcript items when a session is
-/// reopened. `at` is the message's wall-clock time (`HH:MM:SS`), restored from
-/// the session log so historical blocks still show when they were written; the
-/// per-phase cost is not persisted, so restored answers get no prefill/gen
-/// indicators.
-fn push_history(transcript: &mut Transcript, message: &Message, at: String) {
-    match message {
+/// reopened. The log's timestamp restores when each block was written; its
+/// recorded timing, with the turn's own token usage, restores the `⏫`/`✍️`
+/// cost and a tool's `🕒` duration, as the live run showed them.
+fn push_history(transcript: &mut Transcript, logged: &LoggedMessage) {
+    let at = hms_from_millis(logged.timestamp);
+    match &logged.message {
         Message::User(user) => transcript.push(Item::User {
             text: user.plain_text(),
             at,
         }),
         Message::Assistant(assistant) => {
+            let cost = match logged.timing {
+                Some(Timing::Turn { prefill_ms, gen_ms }) => Some(transcript::Cost {
+                    prefill_ms,
+                    gen_ms,
+                    input: assistant.usage.input,
+                    output: assistant.usage.output,
+                }),
+                _ => None,
+            };
             // Reasoning is restored as its own block above the tools and answer.
-            // When it is present it carries the turn's meta (time), and the
-            // answer is left as plain text, matching a live turn. The prefill /
-            // generation cost is not persisted, so no `⏫`/`✍️` on resume.
+            // When it is present it carries the turn's cost, and the answer is
+            // left with its time alone, matching a live turn.
             let thinking = assistant.thinking_text();
             let has_thinking = !thinking.trim().is_empty();
             if has_thinking {
@@ -4111,7 +4114,7 @@ fn push_history(transcript: &mut Transcript, message: &Message, at: String) {
                     text: thinking,
                     streaming: false,
                     at: at.clone(),
-                    cost: None,
+                    cost,
                 });
             }
             for call in assistant.tool_calls() {
@@ -4134,21 +4137,28 @@ fn push_history(transcript: &mut Transcript, message: &Message, at: String) {
                     streaming: false,
                     error,
                     at,
-                    cost: None,
+                    cost: if has_thinking { None } else { cost },
+                    run_ms: None,
                 });
             }
         }
         Message::ToolResult(result) => {
             let id = result.tool_call_id.clone();
+            let elapsed = match logged.timing {
+                Some(Timing::Tool { duration_ms }) => Some(duration_ms),
+                _ => None,
+            };
             transcript.with_tool(&id, |item| {
                 if let Item::Tool {
                     result: slot,
                     at: tool_at,
+                    duration_ms,
                     ..
                 } = item
                 {
                     *slot = Some(result.clone());
                     *tool_at = at;
+                    *duration_ms = elapsed;
                 }
             });
         }
@@ -4384,16 +4394,8 @@ impl Panel for AgentPanel {
             // brought to a block only when the selection moves (see
             // `scroll_selected_into_view`), not on every frame. Here we only
             // note the block's flat-line range to tint.
-            if let Some(first) = self.transcript.first_line_of(self.selected) {
-                let mut last = first;
-                while self.transcript.item_at_line(last + 1) == Some(self.selected) {
-                    last += 1;
-                }
-                // The block's first line is its leading rule (or, for a user
-                // message, the gap above the plate); leave it out of the
-                // highlight so the divider is not inverted.
-                selected_range = Some((first + 1, last));
-            }
+            // The rule or gap around a block stays out of the highlight.
+            selected_range = self.transcript.content_lines_of(self.selected);
         }
         let lines = self.transcript.lines(text_width, &colors, is_light);
         // The block under the chat cursor is shown inverted (text and
@@ -4417,7 +4419,16 @@ impl Panel for AgentPanel {
                 buf.set_line(area.x, area.y + row as u16, line, text_width);
                 if selected_range.is_some_and(|(f, l)| self.top + row >= f && self.top + row <= l) {
                     for dx in 0..text_width {
-                        buf[(area.x + dx, area.y + row as u16)].set_style(selected_style);
+                        let cell = &mut buf[(area.x + dx, area.y + row as u16)];
+                        // Success and error keep their hue under the
+                        // selection, inverted like the rest: an edit's diff,
+                        // a status glyph or a failure still reads as one.
+                        let style = if cell.fg == colors.success || cell.fg == colors.error {
+                            Style::default().fg(colors.bg).bg(cell.fg)
+                        } else {
+                            selected_style
+                        };
+                        cell.set_style(style);
                     }
                 }
             }
@@ -5207,7 +5218,9 @@ mod tests {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use termide_agent_core::PermissionPrompter;
-    use termide_agent_core::{AssistantContent, AssistantMessage, Request, StopReason, Usage};
+    use termide_agent_core::{
+        AssistantContent, AssistantMessage, Request, StopReason, ToolCall, Usage,
+    };
     use termide_core::PanelConfig;
 
     /// Replays one scripted assistant message per model call and records
@@ -5554,6 +5567,59 @@ mod tests {
     }
 
     fn render_text(panel: &mut AgentPanel, width: u16, height: u16) -> Vec<String> {
+        let buf = render_buf(panel, width, height);
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_selected_diff_keeps_its_colors() {
+        let mut panel = panel(vec![]);
+        let edit = |args| ToolCall {
+            id: "e1".into(),
+            name: "edit".into(),
+            arguments: args,
+        };
+        let call = edit(serde_json::json!({ "path": "a.rs" }));
+        panel.transcript.push(Item::Tool {
+            call: call.clone(),
+            result: Some(ToolResultMessage::text(
+                &call,
+                "Edited a.rs.\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new",
+            )),
+            live: None,
+            at: "12:00:00".into(),
+            duration_ms: Some(100),
+        });
+        assert!(panel.transcript.toggle_expanded(0));
+        panel.chat_focus = true;
+        panel.selected = 0;
+        let (width, height) = (40, 16);
+        let buf = render_buf(&mut panel, width, height);
+        let colors = ThemeColors::default();
+        let row_of = |needle: &str| {
+            (0..height)
+                .find(|&y| {
+                    (0..width)
+                        .map(|x| buf[(x, y)].symbol())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no row {needle:?}"))
+        };
+        // Selected, the diff rows invert onto their own hue, the rest onto
+        // the plain selection.
+        assert_eq!(buf[(4, row_of("+new"))].bg, colors.success);
+        assert_eq!(buf[(4, row_of("-old"))].bg, colors.error);
+        assert_eq!(buf[(4, row_of("a.rs"))].bg, colors.fg);
+    }
+
+    fn render_buf(panel: &mut AgentPanel, width: u16, height: u16) -> Buffer {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         let colors = ThemeColors::default();
@@ -5574,15 +5640,7 @@ mod tests {
             border_bottom_y: None,
         };
         panel.render(area, &mut buf, &ctx);
-        (0..height)
-            .map(|y| {
-                (0..width)
-                    .map(|x| buf[(x, y)].symbol().to_string())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect()
+        buf
     }
 
     #[test]
@@ -5778,33 +5836,28 @@ mod tests {
         let mut panel = panel(vec![]);
         panel.apply(AgentEvent::AgentStart);
         panel.apply(AgentEvent::MessageStart);
-        // Prefill: no block is streaming yet, so a dividing rule sets the clock
-        // apart from whatever sits above it (a finished tool, say), and there is
-        // no generation line yet.
+        // Prefill: the run clock alone — an animated glyph and the time since
+        // the request, with no dividing rule and no generation line yet.
         let lines = text_of(&panel);
-        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
-            lines[0].contains('╌'),
-            "a divider above the standalone footer"
+            transcript::RUN_FRAMES
+                .iter()
+                .any(|f| lines[0].trim_start().starts_with(f)),
+            "{lines:?}"
         );
-        assert!(lines[1].contains("🕒"));
-        assert!(!lines[1].contains('✍'));
+        assert!(!lines[0].contains("🕒") && !lines[0].contains('╌'));
 
-        // Once tokens stream, the footer is the streaming block's own meta: no
-        // divider, the `✍️` generation line joins the clock. The `⏫` prefill
-        // line does not appear live (input tokens are only known at the end).
+        // Once tokens stream, the `✍️` generation line joins the clock. The
+        // `⏫` prefill line does not appear live (input tokens are only known
+        // at the end).
         panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
             "hello there".into(),
         )));
         let lines = text_of(&panel);
         assert_eq!(lines.len(), 2);
-        assert!(
-            lines.iter().all(|l| !l.contains('╌')),
-            "no divider while streaming"
-        );
         assert!(lines[0].contains('✍') && lines[0].contains('↓'));
-        assert!(lines[1].contains("🕒"));
-        assert!(lines.iter().all(|l| !l.contains('⏫')));
+        assert!(lines.iter().all(|l| !l.contains('⏫') && !l.contains('╌')));
     }
 
     #[test]
@@ -6114,14 +6167,59 @@ mod tests {
         // Reopen: the restored blocks carry the wall-clock time from the log.
         let session = Session::open(&path).unwrap();
         let mut transcript = Transcript::default();
-        for (message, ts) in &session.context_messages_with_times(&CompactionPrompts::default()) {
-            push_history(&mut transcript, message, hms_from_millis(*ts));
+        for logged in &session.context_messages_with_times(&CompactionPrompts::default()) {
+            push_history(&mut transcript, logged);
         }
         let has_time = transcript
             .items()
             .iter()
             .any(|item| matches!(item, Item::Assistant { at, .. } if !at.is_empty()));
         assert!(has_time, "a resumed answer keeps its time");
+    }
+
+    #[test]
+    fn a_resumed_session_keeps_its_timing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), dir.path()).unwrap();
+        let tool_call = ToolCall {
+            id: "t1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({ "command": "ls" }),
+        };
+        let mut turn = reply("");
+        turn.content = vec![
+            AssistantContent::Thinking {
+                text: "let me look".into(),
+            },
+            AssistantContent::ToolCall(tool_call.clone()),
+        ];
+        session
+            .append_timed_message(
+                &Message::Assistant(turn),
+                Some(Timing::Turn {
+                    prefill_ms: 1000,
+                    gen_ms: 2000,
+                }),
+            )
+            .unwrap();
+        session
+            .append_timed_message(
+                &Message::ToolResult(ToolResultMessage::text(&tool_call, "a\nb")),
+                Some(Timing::Tool { duration_ms: 4000 }),
+            )
+            .unwrap();
+        let session = Session::open(session.path()).unwrap();
+        let mut transcript = Transcript::default();
+        for logged in &session.context_messages_with_times(&CompactionPrompts::default()) {
+            push_history(&mut transcript, logged);
+        }
+        // The turn's cost comes back from the timing and the turn's usage.
+        assert!(transcript.items().iter().any(|item| matches!(
+            item,
+            Item::Thinking { cost: Some(cost), .. }
+                if cost.prefill_ms == 1000 && cost.gen_ms == 2000 && cost.input == 100
+        )));
+        assert_eq!(transcript.tool_duration("t1"), Some(4000));
     }
 
     #[test]
@@ -7422,11 +7520,14 @@ mod tests {
         assert!(!panel.chat_focus);
 
         // Tab moves focus to the chat, on the last (answer) block, which is not
-        // foldable. Blocks are user(0), thinking(1), answer(2); the run's
-        // closing line (3) is not a block, so the cursor passes over it.
+        // foldable. Blocks are user(0), thinking(1), answer(2); the clean run
+        // closed on the answer, so its total sits there, not on a closing line.
         assert!(matches!(
-            panel.transcript().items()[3],
-            Item::RunEnd { ok: true, .. }
+            panel.transcript().items().last(),
+            Some(Item::Assistant {
+                run_ms: Some(_),
+                ..
+            })
         ));
         panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
         assert!(panel.chat_focus);

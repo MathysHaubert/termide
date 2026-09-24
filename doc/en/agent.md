@@ -106,7 +106,7 @@ you have named or sent even one message to is always kept.
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every block |
 | `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `o` opens it in its own panel |
-| Click a block | Focus the chat and select that block (the selected block is shown inverted); click it again to fold or unfold it |
+| Click a block | Focus the chat and select that block (the selected block is shown inverted, success and error colours keeping their hue); click it again to fold or unfold it |
 | `Ctrl+C` | Copy: the selected prompt text, or — with a block selected in the chat — the block's text |
 | `Ctrl+X` / `Ctrl+V` | Cut / paste the prompt selection |
 | `Ctrl+A` | Select all the prompt text |
@@ -128,36 +128,51 @@ you have named or sent even one message to is always kept.
 
 The conversation is a stack of blocks, each opened by an accent-coloured mark:
 `› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
-for a shell call, `# ` for the system prompt. The answer is shown in full;
-anything longer than five lines is folded to a preview that keeps the first
-line and the last few, with a `… N more lines` note between them — a user
-message, the system prompt and the reasoning fold this way, and a tool call the
-same, keeping its command line and the last few lines of output. A block of
-five lines or fewer has nothing worth
-hiding, so it is shown in full with no fold marker. Your
+for a shell call, `< ` for a file read, `> ` for a write, `± ` for an edit,
+`# ` for the system prompt. The answer is shown in full;
+a user message or the system prompt longer than five lines is
+folded to a preview that keeps the first line and the last few, with a
+`… N more lines` note between them. A block of five lines or fewer has nothing
+worth hiding, so it is shown in full with no fold marker; so is any finished
+block that takes a single row unfolded. A finished tool call
+folds to a single line: its headline (a shell call's first command line) with
+how long it took (`🕒`) at the right end. A single row carries no `✓`; a
+failed call shows its headline in the error colour instead, and its unfolded
+form ends with the `✗`. Durations grow from seconds to minutes, hours and
+days (`2s`, `1m13s`, `2h5m`, `3d4h`). Finished reasoning folds the same
+way, to its first line with how long the turn took (`🕒`, prefill and generation
+together) at the right end; unfolded, that splits into the `⏫`/`✍️` lines. A block still in progress — a
+streaming reasoning, a running tool call with its live output — is always shown
+unfolded and folds only once it finishes. Your
 message reads as plain text on a faint background; the reasoning, the system
 prompt and a tool's output are dim text, except an edit's diff, which is
 coloured the way the Git diff panel colours one. A shell call reads as its
-command (dim) behind the `$ ` prompt, wrapped to the width; a command longer
-than five lines folds like any other block. A file tool as a localized action and its path (`Read
-src/main.rs`), any other tool as its name and a summary. The reasoning is its own
-block above the answer, and its text wraps to the width. Every block except your
-message opens with a dim dashed rule that sets it apart from the one before. A
-folded block is marked with `▸`, an unfolded one with `▾`.
+command (dim) behind the `$ ` prompt, wrapped to the width. A file tool reads as its glyph and a
+localized action in the same accent, then its path (`< Read src/main.rs`); any
+other tool as its name and a summary. The reasoning is its own
+block above the answer, and its text wraps to the width. The system prompt and
+each annotation open with a dim dashed rule that sets them apart from the block
+before. A blank line follows your message and another precedes the answer; the
+reasoning and tool calls in between stack with no gap. A folded block is marked
+with `▸`, an unfolded one with `▾`, right after its type glyph (`@ ▸`, `$ ▸`,
+`# ▸`) or a file tool's action (`< Read ▸ src/main.rs`).
 
-When a run finishes, a closing line after its last block tells how long the
-whole run took since the request was sent and when it ended — `✻ Worked for
-3m41s · done at 21:03:41 ✓`, or `✗` when it failed or was aborted. The figures
-under each block describe that block alone; this line is the run's total.
+While a run works, a run clock sits right-aligned under its last block: an
+animated `✽` and the time since the request was sent. It has its own glyph
+rather than `🕒` because the figures under each block describe that block
+alone, while this one is the run's total. When the run ends the clock freezes
+where it stood. A run that finishes cleanly on an answer keeps it in the
+answer's meta (`✻ 3m41s`); any other run keeps it as a closing line after its
+last block, with the time it ended and how — `✻ 3m41s · 21:03:41 ✗` for a
+failed or aborted run, `‖ 1m12s · 21:03:41` for one stopped with `/pause`.
 
 The closing line is one kind of annotation — a line that marks a moment in the
 conversation rather than holding content. The others are the panel's notices:
 `·` for information (a model switch, a finished compaction), `!` for a warning
 (a stopped goal, a busy agent), `✗` for an error outside a block (a failed
 compaction, an MCP error). An error inside a turn stays in its answer block.
-Annotations never fold, their text wraps to the width, consecutive ones share a
-single dashed rule, and the chat cursor passes over them. A run stopped with
-`/pause` closes as `‖ Worked for 1m12s · paused at 21:03:41`.
+Annotations never fold and the chat cursor passes over them. A notice's text
+wraps to the width under a dashed rule, which consecutive notices share.
 
 What holds right now rather than what happened lives in the state strip, a few
 rows between the conversation and the input that appear only when there is
@@ -172,21 +187,20 @@ session and again whenever it changes before your next message (switching agent
 or mode, for instance), so what the model was told is always in view.
 
 Your message and the agent's answer each end with a dim, right-aligned time and a
-`✓`/`✗` status (`18:34:01 ✓`); the reasoning and tool blocks carry only their
-work figures, no wall-clock. A tool call shows how long it took and its status
-(`🕒 6s ✓`). When a turn reasons, the reasoning block carries the turn's cost —
+`✓`/`✗` status (`18:34:01 ✓`), at the end of the text's last row when it fits
+there; the reasoning and tool blocks carry only their
+work figures, no wall-clock. A tool call shows how long it took (`🕒 6s`), and its
+status once unfolded. When a turn reasons, the reasoning block carries the turn's cost —
 the prefill phase (`⏫ 6s (↑42k, 7k tok/s)`) and the generation phase
 (`✍️ 12s (↓5k, 420 tok/s)`), each with its duration (whole seconds), token count
 and average speed; large counts are abbreviated (`40k`, `1.2M`). A turn with no
 reasoning shows those on the answer instead.
 While a turn is still running, the same right-aligned meta zone shows the live
 figures: a `✍️` generation line with the running duration, estimated tokens and
-speed, and below it a `🕒` clock line with the turn's total elapsed time and an
-animated spinner. The `⏫` prefill line waits for the finished block, since the
+speed, and below it the run clock. The `⏫` prefill line waits for the finished block, since the
 input token count is only known once the turn ends. Reopening a
-conversation restores each block's time and its reasoning from the log; the
-per-phase timing is not saved, so restored answers keep the time without the
-prefill/generation lines.
+conversation restores each block's time, its reasoning, the turn's
+prefill/generation lines and each tool call's duration from the log.
 
 Unfold a block to see all of it: click it, or press `Tab` to move into the
 chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on; `Ctrl+O`

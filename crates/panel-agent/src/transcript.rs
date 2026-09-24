@@ -23,8 +23,6 @@ const FOLD_HEAD_LINES: usize = 1;
 /// [`FOLD_HEAD_LINES`] they sum to [`FOLD_THRESHOLD`], so a foldable block
 /// (more than that many lines) always hides at least one.
 const FOLD_TAIL_LINES: usize = FOLD_THRESHOLD - FOLD_HEAD_LINES;
-/// Tail lines of a collapsed tool's output shown under its command line.
-const TOOL_PREVIEW_LINES: usize = FOLD_THRESHOLD;
 /// Lines of a collapsed user message shown before it is cut off.
 const USER_PREVIEW_LINES: usize = FOLD_THRESHOLD;
 
@@ -38,36 +36,46 @@ fn fold_split(total: usize) -> (usize, usize) {
     (hidden, tail_start)
 }
 
-/// The body text a fold would hide for `item` (tool output, thinking, or a long
-/// user paste). The answer of an assistant turn is always shown, so it does not
-/// count here.
-fn foldable_lines(item: &Item) -> usize {
+/// Whether `item` is still being produced: reasoning that is streaming, or a
+/// tool call that has not returned. A live block always shows in full,
+/// whatever its fold flag says; the flag takes effect once it finishes.
+fn is_live(item: &Item) -> bool {
     match item {
-        Item::User { text, .. } => text.trim().lines().count(),
-        Item::System { text } => text.trim().lines().count(),
-        Item::Thinking { text, .. } => text.trim().lines().count(),
-        // The answer is always shown in full, so it never folds.
-        Item::Assistant { .. } => 0,
-        Item::Tool {
-            call, result, live, ..
-        } => {
-            let output = match (result, live) {
-                (Some(result), _) => result.plain_text().lines().count(),
-                (None, Some(live)) => live.lines().count(),
-                (None, None) => 0,
-            };
-            // A long shell command folds too, even when its output is short.
-            let command = shell_command(call).map_or(0, |c| c.lines().count());
-            output.max(command)
-        }
-        Item::Notice { .. } | Item::RunEnd { .. } => 0,
+        Item::Thinking { streaming, .. } | Item::Assistant { streaming, .. } => *streaming,
+        // A restored call that never got a result carries its time, so it is
+        // not mistaken for a running one.
+        Item::Tool { result, at, .. } => result.is_none() && at.is_empty(),
+        _ => false,
     }
 }
 
-/// Whether `item` has enough content to be worth folding. Small blocks show in
-/// full and ignore the collapse flag, so they carry no fold marker.
+/// Whether `item` has detail worth folding away. A live block never folds. A
+/// finished tool call or reasoning folds to its one-line headline, so any
+/// output, a multi-line command or any reasoning is worth hiding; other blocks
+/// fold only past
+/// [`FOLD_THRESHOLD`] lines. A block with nothing to hide shows in full and
+/// ignores the collapse flag, so it carries no fold marker.
 fn is_foldable(item: &Item) -> bool {
-    foldable_lines(item) > FOLD_THRESHOLD
+    if is_live(item) {
+        return false;
+    }
+    match item {
+        Item::User { text, .. } | Item::System { text } => {
+            text.trim().lines().count() > FOLD_THRESHOLD
+        }
+        // Finished reasoning folds to its first line, so any of it has detail
+        // worth hiding: the rest of the text and the full cost lines.
+        Item::Thinking { text, .. } => !text.trim().is_empty(),
+        Item::Tool { call, result, .. } => {
+            let output = result
+                .as_ref()
+                .is_some_and(|r| !r.plain_text().trim().is_empty());
+            let command = shell_command(call).map_or(0, |c| c.lines().count());
+            output || command > 1
+        }
+        // The answer is always shown in full, so it never folds.
+        Item::Assistant { .. } | Item::Notice { .. } | Item::RunEnd { .. } => false,
+    }
 }
 
 /// Whether `item` is an annotation — a notice or a run's closing line — rather
@@ -125,6 +133,10 @@ pub enum Item {
         at: String,
         /// The turn's prefill/generation cost, once it has finished.
         cost: Option<Cost>,
+        /// The whole run's time from the request, when this answer closed a
+        /// run that finished cleanly (`✻`); otherwise a closing annotation
+        /// carries it.
+        run_ms: Option<u32>,
     },
     Tool {
         call: ToolCall,
@@ -157,9 +169,11 @@ pub enum Item {
 struct Cached {
     width: u16,
     is_light: bool,
-    /// Whether the item followed an annotation when rendered: consecutive
-    /// annotations share one rule, so a changed neighbour re-renders it.
-    after_annotation: bool,
+    /// Whether the item followed a notice when rendered: consecutive notices
+    /// share one rule, so a changed neighbour re-renders it.
+    after_notice: bool,
+    /// Whether the item folds at this width (see [`render_item`]).
+    foldable: bool,
     lines: Vec<Line<'static>>,
 }
 
@@ -294,27 +308,8 @@ impl Transcript {
             error: None,
             at: String::new(),
             cost: None,
+            run_ms: None,
         });
-    }
-
-    /// Whether the last block is still streaming, so the live footer is that
-    /// block's own meta and should sit under it without a dividing rule. When
-    /// it is not (a finished tool, say), the footer is a fresh in-progress
-    /// section and wants a rule above it.
-    #[must_use]
-    pub fn tail_is_streaming(&self) -> bool {
-        matches!(
-            self.items.last(),
-            Some(
-                Item::Thinking {
-                    streaming: true,
-                    ..
-                } | Item::Assistant {
-                    streaming: true,
-                    ..
-                }
-            )
-        )
     }
 
     fn last_streaming(&self, is_thinking: bool) -> Option<usize> {
@@ -399,6 +394,7 @@ impl Transcript {
             error,
             at,
             cost,
+            run_ms: None,
         });
     }
 
@@ -415,10 +411,48 @@ impl Transcript {
         true
     }
 
+    /// How long the call `call_id` took, once it has finished.
+    #[must_use]
+    pub fn tool_duration(&self, call_id: &str) -> Option<u32> {
+        self.items.iter().rev().find_map(|item| match item {
+            Item::Tool {
+                call, duration_ms, ..
+            } if call.id == call_id => *duration_ms,
+            _ => None,
+        })
+    }
+
+    /// Close a run: a clean run that ended on an answer takes its total on
+    /// that answer's meta; any other (paused, failed, ended on a tool call)
+    /// gets a closing annotation that also says how it ended.
+    pub fn end_run(&mut self, elapsed_ms: u32, at: &str, ok: bool, paused: bool) {
+        if ok && !paused {
+            if let Some(index) = self.items.len().checked_sub(1) {
+                if let Item::Assistant {
+                    streaming: false,
+                    error: None,
+                    run_ms,
+                    ..
+                } = &mut self.items[index]
+                {
+                    *run_ms = Some(elapsed_ms);
+                    self.invalidate(index);
+                    return;
+                }
+            }
+        }
+        self.push(Item::RunEnd {
+            elapsed_ms,
+            at: at.to_string(),
+            ok,
+            paused,
+        });
+    }
+
     /// Flip whether item `index` shows its detail. A small block has no detail
     /// to hide, so it does not fold.
     pub fn toggle_expanded(&mut self, index: usize) -> bool {
-        if !self.items.get(index).is_some_and(is_foldable) {
+        if !self.foldable(index) {
             return false;
         }
         let Some(slot) = self.collapsed.get_mut(index) else {
@@ -448,7 +482,16 @@ impl Transcript {
         self.items
             .iter()
             .enumerate()
-            .any(|(index, item)| is_foldable(item) && !self.collapsed[index])
+            .any(|(index, _)| self.foldable(index) && !self.collapsed[index])
+    }
+
+    /// Whether item `index` folds: as last laid out, since a block whose
+    /// unfolded form is a single row at that width has nothing to fold.
+    fn foldable(&self, index: usize) -> bool {
+        match self.cache.get(index) {
+            Some(Some(cached)) => cached.foldable,
+            _ => self.items.get(index).is_some_and(is_foldable),
+        }
     }
 
     /// Whether the chat cursor can stop on item `index`. An annotation is not
@@ -476,6 +519,25 @@ impl Transcript {
         self.line_item.get(line).copied()
     }
 
+    /// The flattened lines of item `index` that hold its content, without the
+    /// rule or blank gap it opens with and the gap a user message ends with,
+    /// so a highlight covers the block and not its surroundings.
+    #[must_use]
+    pub fn content_lines_of(&self, index: usize) -> Option<(usize, usize)> {
+        let first = self.first_line_of(index)?;
+        let mut last = first;
+        while self.item_at_line(last + 1) == Some(index) {
+            last += 1;
+        }
+        let (lead, trail) = match self.items.get(index)? {
+            Item::User { .. } => (1, 1),
+            Item::System { .. } | Item::Assistant { .. } | Item::Notice { .. } => (1, 0),
+            Item::Thinking { .. } | Item::Tool { .. } | Item::RunEnd { .. } => (0, 0),
+        };
+        let (first, last) = (first + lead, last.saturating_sub(trail));
+        (first <= last).then_some((first, last))
+    }
+
     /// The first flattened line of item `index`, for scrolling it into view.
     #[must_use]
     pub fn first_line_of(&self, index: usize) -> Option<usize> {
@@ -487,34 +549,38 @@ impl Transcript {
     pub fn lines(&mut self, width: u16, colors: &ThemeColors, is_light: bool) -> &[Line<'static>] {
         let width = width.max(1);
         for index in 0..self.items.len() {
-            let after_annotation = index
+            let after_notice = index
                 .checked_sub(1)
-                .is_some_and(|prev| is_annotation(&self.items[prev]));
+                .is_some_and(|prev| matches!(self.items[prev], Item::Notice { .. }));
             let stale = match &self.cache[index] {
                 Some(cached) => {
                     cached.width != width
                         || cached.is_light != is_light
-                        || cached.after_annotation != after_annotation
+                        || cached.after_notice != after_notice
                 }
                 None => true,
             };
             if stale {
-                let mut lines = render_item(
+                let (mut lines, foldable) = render_item(
                     &self.items[index],
                     self.collapsed[index],
                     width,
                     colors,
                     is_light,
                 );
-                // A run of annotations sits under one rule: the ones after the
+                // A run of notices sits under one rule: the ones after the
                 // first drop their own.
-                if after_annotation && is_annotation(&self.items[index]) && !lines.is_empty() {
+                if after_notice
+                    && matches!(self.items[index], Item::Notice { .. })
+                    && !lines.is_empty()
+                {
                     lines.remove(0);
                 }
                 self.cache[index] = Some(Cached {
                     width,
                     is_light,
-                    after_annotation,
+                    after_notice,
+                    foldable,
                     lines,
                 });
                 self.flat_dirty = true;
@@ -602,38 +668,59 @@ fn cost_lines(width: u16, cost: &Cost, colors: &ThemeColors) -> Vec<Line<'static
     ]
 }
 
-/// The wall-clock time + status meta line, shown on the user's message and the
-/// final answer (the two `›` message blocks).
-fn time_meta(
+/// The wall-clock time + status meta, shown on the user's message and the
+/// final answer (the two `›` message blocks): at the right end of the text's
+/// last row when it fits there, else on a row of its own.
+fn push_time_meta(
+    lines: &mut Vec<Line<'static>>,
     width: u16,
     at: &str,
     ok: bool,
     color: ratatui::style::Color,
     colors: &ThemeColors,
-) -> Line<'static> {
-    right_meta(
-        width,
-        vec![
-            Span::styled(format!("{at} "), Style::default().fg(color)),
-            status_span(ok, colors),
-        ],
-    )
+) {
+    let meta = vec![
+        Span::styled(format!("{at} "), Style::default().fg(color)),
+        status_span(ok, colors),
+    ];
+    let meta_w: usize = meta.iter().map(|s| width_of(&s.content)).sum();
+    if let Some(last) = lines.last_mut() {
+        let used: usize = last.spans.iter().map(|s| width_of(&s.content)).sum();
+        // A space before the meta and the scrollbar gutter after it.
+        if used > 0 && used + 1 + meta_w < width as usize {
+            let pad = width as usize - used - meta_w - 1;
+            last.spans.push(Span::raw(" ".repeat(pad)));
+            last.spans.extend(meta);
+            return;
+        }
+    }
+    lines.push(right_meta(width, meta));
 }
 
-/// A phase duration in whole seconds with localized units: `2s` under a
-/// minute, `1m13s` above. Tenths add no useful information here.
+/// A duration in whole seconds with localized units, as its two largest
+/// parts: `2s` under a minute, `1m13s` under an hour, `2h5m` under a day,
+/// `3d4h` beyond. Tenths add no useful information here.
 pub(crate) fn fmt_dur(ms: u32) -> String {
     let t = termide_i18n::t();
-    let total = (ms as f32 / 1000.0).round() as u32;
-    if total < 60 {
-        format!("{total}{}", t.agent_unit_secs())
+    let total = (u64::from(ms) + 500) / 1000;
+    let (mins, secs) = (total / 60, total % 60);
+    let (hours, mins_left) = (mins / 60, mins % 60);
+    let (days, hours_left) = (hours / 24, hours % 24);
+    if mins == 0 {
+        format!("{secs}{}", t.agent_unit_secs())
+    } else if hours == 0 {
+        format!("{mins}{}{secs}{}", t.agent_unit_mins(), t.agent_unit_secs())
+    } else if days == 0 {
+        format!(
+            "{hours}{}{mins_left}{}",
+            t.agent_unit_hours(),
+            t.agent_unit_mins()
+        )
     } else {
         format!(
-            "{}{}{}{}",
-            total / 60,
-            t.agent_unit_mins(),
-            total % 60,
-            t.agent_unit_secs()
+            "{days}{}{hours_left}{}",
+            t.agent_unit_days(),
+            t.agent_unit_hours()
         )
     }
 }
@@ -651,7 +738,9 @@ pub(crate) fn fmt_speed(tokens: u64, ms: u32) -> String {
 }
 
 /// Wrap plain text to `width` with a single style, using the rich-text builder
-/// so long lines fold instead of being clipped at draw time.
+/// so long lines fold instead of being clipped at draw time. Each line of
+/// `text` starts a row of its own and a blank line stays blank, so the text
+/// keeps the shape it was written in rather than reflowing into one paragraph.
 fn wrap_plain(
     text: &str,
     width: u16,
@@ -661,7 +750,14 @@ fn wrap_plain(
 ) -> Vec<Line<'static>> {
     let mut builder = Builder::new(width, colors, is_light);
     builder.push_style(style);
-    builder.text(text);
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            builder.blank();
+        } else {
+            builder.text(line);
+            builder.hard_break();
+        }
+    }
     builder.pop_style();
     builder.end_paragraph();
     builder.finish().lines
@@ -705,30 +801,21 @@ fn shell_command(call: &ToolCall) -> Option<String> {
     })
 }
 
-/// The `$ <command>` headline of a shell call after `prefix` (the fold
-/// marker, if any), each command line wrapped under the `$` rather than
-/// clipped. Collapsed, a command of more than [`FOLD_THRESHOLD`] lines folds
-/// like every other block: its first line, a "… N more lines" note, the last
-/// few.
+/// The `$ <command>` headline of an unfolded shell call, the fold `marker`
+/// (if any) after the `$`, each command line wrapped under the command rather
+/// than clipped.
 fn command_lines(
     command: &str,
-    mut prefix: Vec<Span<'static>>,
-    collapsed: bool,
+    marker: Option<Span<'static>>,
     width: u16,
     colors: &ThemeColors,
 ) -> Vec<Line<'static>> {
-    let t = termide_i18n::t();
     let dim = Style::default().fg(colors.disabled);
-    prefix.push(Span::styled("$ ", Style::default().fg(colors.info)));
+    let mut prefix = vec![Span::styled("$ ", Style::default().fg(colors.info))];
+    prefix.extend(marker);
     let indent: usize = prefix.iter().map(|s| width_of(&s.content)).sum();
     let avail = (width as usize).saturating_sub(indent);
     let all: Vec<&str> = command.lines().collect();
-    let (head, hidden, tail) = if collapsed && all.len() > FOLD_THRESHOLD {
-        let (hidden, tail_start) = fold_split(all.len());
-        (&all[..FOLD_HEAD_LINES], hidden, &all[tail_start..])
-    } else {
-        (&all[..], 0, &all[..0])
-    };
     let mut prefix = Some(prefix);
     let mut lines = Vec::new();
     let mut push_rows = |line: &str, lines: &mut Vec<Line<'static>>| {
@@ -743,19 +830,91 @@ fn command_lines(
     if all.is_empty() {
         push_rows("", &mut lines);
     }
-    for line in head {
-        push_rows(line, &mut lines);
-    }
-    if hidden > 0 {
-        lines.push(Line::styled(
-            format!("{}{}", " ".repeat(indent), t.agent_more_lines(hidden)),
-            dim,
-        ));
-    }
-    for line in tail {
+    for line in &all {
         push_rows(line, &mut lines);
     }
     lines
+}
+
+/// A failed call's headline: every span but the fold marker in the error
+/// color, which stands in for the `✗` a single row does not carry.
+fn paint_failed(spans: Vec<Span<'static>>, colors: &ThemeColors) -> Vec<Span<'static>> {
+    spans
+        .into_iter()
+        .map(|span| {
+            if matches!(span.content.as_ref(), "▸ " | "▾ ") {
+                span
+            } else {
+                let style = span.style.fg(colors.error);
+                span.style(style)
+            }
+        })
+        .collect()
+}
+
+/// `spans` cut to at most `max` display columns, the last kept one ending in
+/// `…` when anything was dropped.
+fn truncate_spans(spans: Vec<Span<'static>>, max: usize) -> Vec<Span<'static>> {
+    let total: usize = spans.iter().map(|s| width_of(&s.content)).sum();
+    if total <= max {
+        return spans;
+    }
+    let mut room = max.saturating_sub(1);
+    let mut out = Vec::new();
+    for span in spans {
+        let w = width_of(&span.content);
+        if w <= room {
+            room -= w;
+            out.push(span);
+            continue;
+        }
+        let cut = termide_ui::path_utils::truncate_to_width_str(&span.content, room).to_string();
+        out.push(Span::styled(format!("{cut}…"), span.style));
+        break;
+    }
+    out
+}
+
+/// A headline row with a right-aligned `meta` at its end. When both do not fit
+/// the width, `clip` cuts the headline to make room, as a folded tool call's
+/// single line does; otherwise the meta drops to a row of its own. A row too
+/// narrow to leave a useful headline beside the meta also gives it its own.
+fn row_with_meta(
+    head: Vec<Span<'static>>,
+    meta: Vec<Span<'static>>,
+    clip: bool,
+    width: u16,
+) -> Vec<Line<'static>> {
+    /// Columns of headline worth keeping beside the meta when clipping.
+    const MIN_HEAD: usize = 12;
+    let width = width as usize;
+    let head_w: usize = head.iter().map(|s| width_of(&s.content)).sum();
+    let meta_w: usize = meta.iter().map(|s| width_of(&s.content)).sum();
+    // One space between the two and the scrollbar gutter at the edge.
+    let room = width.saturating_sub(meta_w + 2);
+    if meta.is_empty() {
+        let head = if clip {
+            truncate_spans(head, width.saturating_sub(1))
+        } else {
+            head
+        };
+        return vec![Line::from(head)];
+    }
+    if head_w <= room || (clip && room >= MIN_HEAD) {
+        let mut spans = truncate_spans(head, room);
+        let used: usize = spans.iter().map(|s| width_of(&s.content)).sum();
+        spans.push(Span::raw(
+            " ".repeat(width.saturating_sub(used + meta_w + 1)),
+        ));
+        spans.extend(meta);
+        return vec![Line::from(spans)];
+    }
+    let head = if clip {
+        truncate_spans(head, width.saturating_sub(1))
+    } else {
+        head
+    };
+    vec![Line::from(head), right_meta(width as u16, meta)]
 }
 
 /// Split `line` into rows no wider than `width` columns, breaking after the
@@ -864,9 +1023,15 @@ fn output_line(
 }
 
 /// The first line of a non-shell tool call (a shell's is [`command_lines`]):
-/// a localized action plus its path for read/write/edit, else the tool name
-/// and a summary.
-fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<'static>> {
+/// a type glyph, a localized action and its path for read/write/edit, else the
+/// tool name and a summary. The fold `marker`, if any, follows the action or
+/// the name.
+fn tool_headline(
+    call: &ToolCall,
+    marker: Option<Span<'static>>,
+    width: u16,
+    colors: &ThemeColors,
+) -> Vec<Span<'static>> {
     let t = termide_i18n::t();
     let fg = Style::default().fg(colors.fg);
     let arg = |key: &str| {
@@ -876,35 +1041,81 @@ fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<
             .unwrap_or("")
             .to_string()
     };
+    // A file tool opens with its type glyph like every block — `<` read and
+    // `>` write, as a shell redirects, `±` for an edit's diff — then its
+    // localized action in the same accent.
+    let accent = Style::default().fg(colors.info);
+    let action = |glyph: &str, verb: &str| {
+        let mut spans = vec![
+            Span::styled(format!("{glyph} "), accent),
+            Span::styled(format!("{verb} "), accent),
+        ];
+        spans.extend(marker.clone());
+        spans.push(Span::styled(arg("path"), fg));
+        spans
+    };
     match call.name.as_str() {
-        "read" => vec![
-            Span::styled(format!("{} ", t.agent_tool_read()), fg),
-            Span::styled(arg("path"), fg),
-        ],
-        "write" => vec![
-            Span::styled(format!("{} ", t.agent_tool_write()), fg),
-            Span::styled(arg("path"), fg),
-        ],
-        "edit" => vec![
-            Span::styled(format!("{} ", t.agent_tool_edit()), fg),
-            Span::styled(arg("path"), fg),
-        ],
-        _ => vec![
-            Span::styled(
-                call.name.clone(),
-                Style::default()
-                    .fg(colors.info)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(summarize_call(call, width.saturating_sub(4) as usize), fg),
-        ],
+        "read" => action("<", t.agent_tool_read()),
+        "write" => action(">", t.agent_tool_write()),
+        "edit" => action("±", t.agent_tool_edit()),
+        _ => {
+            let mut spans = vec![
+                Span::styled(
+                    call.name.clone(),
+                    Style::default()
+                        .fg(colors.info)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ];
+            spans.extend(marker.clone());
+            spans.push(Span::styled(
+                summarize_call(call, width.saturating_sub(4) as usize),
+                fg,
+            ));
+            spans
+        }
     }
 }
 
+/// The lines of `item` at `width`, folded when `collapsed` and the item folds,
+/// and whether it does. A block whose unfolded form is a single row has
+/// nothing to fold, so it shows that row with no fold marker.
 fn render_item(
     item: &Item,
     collapsed: bool,
+    width: u16,
+    colors: &ThemeColors,
+    is_light: bool,
+) -> (Vec<Line<'static>>, bool) {
+    let mut foldable = is_foldable(item);
+    // Only reasoning can be foldable yet fit one row unfolded: a foldable tool
+    // call has output or a second command line below its headline.
+    if foldable && matches!(item, Item::Thinking { .. }) {
+        foldable = render_body(item, false, false, width, colors, is_light).len() > 1;
+    }
+    let mut lines = render_body(
+        item,
+        collapsed && foldable,
+        foldable,
+        width,
+        colors,
+        is_light,
+    );
+    // The answer draws no dividing rule; a blank line above sets it apart
+    // from the steps before it. Reasoning and tool calls stack with no gap.
+    if matches!(item, Item::Assistant { .. }) && !lines.is_empty() {
+        lines.insert(0, Line::default());
+    }
+    (lines, foldable)
+}
+
+/// The lines of `item` itself, without the gap [`render_item`] puts above it;
+/// `foldable` decides whether it carries a fold marker.
+fn render_body(
+    item: &Item,
+    collapsed: bool,
+    foldable: bool,
     width: u16,
     colors: &ThemeColors,
     is_light: bool,
@@ -956,14 +1167,16 @@ fn render_item(
                 plate.extend(builder.finish().lines);
             }
             if !at.is_empty() {
-                plate.push(time_meta(width, at, true, colors.fg, colors));
+                push_time_meta(&mut plate, width, at, true, colors.fg, colors);
             }
             plate.push(Line::default());
             fill_bg(&mut plate, width, colors.disabled);
             // A plain gap above the plate keeps it off the block before it (the
             // last answer's time), since the user block has no leading rule.
+            // A plain gap below it sets the steps that follow apart too.
             let mut content = vec![Line::default()];
             content.append(&mut plate);
+            content.push(Line::default());
             content
         }
         Item::System { text } => {
@@ -973,18 +1186,16 @@ fn render_item(
             let accent = Style::default().fg(colors.info);
             let prompt = text.trim();
             let all: Vec<&str> = prompt.lines().collect();
-            let foldable = all.len() > FOLD_THRESHOLD;
-            // The first line carries the fold marker (when foldable) and the `#`;
+            // The first line carries the `#` and the fold marker (when foldable);
             // continuation lines indent to match.
             let head = |first: bool| -> Vec<Span<'static>> {
                 if !first {
                     return vec![Span::raw("  ")];
                 }
-                let mut spans = Vec::new();
+                let mut spans = vec![Span::styled("# ", accent)];
                 if foldable {
                     spans.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
                 }
-                spans.push(Span::styled("# ", accent));
                 spans
             };
             let mut lines: Vec<Line<'static>> = Vec::new();
@@ -1018,74 +1229,60 @@ fn render_item(
             framed
         }
         Item::Thinking { text, cost, .. } => {
-            // Reasoning is its own dim block, marked with an accent `@`. It folds
-            // like the system block: the fold marker sits before the `@`, a
-            // collapsed block shows its first lines and a skipped-line note, an
-            // expanded one wraps the whole thing.
+            // Reasoning is its own dim block, marked with an accent `@`. Folded, a finished block is its
+            // first line alone with the turn's cost at the row's end; unfolded
+            // (and always while it streams) the whole text wraps under the
+            // marker.
             let accent = Style::default().fg(colors.info);
             let reasoning = text.trim();
             if reasoning.is_empty() {
                 return Vec::new();
             }
-            let all: Vec<&str> = reasoning.lines().collect();
-            let foldable = all.len() > FOLD_THRESHOLD;
-            // The first line carries the fold marker (when foldable) and the `@`;
-            // continuation lines indent to match.
-            let head = |first: bool| -> Vec<Span<'static>> {
-                if !first {
-                    return vec![Span::raw("  ")];
+            let mut head = vec![Span::styled("@ ", accent)];
+            if foldable {
+                head.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
+            }
+            if collapsed {
+                let first = reasoning.lines().next().unwrap_or("").to_string();
+                head.push(Span::styled(first, dim));
+                // One `🕒` total, as a tool call shows; unfolded, it splits
+                // into the prefill and generation lines.
+                let meta = cost.as_ref().map_or_else(Vec::new, |cost| {
+                    let total = cost.prefill_ms.saturating_add(cost.gen_ms);
+                    vec![Span::styled(format!("🕒 {}", fmt_dur(total)), dim)]
+                });
+                return row_with_meta(head, meta, true, width);
+            }
+            let indent: usize = head.iter().map(|s| width_of(&s.content)).sum();
+            let mut lines = wrap_plain(
+                reasoning,
+                width.saturating_sub(indent as u16),
+                dim,
+                colors,
+                is_light,
+            );
+            let mut head = Some(head);
+            for line in &mut lines {
+                let prefix = head
+                    .take()
+                    .unwrap_or_else(|| vec![Span::raw(" ".repeat(indent))]);
+                for span in prefix.into_iter().rev() {
+                    line.spans.insert(0, span);
                 }
-                let mut spans = Vec::new();
-                if foldable {
-                    spans.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
-                }
-                spans.push(Span::styled("@ ", accent));
-                spans
-            };
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            if foldable && collapsed {
-                let (hidden, tail_start) = fold_split(all.len());
-                for (i, line) in all[..FOLD_HEAD_LINES].iter().enumerate() {
-                    let mut spans = head(i == 0);
-                    spans.push(Span::styled((*line).to_string(), dim));
-                    lines.push(Line::from(spans));
-                }
-                lines.push(Line::styled(
-                    format!("  {}", t.agent_more_lines(hidden)),
-                    dim,
-                ));
-                for line in &all[tail_start..] {
-                    let mut spans = head(false);
-                    spans.push(Span::styled((*line).to_string(), dim));
-                    lines.push(Line::from(spans));
-                }
-            } else {
-                // Expanded, or short enough to never fold: the reasoning wraps
-                // under the marker rather than being clipped.
-                let mut body =
-                    wrap_plain(reasoning, width.saturating_sub(2), dim, colors, is_light);
-                for (i, line) in body.iter_mut().enumerate() {
-                    for span in head(i == 0).into_iter().rev() {
-                        line.spans.insert(0, span);
-                    }
-                }
-                lines.append(&mut body);
             }
             // The reasoning block shows only the prefill/generation indicators
             // (no wall-clock time — that belongs to the answer).
             if let Some(cost) = cost {
                 lines.extend(cost_lines(width, cost, colors));
             }
-            // A dashed rule sets the block apart from the one before.
-            let mut framed = vec![separator(width, colors)];
-            framed.append(&mut lines);
-            framed
+            lines
         }
         Item::Assistant {
             text,
             error,
             at,
             cost,
+            run_ms,
             ..
         } => {
             // The answer, marked like the user's message with an accent `›`,
@@ -1139,21 +1336,35 @@ fn render_item(
             // message; the prefill/generation indicators appear here only when a
             // turn does not reason (otherwise the reasoning block holds them).
             if !at.is_empty() {
-                lines.push(time_meta(
+                push_time_meta(
+                    &mut lines,
                     width,
                     at,
                     error.is_none(),
                     colors.disabled,
                     colors,
-                ));
+                );
                 if let Some(cost) = cost {
                     lines.extend(cost_lines(width, cost, colors));
                 }
             }
-            // A dashed rule sets the block apart from the one before.
-            let mut framed = vec![separator(width, colors)];
-            framed.append(&mut lines);
-            framed
+            // The run's total from the request, marked `✻` so it does not read
+            // as one more block's own `🕒`.
+            if let Some(ms) = run_ms {
+                lines.push(right_meta(
+                    width,
+                    vec![
+                        Span::styled(
+                            format!("{RUN_GLYPH} "),
+                            Style::default()
+                                .fg(colors.info)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(fmt_dur(*ms), dim),
+                    ],
+                ));
+            }
+            lines
         }
         Item::Tool {
             call,
@@ -1162,8 +1373,7 @@ fn render_item(
             at,
             duration_ms,
         } => {
-            // A dashed rule sets the block apart from the one before.
-            let mut lines = vec![separator(width, colors)];
+            let running = is_live(item);
             let body = match (result, live) {
                 (Some(result), _) => result.plain_text(),
                 (None, Some(live)) => live.clone(),
@@ -1172,60 +1382,79 @@ fn render_item(
             // Trim the stray blank lines a command's output ends with, so the
             // padding stays even.
             let all: Vec<&str> = body.trim().lines().collect();
-            // Only a long output or command is worth folding; a short one
-            // shows in full with no marker.
-            let foldable = is_foldable(item);
-            let output_folds = all.len() > FOLD_THRESHOLD;
-            let mut head = Vec::new();
-            if foldable {
-                head.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
+            let marker = foldable.then(|| Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
+            // The meta of a finished call is how long it took (`🕒`, when
+            // known), never a wall-clock time. A single-row block carries the `🕒` alone and shows a failure by
+            // painting its headline; a taller one ends with a meta row that
+            // adds the status glyph.
+            let finished = !at.is_empty();
+            let ok = result.as_ref().is_none_or(|r| !r.is_error);
+            let clock: Vec<Span<'static>> = duration_ms
+                .iter()
+                .map(|ms| Span::styled(format!("🕒 {}", fmt_dur(*ms)), dim))
+                .collect();
+            let one_row = |head: Vec<Span<'static>>, clip: bool| {
+                let head = if ok { head } else { paint_failed(head, colors) };
+                row_with_meta(head, clock.clone(), clip, width)
+            };
+            if collapsed {
+                // Folded, a finished call is its headline alone — a shell
+                // call's first command line — with the meta at the row's end.
+                let head = match shell_command(call) {
+                    Some(command) => {
+                        let mut head = vec![Span::styled("$ ", Style::default().fg(colors.info))];
+                        head.extend(marker);
+                        let first = command.lines().next().unwrap_or("").to_string();
+                        head.push(Span::styled(first, dim));
+                        head
+                    }
+                    None => tool_headline(call, marker, width, colors),
+                };
+                return one_row(head, true);
             }
-            if let Some(command) = shell_command(call) {
-                lines.extend(command_lines(&command, head, collapsed, width, colors));
-            } else {
-                head.extend(tool_headline(call, width, colors));
-                lines.push(Line::from(head));
-            }
+            let mut lines = match shell_command(call) {
+                Some(command) => command_lines(&command, marker, width, colors),
+                None => vec![Line::from(tool_headline(call, marker, width, colors))],
+            };
             // An edit's result is a unified diff, painted like the git diff
             // panel paints one.
             let kinds = (call.name == "edit").then(|| diff_kinds(&all));
             let kind = |i: usize| kinds.as_ref().map(|k| k[i]);
-            if output_folds && collapsed {
-                let start = all.len().saturating_sub(TOOL_PREVIEW_LINES);
-                if start > 0 {
-                    lines.push(Line::styled(
-                        format!("  {}", t.agent_more_lines_above(start)),
-                        dim,
-                    ));
-                }
-                for (i, line) in all.iter().enumerate().skip(start) {
-                    lines.push(output_line(line, kind(i), width, colors));
-                }
+            // A running call shows the newest output, where progress is; a
+            // finished one shows its output from the top.
+            let (start, end) = if running {
+                (all.len().saturating_sub(EXPANDED_OUTPUT_LINES), all.len())
             } else {
-                for (i, line) in all.iter().enumerate().take(EXPANDED_OUTPUT_LINES) {
-                    lines.push(output_line(line, kind(i), width, colors));
-                }
-                if all.len() > EXPANDED_OUTPUT_LINES {
-                    lines.push(Line::styled(
-                        format!(
-                            "  {}",
-                            t.agent_more_lines(all.len() - EXPANDED_OUTPUT_LINES)
-                        ),
-                        dim,
-                    ));
-                }
+                (0, all.len().min(EXPANDED_OUTPUT_LINES))
+            };
+            if start > 0 {
+                lines.push(Line::styled(
+                    format!("  {}", t.agent_more_lines_above(start)),
+                    dim,
+                ));
             }
-            // Right-aligned meta once the call has finished: how long it took
-            // (`🕒`, when known) and the status — no wall-clock time, which
-            // belongs to the message blocks.
-            if !at.is_empty() {
-                let ok = result.as_ref().is_none_or(|r| !r.is_error);
-                let mut spans = Vec::new();
-                if let Some(ms) = duration_ms {
-                    spans.push(Span::styled(format!("🕒 {} ", fmt_dur(*ms)), dim));
+            for (i, line) in all.iter().enumerate().take(end).skip(start) {
+                lines.push(output_line(line, kind(i), width, colors));
+            }
+            if end < all.len() {
+                lines.push(Line::styled(
+                    format!("  {}", t.agent_more_lines(all.len() - end)),
+                    dim,
+                ));
+            }
+            if finished {
+                // A lone headline row takes the clock at its end, as when folded.
+                if lines.len() == 1 {
+                    let row = lines.pop().unwrap_or_default();
+                    lines = one_row(row.spans, false);
+                } else {
+                    let mut meta = clock.clone();
+                    if !meta.is_empty() {
+                        meta.push(Span::raw(" "));
+                    }
+                    meta.push(status_span(ok, colors));
+                    lines.push(right_meta(width, meta));
                 }
-                spans.push(status_span(ok, colors));
-                lines.push(right_meta(width, spans));
             }
             lines
         }
@@ -1258,28 +1487,26 @@ fn render_item(
             ok,
             paused,
         } => {
-            // Left-aligned like every annotation, so it reads as the run's
-            // total rather than one more right-aligned block figure.
-            let mut lines = vec![separator(width, colors)];
-            lines.extend(annotation(
+            // The live run clock, frozen where it stood: right-aligned under
+            // the last block, with no rule, and the time the run ended. A pause
+            // shows as `‖` in place of the resting `✻` and needs no status.
+            let (glyph, color) = if *paused {
+                (PAUSED_GLYPH, colors.warning)
+            } else {
+                (RUN_GLYPH, colors.info)
+            };
+            let mut spans = vec![
                 Span::styled(
-                    "✻ ",
-                    Style::default()
-                        .fg(colors.info)
-                        .add_modifier(Modifier::BOLD),
+                    format!("{glyph} "),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
-                &run_end_text(*elapsed_ms, at, *paused),
-                dim,
-                Some(if *paused && *ok {
-                    Span::styled(PAUSED_GLYPH, Style::default().fg(colors.warning))
-                } else {
-                    status_span(*ok, colors)
-                }),
-                width,
-                colors,
-                is_light,
-            ));
-            lines
+                Span::styled(run_end_text(*elapsed_ms, at), dim),
+            ];
+            if !*paused || !*ok {
+                spans.push(Span::raw(" "));
+                spans.push(status_span(*ok, colors));
+            }
+            vec![right_meta(width, spans)]
         }
     }
 }
@@ -1318,15 +1545,17 @@ fn annotation(
 /// The mark of a paused run, on its closing line and in the state strip.
 pub(crate) const PAUSED_GLYPH: &str = "‖";
 
-/// The text of a run's closing line, e.g. `Worked for 3m41s · done at 21:03:16`.
-pub(crate) fn run_end_text(elapsed_ms: u32, at: &str, paused: bool) -> String {
-    let t = termide_i18n::t();
-    let duration = fmt_dur(elapsed_ms);
-    if paused {
-        t.agent_run_paused(&duration, at)
-    } else {
-        t.agent_run_done(&duration, at)
-    }
+/// The frames of the live run clock, swelling and shrinking back; it comes to
+/// rest on [`RUN_GLYPH`] when the run ends.
+pub(crate) const RUN_FRAMES: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+
+/// The glyph of a run's total time: the live clock at rest, on the answer that
+/// closed the run or on its closing line.
+pub(crate) const RUN_GLYPH: &str = "✻";
+
+/// The text of a run's closing line after its glyph: `3m41s · 21:03:41`.
+pub(crate) fn run_end_text(elapsed_ms: u32, at: &str) -> String {
+    format!("{} · {at}", fmt_dur(elapsed_ms))
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
@@ -1413,6 +1642,7 @@ mod tests {
                 input: 512,
                 output: 40000,
             }),
+            run_ms: None,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         // The answer (no reasoning here) carries the wall-clock time + status,
@@ -1443,12 +1673,14 @@ mod tests {
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(
-            lines.iter().any(|l| l.contains("🕒") && l.contains('✓')),
+            lines
+                .iter()
+                .any(|l| l.contains("🕒 1s") && !l.contains('✓')),
             "tool meta: {lines:?}"
         );
         // The shell headline uses the `$` prefix and the command.
         assert!(
-            lines.iter().any(|l| l.contains("$ cargo test")),
+            lines.iter().any(|l| l.starts_with("$ ▸ cargo test")),
             "shell headline: {lines:?}"
         );
     }
@@ -1462,7 +1694,8 @@ mod tests {
             at: String::new(),
         });
         // Reasoning and the answer stream into their own blocks.
-        transcript.stream_thinking("mulling this\nl2\nl3\nl4\nl5\nl6");
+        transcript
+            .stream_thinking("mulling this over\nsecond line of it\nthird line of it\nl4\nl5\nl6");
         transcript.stream_answer("Looking at `main.rs` now.");
         transcript.push(Item::Tool {
             call: call("read", json!({ "path": "main.rs" })),
@@ -1480,23 +1713,27 @@ mod tests {
         assert_eq!(lines[0].trim_end(), "");
         assert_eq!(lines[1].trim_end(), "");
         assert_eq!(lines[2].trim_end(), "› Fix the bug");
-        // Long thinking folds like the system block: the first lines behind the
-        // `▸ @` marker and a skipped-line note; the answer shows behind its own
-        // accent mark.
-        assert!(lines
-            .iter()
-            .any(|l| l.contains("@ ") && l.contains("mulling this")));
-        assert!(lines.iter().any(|l| l.contains('▸')));
-        assert!(lines.iter().any(|l| l.contains("more lines")));
+        // Streaming, the long reasoning and the running tool show in full
+        // with no fold marker.
+        assert!(lines.iter().all(|l| !l.contains('▸') && !l.contains('▾')));
+        assert!(lines.iter().any(|l| l.contains("l6")));
+        assert!(!lines.iter().any(|l| l.contains("more lines")));
+        assert!(!transcript.toggle_expanded(1));
+        // Once it finishes, the thinking folds to its first line behind the
+        // `▸ @` marker; the answer shows behind its own accent mark.
+        assert!(transcript.finish_thinking("12:00:00", None));
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(lines.iter().any(|l| l.starts_with("@ ▸ mulling this")));
+        assert!(!lines.iter().any(|l| l.contains("second line")));
         assert!(lines.iter().all(|l| !l.contains("thought for")));
         assert!(lines.iter().any(|l| l.contains("› Looking at")));
-        assert!(lines.iter().any(|l| l.contains("Read main.rs")));
+        assert!(lines.iter().any(|l| l.contains("< Read main.rs")));
         assert_eq!(transcript.line_count(), lines.len());
         assert_eq!(transcript.item_at_line(0), Some(0));
         assert_eq!(transcript.item_at_line(lines.len() - 1), Some(3));
 
-        // A multi-line result: collapsed shows the command line plus the tail,
-        // expanded shows all of it.
+        // A multi-line result: collapsed shows the headline alone, expanded
+        // shows all of it.
         let body = (1..=8)
             .map(|n| format!("line {n}"))
             .collect::<Vec<_>>()
@@ -1507,12 +1744,8 @@ mod tests {
             }
         }));
         let lines = text_of(transcript.lines(40, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("Read main.rs")));
-        assert!(lines.iter().any(|l| l.contains("… 3 more lines above")));
-        assert!(lines.iter().any(|l| l.contains("line 8")));
-        assert!(!lines
-            .iter()
-            .any(|l| l.contains("line 1") && !l.contains("line 1 ")));
+        assert!(lines.iter().any(|l| l.starts_with("< Read ▸ main.rs")));
+        assert!(!lines.iter().any(|l| l.contains("line ")));
         assert!(transcript.toggle_expanded(3));
         let lines = text_of(transcript.lines(40, &colors, false));
         assert!(lines.iter().any(|l| l.contains("line 1")));
@@ -1562,20 +1795,13 @@ mod tests {
     fn short_blocks_are_not_foldable() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
-        // A short tool output shows in full with no fold marker.
+        // A call with no output and a one-line command has nothing to hide.
         transcript.push(Item::Tool {
             call: call("bash", json!({ "command": "echo hi" })),
-            result: Some(ToolResultMessage::text(&call("bash", json!({})), "a\nb\nc")),
+            result: Some(ToolResultMessage::text(&call("bash", json!({})), "")),
             live: None,
             at: "12:00:00".into(),
             duration_ms: Some(300),
-        });
-        // A short reasoning shows in full behind `@`, no summary line.
-        transcript.push(Item::Thinking {
-            text: "a quick thought".into(),
-            streaming: false,
-            at: "12:00:01".into(),
-            cost: None,
         });
         transcript.push(Item::Assistant {
             text: "the answer".into(),
@@ -1583,18 +1809,18 @@ mod tests {
             error: None,
             at: "12:00:01".into(),
             cost: None,
+            run_ms: None,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().all(|l| !l.contains('▸') && !l.contains('▾')));
-        assert!(lines.iter().any(|l| l.contains("$ echo hi")));
-        assert!(lines.iter().any(|l| l.contains('c')));
-        assert!(lines.iter().any(|l| l.contains("@ a quick thought")));
+        // Its meta shares the headline row.
+        assert!(lines
+            .iter()
+            .any(|l| l.starts_with("$ echo hi") && l.contains("🕒") && !l.contains('✓')));
         assert!(lines.iter().any(|l| l.contains("› the answer")));
-        assert!(lines.iter().all(|l| !l.contains("thought for")));
-        // No small block folds on request (tool 0, thinking 1, answer 2).
+        // No small block folds on request (tool 0, answer 1).
         assert!(!transcript.toggle_expanded(0));
         assert!(!transcript.toggle_expanded(1));
-        assert!(!transcript.toggle_expanded(2));
         assert!(!transcript.any_expanded());
     }
 
@@ -1614,9 +1840,10 @@ mod tests {
         // No row is clipped: every one fits, continuation rows indent under
         // the `$`, and the rows read back as the command.
         assert!(lines.iter().all(|l| width_of(l) <= 20), "{lines:?}");
-        assert!(lines[1].starts_with("$ cargo test"));
-        assert!(lines[2].starts_with("  "));
-        let joined: String = lines[1..]
+        // A tool call has no dividing rule above it.
+        assert!(lines[0].starts_with("$ cargo test"));
+        assert!(lines[1].starts_with("  "));
+        let joined: String = lines
             .iter()
             .map(|l| l.strip_prefix("$ ").or(l.strip_prefix("  ")).unwrap())
             .collect();
@@ -1624,7 +1851,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_command_folds_like_other_blocks() {
+    fn a_long_command_folds_to_its_first_line() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
         let script = (1..=9)
@@ -1638,19 +1865,256 @@ mod tests {
             at: String::new(),
             duration_ms: None,
         });
-        // Collapsed: the first line behind the marker, the hidden count, then
-        // the last few — even though the output itself is short.
+        // Collapsed: the first command line behind the marker, nothing else.
         let lines = text_of(transcript.lines(40, &colors, false));
-        assert!(lines[1].starts_with("▸ $ echo 1"), "{lines:?}");
-        assert!(lines[2].contains("4 more lines"), "{lines:?}");
-        assert!(lines.iter().any(|l| l.trim() == "echo 9"));
-        assert!(!lines.iter().any(|l| l.trim() == "echo 3"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("$ ▸ echo 1"), "{lines:?}");
         assert!(transcript.toggle_expanded(0));
         let lines = text_of(transcript.lines(40, &colors, false));
-        assert!(lines.iter().any(|l| l.trim() == "echo 3"));
-        assert!(lines[1].starts_with("▾ $ echo 1"));
+        assert!(lines.iter().any(|l| l.trim() == "echo 9"));
+        assert!(lines[0].starts_with("$ ▾ echo 1"));
         // Continuation lines align under the command, past the marker and `$`.
-        assert!(lines[2].starts_with("    echo 2"), "{lines:?}");
+        assert!(lines[1].starts_with("    echo 2"), "{lines:?}");
+    }
+
+    #[test]
+    fn finished_reasoning_folds_to_one_line_without_a_rule() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.stream_thinking("a quick thought\nand a second one");
+        let lines = text_of(transcript.lines(60, &colors, false));
+        // Streaming: all of it, no marker, no dividing rule.
+        assert!(lines[0].starts_with("@ a quick thought"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("second one")));
+        assert!(lines.iter().all(|l| !l.starts_with('╌')));
+        let cost = Cost {
+            prefill_ms: 1000,
+            gen_ms: 4000,
+            input: 512,
+            output: 300,
+        };
+        assert!(transcript.finish_thinking("12:00:00", Some(cost)));
+        // Finished: the first line with the turn's total time at the row's end.
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("@ ▸ a quick thought"), "{lines:?}");
+        assert!(lines[0].contains("🕒 5"), "{lines:?}");
+        assert!(!lines[0].contains("⏫") && !lines[0].contains("✍"));
+        // Unfolded: the whole text and the full cost lines.
+        assert!(transcript.toggle_expanded(0));
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(lines[0].starts_with("@ ▾ a quick thought"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("second one")));
+        assert!(lines.iter().any(|l| l.contains("↑512")));
+    }
+
+    #[test]
+    fn unfolded_reasoning_keeps_its_line_breaks() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.stream_thinking("first step\nsecond step\n\nafter a gap");
+        let lines = text_of(transcript.lines(60, &colors, false));
+        let lines: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
+        assert_eq!(
+            lines,
+            vec!["@ first step", "  second step", "", "  after a gap"]
+        );
+    }
+
+    #[test]
+    fn a_highlight_covers_the_content_rows_of_a_block() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User {
+            text: "go".into(),
+            at: String::new(),
+        });
+        transcript.stream_thinking("a thought\nand more");
+        transcript.finish_thinking("12:00:00", None);
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "ls" })),
+            result: Some(ToolResultMessage::text(&call("bash", json!({})), "a\nb")),
+            live: None,
+            at: "12:00:01".into(),
+            duration_ms: Some(100),
+        });
+        transcript.stream_answer("done");
+        transcript.finish_assistant("done".into(), None, None, "12:00:02".into(), false);
+        let lines = text_of(transcript.lines(40, &colors, false));
+        let rows = |index: usize| {
+            let (first, last) = transcript.content_lines_of(index).unwrap();
+            lines[first..=last].to_vec()
+        };
+        // The user plate without the plain gaps around it.
+        let user = rows(0);
+        assert!(user.iter().any(|l| l.starts_with("› go")), "{user:?}");
+        assert!(user
+            .first()
+            .is_some_and(|l| l.trim().is_empty() && !l.is_empty()));
+        // A folded step is its single row, the first row included.
+        assert_eq!(rows(1).len(), 1);
+        assert!(rows(1)[0].starts_with("@ ▸ a thought"));
+        assert_eq!(rows(2).len(), 1);
+        assert!(rows(2)[0].starts_with("$ ▸ ls"));
+        // Unfolded, the headline row is part of it too.
+        assert!(transcript.toggle_expanded(2));
+        let lines = text_of(transcript.lines(40, &colors, false));
+        let (first, _) = transcript.content_lines_of(2).unwrap();
+        assert!(lines[first].starts_with("$ ▾ ls"), "{lines:?}");
+        // The answer without the blank line above it.
+        let (first, _) = transcript.content_lines_of(3).unwrap();
+        assert!(lines[first].starts_with("› done"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_clean_run_puts_its_total_on_the_answer() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User {
+            text: "go".into(),
+            at: "21:00:00".into(),
+        });
+        transcript.stream_answer("done");
+        transcript.finish_assistant("done".into(), None, None, "21:03:41".into(), false);
+        transcript.end_run(221_000, "21:03:41", true, false);
+        assert_eq!(transcript.items().len(), 2, "no closing line");
+        let lines = text_of(transcript.lines(40, &colors, false));
+        // The times share their text's row when it fits; the total is `✻`.
+        assert!(lines
+            .iter()
+            .any(|l| l.starts_with("› go") && l.contains("21:00:00 ✓")));
+        assert!(lines
+            .iter()
+            .any(|l| l.starts_with("› done") && l.contains("21:03:41 ✓")));
+        assert!(lines.iter().any(|l| l.trim() == "✻ 3m41s"), "{lines:?}");
+        // Too narrow to share, the time takes its own row.
+        let lines = text_of(transcript.lines(14, &colors, false));
+        assert!(lines.iter().any(|l| l.trim() == "21:03:41 ✓"), "{lines:?}");
+        // A paused or failed run, or one ending on a tool call, still closes
+        // with a line that says how it ended.
+        transcript.end_run(5_000, "21:04:00", false, false);
+        assert!(matches!(
+            transcript.items().last(),
+            Some(Item::RunEnd { ok: false, .. })
+        ));
+    }
+
+    #[test]
+    fn a_failed_one_row_call_is_painted_instead_of_marked() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "exit 1" })),
+            result: Some(ToolResultMessage::error(
+                &call("bash", json!({})),
+                "[exit code 1]",
+            )),
+            live: None,
+            at: "12:00:00".into(),
+            duration_ms: Some(500),
+        });
+        let lines = transcript.lines(40, &colors, false).to_vec();
+        assert_eq!(lines.len(), 1);
+        let text = text_of(&lines)[0].clone();
+        assert!(
+            text.starts_with("$ ▸ exit 1") && !text.contains('✗'),
+            "{text}"
+        );
+        let command = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content == "exit 1")
+            .unwrap();
+        assert_eq!(command.style.fg, Some(colors.error));
+        // Unfolded, the output is there and the meta row keeps the `✗`.
+        assert!(transcript.toggle_expanded(0));
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(lines.iter().any(|l| l.contains("🕒") && l.contains('✗')));
+    }
+
+    #[test]
+    fn durations_grow_into_hours_and_days() {
+        assert_eq!(fmt_dur(1_400), "1s");
+        assert_eq!(fmt_dur(73_000), "1m13s");
+        assert_eq!(fmt_dur((2 * 3600 + 5 * 60 + 30) * 1000), "2h5m");
+        assert_eq!(fmt_dur((3 * 86_400 + 4 * 3600) * 1000), "3d4h");
+    }
+
+    #[test]
+    fn a_one_row_block_carries_no_fold_marker() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.stream_thinking("a quick thought");
+        assert!(transcript.finish_thinking("12:00:00", None));
+        // Unfolded it is a single row, so there is nothing to fold.
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert_eq!(lines, vec!["@ a quick thought".to_string()]);
+        assert!(!transcript.toggle_expanded(0));
+        assert!(!transcript.any_expanded());
+        // Narrow enough to wrap, the same thought folds to its first row.
+        let lines = text_of(transcript.lines(10, &colors, false));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("@ ▸ "), "{lines:?}");
+        assert!(transcript.toggle_expanded(0));
+    }
+
+    #[test]
+    fn a_running_tool_shows_in_full_then_folds_to_one_line() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "cargo build" })),
+            result: None,
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+        });
+        // While it runs, every line of the live output shows, with no fold
+        // marker, and a click does not fold it.
+        let output = (1..=8)
+            .map(|n| format!("step {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let live_output = output.clone();
+        transcript.with_tool("c1", |item| {
+            if let Item::Tool { live, .. } = item {
+                *live = Some(live_output);
+            }
+        });
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert_eq!(lines.len(), 9, "{lines:?}");
+        assert_eq!(lines[0].trim_end(), "$ cargo build");
+        assert!(lines.iter().any(|l| l.trim() == "step 1"));
+        assert!(!transcript.toggle_expanded(0));
+        // Finished, it folds to its headline with the meta at the row's end.
+        transcript.with_tool("c1", |item| {
+            if let Item::Tool {
+                result,
+                live,
+                at,
+                duration_ms,
+                ..
+            } = item
+            {
+                *result = Some(ToolResultMessage::text(&call("bash", json!({})), &output));
+                *live = None;
+                *at = "12:00:00".into();
+                *duration_ms = Some(3000);
+            }
+        });
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("$ ▸ cargo build"), "{lines:?}");
+        assert!(lines[0].contains("🕒 3s") && !lines[0].contains('✓'));
+        assert!(width_of(&lines[0]) <= 40);
+        // Too long for the row, the headline is clipped, never the meta.
+        let lines = text_of(transcript.lines(20, &colors, false));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].contains('…') && lines[0].contains("🕒"),
+            "{lines:?}"
+        );
+        assert!(width_of(&lines[0]) <= 20, "{lines:?}");
     }
 
     #[test]
@@ -1705,13 +2169,19 @@ mod tests {
             paused: false,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
+        // The frozen run clock, right-aligned with no rule above it.
         let last = lines.last().unwrap();
-        assert!(last.starts_with("✻ "), "{lines:?}");
-        assert!(
-            last.contains("3m41s") && last.contains("21:03:41"),
-            "{last}"
-        );
-        assert!(last.ends_with('✓'));
+        assert_eq!(last.trim(), "✻ 3m41s · 21:03:41 ✓", "{lines:?}");
+        assert!(lines.iter().all(|l| !l.starts_with('╌')), "{lines:?}");
+        // A paused run rests on `‖` and carries no status.
+        transcript.push(Item::RunEnd {
+            elapsed_ms: 72_000,
+            at: "21:05:00".into(),
+            ok: true,
+            paused: true,
+        });
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert_eq!(lines.last().unwrap().trim(), "‖ 1m12s · 21:05:00");
         // It is a closing line, not a block: never folded, never selected.
         assert!(!transcript.toggle_expanded(1));
         assert!(!transcript.is_selectable(1));
@@ -1719,7 +2189,7 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_annotations_share_one_rule() {
+    fn consecutive_notices_share_one_rule() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
         transcript.push(Item::Assistant {
@@ -1728,6 +2198,7 @@ mod tests {
             error: None,
             at: String::new(),
             cost: None,
+            run_ms: None,
         });
         transcript.push(Item::RunEnd {
             elapsed_ms: 5000,
@@ -1739,12 +2210,21 @@ mod tests {
             text: "goal stopped".into(),
             kind: NoticeKind::Warn,
         });
+        transcript.push(Item::Notice {
+            text: "queue cleared".into(),
+            kind: NoticeKind::Info,
+        });
         let rule = |lines: &[String]| lines.iter().filter(|l| l.starts_with('╌')).count();
         let lines = text_of(transcript.lines(40, &colors, false));
-        // One rule above the answer, one above the annotation group.
-        assert_eq!(rule(&lines), 2, "{lines:?}");
-        assert!(lines[lines.len() - 2].starts_with("✻ ") && lines[lines.len() - 2].ends_with('✗'));
-        assert_eq!(lines[lines.len() - 1], "! goal stopped");
+        // The answer opens with a blank line and the run's closing line has no
+        // rule; the two notices share one.
+        assert_eq!(lines[0], "", "{lines:?}");
+        assert_eq!(rule(&lines), 1, "{lines:?}");
+        let n = lines.len();
+        assert!(lines[n - 4].trim().starts_with("✻ ") && lines[n - 4].ends_with('✗'));
+        assert!(lines[n - 3].starts_with('╌'), "{lines:?}");
+        assert_eq!(lines[n - 2], "! goal stopped");
+        assert_eq!(lines[n - 1], "· queue cleared");
         // A block after the group opens its own rule again.
         transcript.push(Item::User {
             text: "next".into(),
@@ -1794,10 +2274,11 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("· compacted 1200 tokens")));
         // A notice is an annotation: the chat cursor passes over it.
         assert!(!transcript.is_selectable(1));
-        // Shell headline uses `$`; the failed status sits in the tool's meta
-        // beside how long it took (`🕒`).
-        assert!(lines.iter().any(|l| l.contains("$ exit 1")));
-        assert!(lines.iter().any(|l| l.contains("🕒") && l.contains('✗')));
+        // Shell headline uses `$`; folded to one row, it shows how long it
+        // took (`🕒`) and no status glyph.
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("$ ▸ exit 1") && l.contains("🕒") && !l.contains('✗')));
     }
 
     #[test]
@@ -1853,10 +2334,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         transcript.push(Item::System { text: prompt });
-        // Collapsed: a `▸` marker before the `#`, the first line, a note, then
+        // Collapsed: a `▸` marker after the `#`, the first line, a note, then
         // the last few — the ellipsis sits between the first and the last few.
         let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("▸ # rule 1")));
+        assert!(lines.iter().any(|l| l.contains("# ▸ rule 1")));
         assert!(lines.iter().any(|l| l.contains("… 3 more lines")));
         assert!(lines.iter().any(|l| l.contains("rule 5")));
         assert!(lines.iter().any(|l| l.contains("rule 8")));
@@ -1866,7 +2347,7 @@ mod tests {
         // Expanded: a `▾` marker and the whole prompt.
         assert!(transcript.toggle_expanded(0));
         let lines = text_of(transcript.lines(60, &colors, false));
-        assert!(lines.iter().any(|l| l.contains("▾ # rule 1")));
+        assert!(lines.iter().any(|l| l.contains("# ▾ rule 1")));
         assert!(lines.iter().any(|l| l.contains("rule 4")));
         assert!(lines.iter().any(|l| l.contains("rule 8")));
     }

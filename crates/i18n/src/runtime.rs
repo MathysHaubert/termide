@@ -445,6 +445,8 @@ impl Translation for RuntimeTranslation {
         agent_thinking,
         agent_unit_secs,
         agent_unit_mins,
+        agent_unit_hours,
+        agent_unit_days,
         agent_unit_tok_per_sec,
         agent_tool_read,
         agent_tool_write,
@@ -1172,14 +1174,6 @@ impl Translation for RuntimeTranslation {
 
     fn agent_more_lines(&self, count: usize) -> String {
         self.format("agent_more_lines", &[("count", &count.to_string())])
-    }
-
-    fn agent_run_done(&self, duration: &str, at: &str) -> String {
-        self.format("agent_run_done", &[("duration", duration), ("at", at)])
-    }
-
-    fn agent_run_paused(&self, duration: &str, at: &str) -> String {
-        self.format("agent_run_paused", &[("duration", duration), ("at", at)])
     }
 
     fn agent_state_queued_more(&self, count: usize) -> String {
