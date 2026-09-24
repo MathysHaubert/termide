@@ -69,8 +69,19 @@ impl App {
         if self.state.ui.ai_nested.open {
             return self.handle_ai_nested_submenu_key(key);
         }
-        let item_count = termide_ui_render::get_ai_items().len();
-        match navigate_submenu(&key, &mut self.state.ui.ai_submenu, item_count, &[]) {
+        let items = termide_ui_render::get_ai_items(super::super::agent_panel::web_browser_shown());
+        let separators: Vec<usize> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.is_separator)
+            .map(|(index, _)| index)
+            .collect();
+        match navigate_submenu(
+            &key,
+            &mut self.state.ui.ai_submenu,
+            items.len(),
+            &separators,
+        ) {
             SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute | SubmenuNavAction::Right => self.open_ai_selected_section(),
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
@@ -79,11 +90,20 @@ impl App {
         Ok(())
     }
 
-    /// Open (or toggle) the section under the cursor.
+    /// Open (or toggle) the section under the cursor, or switch the browser
+    /// window when that row is under it.
     pub(in crate::app) fn open_ai_selected_section(&mut self) {
-        let items = termide_ui_render::get_ai_items();
+        let items = termide_ui_render::get_ai_items(super::super::agent_panel::web_browser_shown());
         let sel = self.state.ui.ai_submenu.selected;
         if let Some(item) = items.get(sel) {
+            if item.is_separator {
+                return;
+            }
+            if item.key == termide_ui_render::AI_BROWSER_KEY {
+                self.state.close_menu();
+                super::super::agent_panel::toggle_web_browser();
+                return;
+            }
             let section = item.key.clone();
             if self.state.ui.ai_nested.open
                 && self.state.ui.current_ai_section.as_deref() == Some(section.as_str())

@@ -150,8 +150,9 @@ message reads as plain text on a faint background; the reasoning, the system
 prompt and a tool's output are dim text, except an edit's diff, which is
 coloured the way the Git diff panel colours one. A shell call reads as its
 command (dim) behind the `$ ` prompt, wrapped to the width. A file tool reads as its glyph and a
-localized action in the same accent, then its path (`< Read src/main.rs`); any
-other tool as its name and a summary. The reasoning is its own
+localized action in the same accent, then its path (`< Read src/main.rs`); a
+web tool likewise, with the URL or the query (`↓ Fetch https://docs.rs`,
+`? Search ratatui scrollbar`); any other tool as its name and a summary. The reasoning is its own
 block above the answer, and its text wraps to the width. The system prompt and
 each annotation open with a dim dashed rule that sets them apart from the block
 before. A blank line follows your message and another precedes the answer; the
@@ -302,7 +303,7 @@ are not covered: what `bash` changes, git or your own backups have to hold.
 
 ## Tools
 
-The agent has four built-in tools, plus those its MCP servers provide (see
+The agent has six built-in tools, plus those its MCP servers provide (see
 [MCP servers](#mcp-servers)).
 
 - **read** returns a file with line numbers, paged with an offset when a file
@@ -313,12 +314,66 @@ The agent has four built-in tools, plus those its MCP servers provide (see
 - **bash** runs a shell command in the project directory, streaming its output.
   Long output keeps its beginning and end, and the complete log is written to
   a file the agent can read.
+- **web_search** asks a search engine and returns titles, links and snippets.
+- **fetch** loads a web page and returns its text as markdown, paged like
+  `read` when it is long.
 
-Searching is done through `bash` with the tools you already have (`rg`,
-`find`), rather than through a separate search tool.
+Searching the project is done through `bash` with the tools you already have
+(`rg`, `find`), rather than through a separate search tool.
 
-A fifth tool, **skill**, appears when skills are defined; see
+A seventh tool, **skill**, appears when skills are defined; see
 [Skills](#skills).
+
+### Web
+
+`web_search` and `fetch` work through a Chrome-family browser on your machine
+(Chrome, Chromium, Edge or Brave), because search engines refuse scripted
+requests and many pages are built by JavaScript. The browser runs with a
+profile of its own in `ai/web/browser/` under the configuration directory, never
+your everyday profile, so the agent has none of your logins. It runs without a
+window, introducing itself as the same browser does with one; one browser
+serves every agent panel, and it quits after five idle minutes.
+
+When a search engine asks to confirm that a human is searching, a window with
+that page opens in front of you and the agent's tool call shows the wait:
+solve the check and the search carries on. The agent's profile remembers the
+clearance, so it is not asked for on every search, and the browser goes back
+to running without a window once it has been idle.
+
+Without such a browser, `fetch` still reads pages over plain HTTP (pages built
+by JavaScript then come back mostly empty), and `web_search` is not offered.
+
+```toml
+[ai.web]
+backend = "auto"         # auto: the browser when found, else plain HTTP; chrome; http
+engine = "duckduckgo"    # duckduckgo, bing, google, yandex, or your own
+chrome_path = ""         # the browser executable; empty looks in the usual places
+display = "headless"     # headless (no window); minimized; visible
+```
+
+`minimized` gives the browser a real window kept minimized, for an engine that
+still tells a windowless browser apart. `visible` leaves the window on screen
+to watch the agent work: every page opens in the same tab, which stays on the
+last page the agent read, so you can look at it or open the developer tools
+there. Closing that tab is fine; the next page opens in a new one. To watch
+for a while without changing the setting, use **Show browser window** in the
+**AI** menu: the browser is relaunched in a visible window at once and stays
+there, idle or not, until **Hide browser window** — for every agent panel,
+since they share one browser. The profile and its cookies carry over.
+On Linux without a display server the browser runs without a window whatever
+the setting says.
+
+Each search engine is a small file in `ai/web/engines/`: the address to send
+the query to and the CSS selectors that pick the results out of the page.
+termide ships `duckduckgo`, `bing`, `google` and `yandex` and keeps them
+current like its other shipped files. When an engine changes its page and the
+search starts returning nothing, the selectors in its file need updating; a
+file of your own with a new name adds an engine. The keys are described in
+the shipped files.
+
+Both tools ask for permission by default. "Allow always" for `fetch` allows
+the whole site (`https://docs.rs/*`), for `web_search` every query. Neither
+changes anything on your machine, so both work in plan mode.
 
 A file the agent edits while it is open in an editor is reloaded there at
 once, cursor and scroll position kept, unless that editor has unsaved changes;
@@ -435,6 +490,10 @@ together (see [The agent directory](#the-agent-directory)).
 - Each session row shows, dim on the right, when it was last worked on
   (e.g. "2h ago").
 
+Below the sections, once an agent panel has been opened, **Show browser
+window** puts the agents' web browser on screen to watch it work (see
+[Web](#web)), and **Hide browser window** takes it away again.
+
 ## The agent directory
 
 The agent's own files live in an `ai` directory that exists at three
@@ -467,10 +526,13 @@ ai/
   system/plan.md           what plan mode tells the agent, and what accepting a plan sends
   system/goal.md           how the judge decides whether a /goal is reached
   system/handoff.md        how /handoff briefs the unfinished work
+  web/engines/<name>.toml  search engines for web_search, see Web
+  web/browser/             the web tools' browser profile (config level only)
 ```
 
 The first time the panel opens, the configuration level is laid out:
-`AGENTS.md` and the `system/` files receive the shipped texts, `agents/`,
+`AGENTS.md`, the `system/` files and the search engines receive the shipped
+texts, `agents/`,
 `skills/`, `prompts/`, `commands/` and `shims/` are created empty. termide
 records what it shipped (in `.seeds.toml`) and keeps these files current on
 later starts: one you never edited is refreshed when the shipped version

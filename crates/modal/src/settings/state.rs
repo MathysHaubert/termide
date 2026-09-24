@@ -331,6 +331,12 @@ impl SettingsModal {
                 Spacer,
                 Header("Transcript"),
                 Field(7), // autofold
+                Spacer,
+                Header("Web"),
+                Field(8),  // web backend
+                Field(9),  // search engine
+                Field(10), // browser display
+                Field(11), // browser executable
             ],
             SettingsTab::Keybindings => Vec::new(),
         }
@@ -545,6 +551,7 @@ impl SettingsModal {
                 1 => self.config.ai.base_url = text.to_string(),
                 2 => self.config.ai.model = text.to_string(),
                 3 => self.config.ai.api_key_env = text.to_string(),
+                11 => self.config.ai.web.chrome_path = text.to_string(),
                 _ => {}
             },
             _ => {}

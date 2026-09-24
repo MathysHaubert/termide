@@ -26,11 +26,12 @@ pub use keybindings::{
     ViewerKeybindings,
 };
 pub use settings::is_cli_provider;
+pub use settings::{builtin_web_engines, WEB_BACKENDS, WEB_DISPLAYS};
 pub use settings::{
     AiSettings, Config, CustomLanguage, DatabaseSettings, EditorSettings, FileManagerSettings,
     GeneralSettings, GitDiffSettings, GitLogSettings, GitStatusSettings, HighlightSettings,
     IconMode, LegacyConfig, LinkOpen, LoggingSettings, LspServerSettings, LspSettings,
-    TerminalSettings, VfsSettings, ViewerSettings, DEFAULT_CONTEXT_WINDOW_FALLBACK,
+    TerminalSettings, VfsSettings, ViewerSettings, WebSettings, DEFAULT_CONTEXT_WINDOW_FALLBACK,
 };
 pub use xdg::{get_config_dir, get_data_dir};
 

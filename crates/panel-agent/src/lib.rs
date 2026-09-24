@@ -50,6 +50,11 @@ pub use transcript::{Item, NoticeKind, Transcript};
 /// inlined, so a big block does not swamp the prompt box.
 const PASTE_MAX_CHARS: usize = 2000;
 const PASTE_MAX_LINES: usize = 5;
+/// A duration in whole milliseconds, saturated to fit a `u32`.
+fn millis(duration: Duration) -> u32 {
+    duration.as_millis().min(u128::from(u32::MAX)) as u32
+}
+
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that deletes the session (behind a confirmation).
@@ -501,6 +506,15 @@ pub struct AgentPanel {
     /// A `/pause` was asked for and the run has not reached a step boundary
     /// yet; shown in the state strip.
     pause_requested: bool,
+    /// When the current pause began, while the run is paused: its closing
+    /// line ticks the pause's length until `/continue`.
+    pause_start: Option<Instant>,
+    /// A `/continue` resumed the paused run, so the next `AgentStart` keeps
+    /// the run's start and its clock goes on from the request.
+    resuming: bool,
+    /// The screen row of the state strip's pause line, a click target that
+    /// continues the run.
+    pause_row: Option<u16>,
     /// Texts of the steering messages sent while the agent works, oldest
     /// first, shown in the state strip until the agent takes them. Kept in
     /// step with the runtime's steering count (`QueueUpdate`).
@@ -673,6 +687,9 @@ impl AgentPanel {
             run_failed: false,
             run_paused: false,
             pause_requested: false,
+            pause_start: None,
+            resuming: false,
+            pause_row: None,
             queued_texts: VecDeque::new(),
             queued: (0, 0),
             context_tokens: 0,
@@ -885,6 +902,16 @@ impl AgentPanel {
     /// A click on transcript line `line`: focus the chat and select the block
     /// there; a second click on the block already selected folds/unfolds it.
     fn click_line(&mut self, line: usize) -> Vec<PanelEvent> {
+        // The live run clock pauses the run; a pause's ticking line resumes
+        // it.
+        if self.transcript.is_clock_line(line) {
+            self.request_pause();
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        if self.paused && self.pause_start.is_some() && self.transcript.is_live_pause_line(line) {
+            self.resume();
+            return vec![PanelEvent::NeedsRedraw];
+        }
         // A click on a run's closing line selects the block above it.
         let Some(index) = self
             .transcript
@@ -1034,12 +1061,7 @@ impl AgentPanel {
             }
             Some((PAUSE_COMMAND, _)) => {
                 self.clear_input();
-                if self.is_busy() {
-                    // The state strip shows the pending pause until the run
-                    // reaches a step boundary.
-                    self.runtime.pause();
-                    self.pause_requested = true;
-                } else {
+                if !self.request_pause() {
                     self.notice(
                         termide_i18n::t().agent_notice_nothing_to_pause(),
                         NoticeKind::Info,
@@ -1050,16 +1072,7 @@ impl AgentPanel {
             Some((CONTINUE_COMMAND, _)) => {
                 self.clear_input();
                 if self.paused {
-                    match self.runtime.resume() {
-                        Ok(()) => {
-                            self.busy = true;
-                            self.paused = false;
-                        }
-                        Err(error) => self.notice(
-                            termide_i18n::t().agent_notice_cannot_continue_fmt(&error.to_string()),
-                            NoticeKind::Warn,
-                        ),
-                    }
+                    self.resume();
                 } else if self.is_busy() {
                     self.notice(
                         termide_i18n::t().agent_notice_already_running(),
@@ -1425,6 +1438,43 @@ impl AgentPanel {
         }
     }
 
+    /// Ask the running agent to pause at its next step boundary. Returns
+    /// whether a run was there to pause.
+    fn request_pause(&mut self) -> bool {
+        if !self.is_busy() {
+            return false;
+        }
+        // The state strip shows the pending pause until the run reaches a
+        // step boundary.
+        self.runtime.pause();
+        self.pause_requested = true;
+        true
+    }
+
+    /// Resume the paused run. Its clock goes on from the request, and the
+    /// pause's line keeps how long the pause lasted.
+    fn resume(&mut self) {
+        match self.runtime.resume() {
+            Ok(()) => {
+                self.busy = true;
+                self.paused = false;
+                self.resuming = true;
+                self.end_pause();
+            }
+            Err(error) => self.notice(
+                termide_i18n::t().agent_notice_cannot_continue_fmt(&error.to_string()),
+                NoticeKind::Warn,
+            ),
+        }
+    }
+
+    /// Freeze the pause's line at the pause's length, once it is over.
+    fn end_pause(&mut self) {
+        if let Some(start) = self.pause_start.take() {
+            self.transcript.set_pause_length(millis(start.elapsed()));
+        }
+    }
+
     /// The state strip above the input: what holds right now rather than what
     /// happened — a pending or active pause and the queued messages. Empty
     /// when there is nothing to show.
@@ -1545,8 +1595,14 @@ impl AgentPanel {
             AgentEvent::AgentStart => {
                 self.busy = true;
                 self.paused = false;
-                self.run_start = Some(Instant::now());
-                self.run_failed = false;
+                // A resumed run keeps its start, so its clock counts from the
+                // request; anything else (a new prompt over a pause) starts
+                // afresh.
+                self.end_pause();
+                if !std::mem::take(&mut self.resuming) || self.run_start.is_none() {
+                    self.run_start = Some(Instant::now());
+                    self.run_failed = false;
+                }
                 self.run_paused = false;
             }
             AgentEvent::Paused => {
@@ -1559,12 +1615,18 @@ impl AgentPanel {
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.activity = None;
-                if let Some(start) = self.run_start.take() {
+                if self.run_paused {
+                    // The run waits at a pause: its line ticks the pause's
+                    // length, and the run's own clock stays for `/continue`.
+                    self.pause_start = Some(Instant::now());
+                    self.transcript
+                        .end_run(0, &now_hms(), !self.run_failed, true);
+                } else if let Some(start) = self.run_start.take() {
                     self.transcript.end_run(
-                        start.elapsed().as_millis().min(u32::MAX as u128) as u32,
+                        millis(start.elapsed()),
                         &now_hms(),
                         !self.run_failed,
-                        self.run_paused,
+                        false,
                     );
                 }
                 self.pause_requested = false;
@@ -4519,6 +4581,8 @@ impl Panel for AgentPanel {
         for (row, line) in state.iter().enumerate() {
             buf.set_line(area.x, state_y + row as u16, line, text_width);
         }
+        // The strip's pause line (after its rule) continues the run on a click.
+        self.pause_row = (self.paused && !self.is_busy() && state.len() > 1).then_some(state_y + 1);
         if has_separator {
             let y = form_area.y - 1;
             let style = Style::default().fg(if ctx.is_focused {
@@ -4954,6 +5018,11 @@ impl Panel for AgentPanel {
                     && event.column < area.x + area.width
                     && event.row >= area.y
                     && event.row < area.y + area.height;
+                // The state strip's pause line continues the run.
+                if self.paused && self.pause_row == Some(event.row) {
+                    self.resume();
+                    return vec![PanelEvent::NeedsRedraw];
+                }
                 if !inside {
                     // A click below the transcript lands on the input: hand focus
                     // back to it so typing resumes.
@@ -4975,6 +5044,10 @@ impl Panel for AgentPanel {
 
     fn tick(&mut self) -> Vec<PanelEvent> {
         let mut changed = false;
+        // A pause's line ticks its length, redrawn once a second.
+        if let Some(start) = self.pause_start {
+            changed |= self.transcript.set_pause_length(millis(start.elapsed()));
+        }
         for event in self.runtime.drain() {
             self.apply(event);
             changed = true;

@@ -219,6 +219,22 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
                 label: t.settings_agent_autofold(),
                 field_type: FieldType::Bool,
             },
+            FieldDescriptor {
+                label: t.settings_web_backend(),
+                field_type: FieldType::Enum,
+            },
+            FieldDescriptor {
+                label: t.settings_web_engine(),
+                field_type: FieldType::Enum,
+            },
+            FieldDescriptor {
+                label: t.settings_web_display(),
+                field_type: FieldType::Enum,
+            },
+            FieldDescriptor {
+                label: t.settings_web_chrome_path(),
+                field_type: FieldType::OptionalText,
+            },
         ],
         SettingsTab::Keybindings => vec![],
     }
@@ -310,6 +326,16 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
                 .map_or_else(|| "(no limit)".to_string(), |n| n.to_string()),
             6 => bool_str(config.ai.prefer_reasoning),
             7 => bool_str(config.ai.autofold),
+            8 => config.ai.web.backend.clone(),
+            9 => config.ai.web.engine.clone(),
+            10 => config.ai.web.display.clone(),
+            11 => {
+                if config.ai.web.chrome_path.is_empty() {
+                    "(auto)".to_string()
+                } else {
+                    config.ai.web.chrome_path.clone()
+                }
+            }
             _ => String::new(),
         },
         SettingsTab::Keybindings => String::new(),
@@ -479,6 +505,22 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
             let labels: Vec<String> = PROVIDER_VALUES.iter().map(|v| provider_label(v)).collect();
             (values, labels, config.ai.provider.clone())
         }
+        (SettingsTab::Ai, 8) => {
+            let values = strings(&termide_config::WEB_BACKENDS);
+            (values.clone(), values, config.ai.web.backend.clone())
+        }
+        (SettingsTab::Ai, 9) => {
+            // The shipped engines, plus a user-defined one when it is set.
+            let mut values = strings(&termide_config::builtin_web_engines());
+            if !values.contains(&config.ai.web.engine) {
+                values.push(config.ai.web.engine.clone());
+            }
+            (values.clone(), values, config.ai.web.engine.clone())
+        }
+        (SettingsTab::Ai, 10) => {
+            let values = strings(&termide_config::WEB_DISPLAYS);
+            (values.clone(), values, config.ai.web.display.clone())
+        }
         _ => return None,
     };
 
@@ -505,8 +547,44 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
         (SettingsTab::Ai, 0) => set_ai_provider(config, value),
         (SettingsTab::Ai, 2) => config.ai.model = value.to_string(),
+        (SettingsTab::Ai, 8) => config.ai.web.backend = value.to_string(),
+        (SettingsTab::Ai, 9) => config.ai.web.engine = value.to_string(),
+        (SettingsTab::Ai, 10) => config.ai.web.display = value.to_string(),
         _ => {}
     }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
+/// Step a string enum field through `options`, wrapping; a value outside
+/// the list starts from the first option.
+fn step_value(value: &mut String, options: &[String], forward: bool) {
+    let len = options.len();
+    if len == 0 {
+        return;
+    }
+    let next = match options.iter().position(|option| option == value) {
+        Some(pos) if forward => (pos + 1) % len,
+        Some(pos) => (pos + len - 1) % len,
+        None => 0,
+    };
+    *value = options[next].clone();
+}
+
+/// Cycle one of the AI tab's web enum fields (8 to 10).
+fn cycle_web_field(config: &mut Config, index: usize, forward: bool) {
+    let Some(options) = enum_options(config, SettingsTab::Ai, index) else {
+        return;
+    };
+    let field = match index {
+        8 => &mut config.ai.web.backend,
+        9 => &mut config.ai.web.engine,
+        10 => &mut config.ai.web.display,
+        _ => return,
+    };
+    step_value(field, &options.values, forward);
 }
 
 /// The AI `model` field's index in the AI tab, and the dropdown value that
@@ -574,11 +652,11 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
                 };
             }
         }
-        SettingsTab::Ai => {
-            if index == 0 {
-                cycle_ai_provider(config, true);
-            }
-        }
+        SettingsTab::Ai => match index {
+            0 => cycle_ai_provider(config, true),
+            8..=10 => cycle_web_field(config, index, true),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -644,11 +722,11 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
                 };
             }
         }
-        SettingsTab::Ai => {
-            if index == 0 {
-                cycle_ai_provider(config, false);
-            }
-        }
+        SettingsTab::Ai => match index {
+            0 => cycle_ai_provider(config, false),
+            8..=10 => cycle_web_field(config, index, false),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -695,6 +773,33 @@ mod field_index_tests {
             config.general.bell_on_operation_complete,
             Config::default().general.bell_on_operation_complete
         );
+    }
+
+    #[test]
+    fn web_fields_read_and_write_their_own_settings() {
+        let mut config = Config::default();
+        let fields = fields_for_tab(SettingsTab::Ai);
+        assert_eq!(fields.len(), 12, "the web fields close the AI tab");
+        assert!(matches!(fields[11].field_type, FieldType::OptionalText));
+
+        assert_eq!(get_field_value(&config, SettingsTab::Ai, 8), "auto");
+        assert_eq!(get_field_value(&config, SettingsTab::Ai, 9), "duckduckgo");
+        assert_eq!(get_field_value(&config, SettingsTab::Ai, 10), "headless");
+        assert_eq!(get_field_value(&config, SettingsTab::Ai, 11), "(auto)");
+
+        apply_enum_value(&mut config, SettingsTab::Ai, 9, "bing");
+        assert_eq!(config.ai.web.engine, "bing");
+        cycle_enum_forward(&mut config, SettingsTab::Ai, 8);
+        assert_eq!(config.ai.web.backend, "chrome");
+        cycle_enum_backward(&mut config, SettingsTab::Ai, 10);
+        assert_eq!(config.ai.web.display, "visible");
+        assert_eq!(config.ai.provider, Config::default().ai.provider);
+
+        // A user-defined engine stays selectable.
+        config.ai.web.engine = "intranet".into();
+        let options = enum_options(&config, SettingsTab::Ai, 9).unwrap();
+        assert_eq!(options.values.last().map(String::as_str), Some("intranet"));
+        assert_eq!(options.current, Some(options.values.len() - 1));
     }
 }
 

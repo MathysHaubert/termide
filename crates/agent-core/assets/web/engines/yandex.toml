@@ -1,0 +1,10 @@
+# Yandex. Ads link through yabs.yandex.ru or yandex.ru/an/ and are dropped.
+name = "Yandex"
+url = "https://yandex.ru/search/?text={query}"
+item = "li.serp-item"
+title = "h2"
+link = "a.OrganicTitle-Link"
+snippet = ".OrganicText"
+exclude = ["//yabs.yandex.ru/", "//yandex.ru/an/"]
+challenge = ["form#checkbox-captcha-form", ".CheckboxCaptcha", ".AdvancedCaptcha"]
+challenge_url = ["/showcaptcha"]

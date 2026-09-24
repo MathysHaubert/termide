@@ -1,0 +1,13 @@
+# Bing. Result links go through bing.com/ck/a, whose `u` parameter is the
+# target URL in URL-safe base64 behind an "a1" prefix.
+name = "Bing"
+url = "https://www.bing.com/search?q={query}"
+item = "#b_results > li.b_algo"
+title = "h2"
+link = "h2 a"
+link_param = "u"
+link_param_prefix = "a1"
+link_param_base64 = true
+snippet = ".b_caption p"
+challenge = ["#b_captcha", "iframe[src*='challenges.cloudflare.com']"]
+challenge_url = ["/challenge"]

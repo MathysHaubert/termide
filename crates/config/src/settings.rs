@@ -143,6 +143,68 @@ pub struct AiSettings {
     /// answer still shows in full); off shows everything expanded.
     #[serde(default = "agent_defaults::autofold")]
     pub autofold: bool,
+
+    /// The web tools (`fetch`, `web_search`).
+    #[serde(default)]
+    pub web: WebSettings,
+}
+
+/// `[ai.web]`: how the agent's web tools reach the web.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSettings {
+    /// `auto` (Chrome when found, else plain HTTP), `chrome` or `http`.
+    /// Plain HTTP reads pages but cannot search.
+    #[serde(default = "web_defaults::backend")]
+    pub backend: String,
+    /// Search engine: the name of a file under `ai/web/engines/`.
+    #[serde(default = "web_defaults::engine")]
+    pub engine: String,
+    /// Browser executable; empty looks for Chrome, Chromium, Edge or Brave in
+    /// the usual places.
+    #[serde(default)]
+    pub chrome_path: String,
+    /// How the browser shows itself: `headless` (no window; a captcha brings
+    /// one up for the user), `minimized` (a real window kept out of the way)
+    /// or `visible` (a window on screen, to watch what the agent opens).
+    #[serde(default = "web_defaults::display")]
+    pub display: String,
+}
+
+impl Default for WebSettings {
+    fn default() -> Self {
+        Self {
+            backend: web_defaults::backend(),
+            engine: web_defaults::engine(),
+            chrome_path: String::new(),
+            display: web_defaults::display(),
+        }
+    }
+}
+
+/// Values `[ai.web] backend` accepts.
+pub const WEB_BACKENDS: [&str; 3] = ["auto", "chrome", "http"];
+/// Values `[ai.web] display` accepts.
+pub const WEB_DISPLAYS: [&str; 3] = ["headless", "minimized", "visible"];
+
+/// The search engines termide ships; the user may add more as files.
+#[must_use]
+pub fn builtin_web_engines() -> Vec<&'static str> {
+    termide_agent_core::SEED_ENGINES
+        .iter()
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+mod web_defaults {
+    pub fn backend() -> String {
+        "auto".to_string()
+    }
+    pub fn engine() -> String {
+        "duckduckgo".to_string()
+    }
+    pub fn display() -> String {
+        "headless".to_string()
+    }
 }
 
 impl AiSettings {
@@ -186,6 +248,7 @@ impl Default for AiSettings {
             permissions: termide_agent_core::PermissionRules::default(),
             compaction: termide_agent_core::CompactionPolicy::default(),
             autofold: agent_defaults::autofold(),
+            web: WebSettings::default(),
         }
     }
 }

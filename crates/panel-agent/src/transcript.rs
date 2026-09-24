@@ -152,10 +152,11 @@ pub enum Item {
         text: String,
         kind: NoticeKind,
     },
-    /// The closing line of a finished run: the wall-clock time from the
-    /// request to the end of the run, not any one block's cost.
+    /// The closing line of a run that did not end on a clean answer: how long
+    /// it took from the request, or — for a pause — how long the pause has
+    /// lasted (ticking while it does).
     RunEnd {
-        /// How long the run took, in ms.
+        /// How long the run took, or the pause has lasted, in ms.
         elapsed_ms: u32,
         /// Local wall-clock time the run finished.
         at: String,
@@ -447,6 +448,47 @@ impl Transcript {
             ok,
             paused,
         });
+    }
+
+    /// Set the length of the pause the last item marks, while it lasts and
+    /// once it ends. Returns whether the shown line changed (it shows whole
+    /// seconds, so a redraw a second is enough).
+    pub fn set_pause_length(&mut self, ms: u32) -> bool {
+        let Some(index) = self.items.len().checked_sub(1) else {
+            return false;
+        };
+        let Item::RunEnd {
+            elapsed_ms,
+            paused: true,
+            ..
+        } = &mut self.items[index]
+        else {
+            return false;
+        };
+        if *elapsed_ms / 1000 == ms / 1000 {
+            *elapsed_ms = ms;
+            return false;
+        }
+        *elapsed_ms = ms;
+        self.invalidate(index);
+        true
+    }
+
+    /// Whether flattened line `line` is the live run clock: the last row of
+    /// the footer shown while the agent works.
+    #[must_use]
+    pub fn is_clock_line(&self, line: usize) -> bool {
+        !self.live_footer.is_empty() && line + 1 == self.flat.len()
+    }
+
+    /// Whether flattened line `line` shows the pause the transcript ends on.
+    #[must_use]
+    pub fn is_live_pause_line(&self, line: usize) -> bool {
+        let last = self.items.len().checked_sub(1);
+        last.is_some_and(|last| {
+            self.item_at_line(line) == Some(last)
+                && matches!(self.items[last], Item::RunEnd { paused: true, .. })
+        })
     }
 
     /// Flip whether item `index` shows its detail. A small block has no detail
@@ -1037,8 +1079,8 @@ fn output_line(
 }
 
 /// The first line of a non-shell tool call (a shell's is [`command_lines`]):
-/// a type glyph, a localized action and its path for read/write/edit, else the
-/// tool name and a summary. The fold `marker`, if any, follows the action or
+/// a type glyph, a localized action and its subject for the file and web
+/// tools (the path, URL or query), else the tool name and a summary. The fold `marker`, if any, follows the action or
 /// the name.
 fn tool_headline(
     call: &ToolCall,
@@ -1055,23 +1097,26 @@ fn tool_headline(
             .unwrap_or("")
             .to_string()
     };
-    // A file tool opens with its type glyph like every block — `<` read and
-    // `>` write, as a shell redirects, `±` for an edit's diff — then its
-    // localized action in the same accent.
+    // A file or web tool opens with its type glyph like every block — `<`
+    // read and `>` write, as a shell redirects, `±` for an edit's diff, `↓`
+    // for a page fetched, `?` for a search — then its localized action in the
+    // same accent and its subject (the path, URL or query).
     let accent = Style::default().fg(colors.info);
-    let action = |glyph: &str, verb: &str| {
+    let action = |glyph: &str, verb: &str, subject: &str| {
         let mut spans = vec![
             Span::styled(format!("{glyph} "), accent),
             Span::styled(format!("{verb} "), accent),
         ];
         spans.extend(marker.clone());
-        spans.push(Span::styled(arg("path"), fg));
+        spans.push(Span::styled(arg(subject), fg));
         spans
     };
     match call.name.as_str() {
-        "read" => action("<", t.agent_tool_read()),
-        "write" => action(">", t.agent_tool_write()),
-        "edit" => action("±", t.agent_tool_edit()),
+        "read" => action("<", t.agent_tool_read(), "path"),
+        "write" => action(">", t.agent_tool_write(), "path"),
+        "edit" => action("±", t.agent_tool_edit(), "path"),
+        "fetch" => action("↓", t.agent_tool_fetch(), "url"),
+        "web_search" => action("?", t.agent_tool_web_search(), "query"),
         _ => {
             let mut spans = vec![
                 Span::styled(
@@ -1573,12 +1618,15 @@ pub(crate) fn run_end_text(elapsed_ms: u32, at: &str) -> String {
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
-/// path for file tools, compact JSON otherwise.
+/// path for file tools, the URL or query for web tools, compact JSON
+/// otherwise.
 #[must_use]
 pub fn summarize_call(call: &ToolCall, max_chars: usize) -> String {
     let text = match call.name.as_str() {
         "bash" => call.arguments["command"].as_str().unwrap_or("").to_string(),
         "read" | "edit" | "write" => call.arguments["path"].as_str().unwrap_or("").to_string(),
+        "fetch" => call.arguments["url"].as_str().unwrap_or("").to_string(),
+        "web_search" => call.arguments["query"].as_str().unwrap_or("").to_string(),
         _ => match &call.arguments {
             Value::Object(map) if map.is_empty() => String::new(),
             other => other.to_string(),
@@ -2367,6 +2415,29 @@ mod tests {
     }
 
     #[test]
+    fn web_tools_head_with_their_glyph_and_subject() {
+        let colors = ThemeColors::default();
+        let text = |call: &ToolCall| -> String {
+            tool_headline(call, None, 80, &colors)
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+        let t = termide_i18n::t();
+        assert_eq!(
+            text(&call("fetch", json!({ "url": "https://docs.rs" }))),
+            format!("↓ {} https://docs.rs", t.agent_tool_fetch())
+        );
+        assert_eq!(
+            text(&call(
+                "web_search",
+                json!({ "query": "rust tui", "limit": 3 })
+            )),
+            format!("? {} rust tui", t.agent_tool_web_search())
+        );
+    }
+
+    #[test]
     fn call_summaries_truncate_and_flatten() {
         let long = "x".repeat(50);
         let summary = summarize_call(
@@ -2379,6 +2450,17 @@ mod tests {
         assert_eq!(
             summarize_call(&call("edit", json!({ "path": "a.rs" })), 40),
             "a.rs"
+        );
+        assert_eq!(
+            summarize_call(&call("fetch", json!({ "url": "https://docs.rs" })), 40),
+            "https://docs.rs"
+        );
+        assert_eq!(
+            summarize_call(
+                &call("web_search", json!({ "query": "rust tui", "limit": 5 })),
+                40
+            ),
+            "rust tui"
         );
         assert_eq!(summarize_call(&call("mcp", json!({})), 40), "");
         assert_eq!(
