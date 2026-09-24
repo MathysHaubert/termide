@@ -419,7 +419,7 @@ impl Translation for RuntimeTranslation {
         agent_notice_loop_usage,
         agent_notice_goal_stopped,
         agent_notice_goal_usage,
-        agent_notice_queued,
+        agent_state_queued,
         agent_notice_goal_checking,
         agent_notice_handoff_preparing,
         agent_notice_stopping,
@@ -1176,6 +1176,14 @@ impl Translation for RuntimeTranslation {
 
     fn agent_run_done(&self, duration: &str, at: &str) -> String {
         self.format("agent_run_done", &[("duration", duration), ("at", at)])
+    }
+
+    fn agent_run_paused(&self, duration: &str, at: &str) -> String {
+        self.format("agent_run_paused", &[("duration", duration), ("at", at)])
+    }
+
+    fn agent_state_queued_more(&self, count: usize) -> String {
+        self.format("agent_state_queued_more", &[("count", &count.to_string())])
     }
 
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {

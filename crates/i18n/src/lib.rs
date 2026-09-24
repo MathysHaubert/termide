@@ -548,7 +548,10 @@ pub trait Translation: Send + Sync {
     fn agent_notice_loop_usage(&self) -> &str;
     fn agent_notice_goal_stopped(&self) -> &str;
     fn agent_notice_goal_usage(&self) -> &str;
-    fn agent_notice_queued(&self) -> &str;
+    /// Agent panel state strip: the label of a message queued for the next turn.
+    fn agent_state_queued(&self) -> &str;
+    /// Agent panel state strip: queued messages beyond the ones shown.
+    fn agent_state_queued_more(&self, count: usize) -> String;
     fn agent_notice_goal_checking(&self) -> &str;
     fn agent_notice_handoff_preparing(&self) -> &str;
     fn agent_notice_stopping(&self) -> &str;
@@ -628,6 +631,8 @@ pub trait Translation: Send + Sync {
     /// Agent transcript: the closing line of a finished run — how long it
     /// took since the request was sent, and when it finished.
     fn agent_run_done(&self, duration: &str, at: &str) -> String;
+    /// Agent transcript: the closing line of a run that paused (`/pause`).
+    fn agent_run_paused(&self, duration: &str, at: &str) -> String;
     /// Agent transcript: unit for seconds in a block's meta line.
     fn agent_unit_secs(&self) -> &str;
     /// Agent transcript: unit for minutes in a block's meta line.

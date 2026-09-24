@@ -9,7 +9,7 @@
 mod transcript;
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
@@ -492,6 +492,15 @@ pub struct AgentPanel {
     run_start: Option<Instant>,
     /// The current run hit an error or was aborted, so its closing line is `✗`.
     run_failed: bool,
+    /// The current run stopped at a `/pause` (its closing line says so).
+    run_paused: bool,
+    /// A `/pause` was asked for and the run has not reached a step boundary
+    /// yet; shown in the state strip.
+    pause_requested: bool,
+    /// Texts of the steering messages sent while the agent works, oldest
+    /// first, shown in the state strip until the agent takes them. Kept in
+    /// step with the runtime's steering count (`QueueUpdate`).
+    queued_texts: VecDeque<String>,
     queued: (usize, usize),
     /// Tokens of the last reported context, for the status chip.
     context_tokens: u64,
@@ -656,6 +665,9 @@ impl AgentPanel {
             goal_errored: false,
             run_start: None,
             run_failed: false,
+            run_paused: false,
+            pause_requested: false,
+            queued_texts: VecDeque::new(),
             queued: (0, 0),
             context_tokens: 0,
             activity: None,
@@ -763,6 +775,8 @@ impl AgentPanel {
         self.top = 0;
         self.follow = true;
         self.queued = (0, 0);
+        self.queued_texts.clear();
+        self.pause_requested = false;
         self.context_tokens = 0;
         true
     }
@@ -966,11 +980,10 @@ impl AgentPanel {
             Some((PAUSE_COMMAND, _)) => {
                 self.clear_input();
                 if self.is_busy() {
+                    // The state strip shows the pending pause until the run
+                    // reaches a step boundary.
                     self.runtime.pause();
-                    self.notice(
-                        termide_i18n::t().agent_notice_will_pause(),
-                        NoticeKind::Info,
-                    );
+                    self.pause_requested = true;
                 } else {
                     self.notice(
                         termide_i18n::t().agent_notice_nothing_to_pause(),
@@ -1133,9 +1146,11 @@ impl AgentPanel {
         self.follow = true;
         let message = UserMessage::text(text);
         if self.is_busy() {
+            // The message waits in the state strip until the agent takes it,
+            // then shows as a user block.
+            self.queued_texts.push_back(message.plain_text());
             self.runtime.steer(message);
-            self.queued = self.runtime.queue_lens();
-            self.notice(termide_i18n::t().agent_notice_queued(), NoticeKind::Info);
+            self.set_queued(self.runtime.queue_lens());
         } else {
             // A fresh turn starts: surface the system prompt as a folded `#`
             // block when it is new or has changed since it was last shown, so it
@@ -1346,6 +1361,35 @@ impl AgentPanel {
         }
     }
 
+    /// Record the runtime's queue lengths and drop the steering texts the
+    /// agent has taken (it takes them oldest first).
+    fn set_queued(&mut self, queued: (usize, usize)) {
+        self.queued = queued;
+        while self.queued_texts.len() > queued.0 {
+            self.queued_texts.pop_front();
+        }
+    }
+
+    /// The state strip above the input: what holds right now rather than what
+    /// happened — a pending or active pause and the queued messages. Empty
+    /// when there is nothing to show.
+    fn state_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let t = termide_i18n::t();
+        let pause = if self.paused && !self.is_busy() {
+            Some(t.agent_notice_paused())
+        } else if self.pause_requested {
+            Some(t.agent_notice_will_pause())
+        } else {
+            None
+        };
+        state_strip(
+            self.queued_texts.iter().map(String::as_str),
+            pause,
+            width,
+            &self.colors,
+        )
+    }
+
     fn notice(&mut self, text: impl Into<String>, kind: NoticeKind) {
         self.transcript.push(Item::Notice {
             text: text.into(),
@@ -1461,10 +1505,14 @@ impl AgentPanel {
                 self.paused = false;
                 self.run_start = Some(Instant::now());
                 self.run_failed = false;
+                self.run_paused = false;
             }
             AgentEvent::Paused => {
+                // The run's closing line records the pause; the state strip
+                // shows it until `/continue`.
                 self.paused = true;
-                self.notice(termide_i18n::t().agent_notice_paused(), NoticeKind::Info);
+                self.run_paused = true;
+                self.pause_requested = false;
             }
             AgentEvent::AgentEnd => {
                 self.busy = false;
@@ -1474,9 +1522,11 @@ impl AgentPanel {
                         elapsed_ms: start.elapsed().as_millis().min(u32::MAX as u128) as u32,
                         at: now_hms(),
                         ok: !self.run_failed,
+                        paused: self.run_paused,
                     });
                 }
-                self.queued = self.runtime.queue_lens();
+                self.pause_requested = false;
+                self.set_queued(self.runtime.queue_lens());
                 if let Some(store) = &self.checkpoints {
                     store.lock().unwrap().end_run();
                 }
@@ -1652,7 +1702,7 @@ impl AgentPanel {
             AgentEvent::QueueUpdate {
                 steering,
                 follow_up,
-            } => self.queued = (steering, follow_up),
+            } => self.set_queued((steering, follow_up)),
             AgentEvent::CompactionStart { .. } => {
                 self.set_phase(Phase::Compact);
                 self.notice(
@@ -2465,7 +2515,12 @@ impl AgentPanel {
             | Item::Thinking { text, .. }
             | Item::System { text } => text.clone(),
             Item::Notice { text, .. } => text.clone(),
-            Item::RunEnd { elapsed_ms, at, .. } => transcript::run_end_text(*elapsed_ms, at),
+            Item::RunEnd {
+                elapsed_ms,
+                at,
+                paused,
+                ..
+            } => transcript::run_end_text(*elapsed_ms, at, *paused),
             Item::Tool {
                 result, live, call, ..
             } => result
@@ -3470,6 +3525,67 @@ fn spawn_model_list(provider: Arc<dyn Provider>) -> Receiver<Result<Vec<ModelInf
 }
 
 /// Local wall-clock time as `HH:MM:SS`, for a transcript block's byline.
+/// Queued messages the state strip shows before folding the rest into a count.
+const STATE_QUEUED_ROWS: usize = 3;
+
+/// The state strip's lines: a dim dashed rule, then a pause row (`pause`,
+/// when one is pending or active) and a row per queued message (its first
+/// line, cut to the width), at most [`STATE_QUEUED_ROWS`] of them before a
+/// "… N more" row. Empty when there is nothing to show.
+fn state_strip<'a>(
+    queued: impl ExactSizeIterator<Item = &'a str>,
+    pause: Option<&str>,
+    width: u16,
+    colors: &ThemeColors,
+) -> Vec<Line<'static>> {
+    let t = termide_i18n::t();
+    let dim = Style::default().fg(colors.disabled);
+    let total = queued.len();
+    if total == 0 && pause.is_none() {
+        return Vec::new();
+    }
+    let width = width as usize;
+    let cut = |text: &str, room: usize| termide_ui::path_utils::truncate_right(text, room);
+    let mut lines = vec![transcript::separator(width as u16, colors)];
+    if let Some(pause) = pause {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", transcript::PAUSED_GLYPH),
+                Style::default()
+                    .fg(colors.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(cut(pause, width.saturating_sub(2)), dim),
+        ]));
+    }
+    let label = format!(" {}", t.agent_state_queued());
+    let label_width = termide_ui::str_display_width(&label);
+    for (i, text) in queued.take(STATE_QUEUED_ROWS).enumerate() {
+        let first = text.trim().lines().next().unwrap_or("");
+        // The first row carries the "queued" label at the right edge, one
+        // column short of the scrollbar gutter, like a block's meta.
+        let room = width.saturating_sub(3 + if i == 0 { label_width } else { 0 });
+        let body = cut(first, room);
+        let mut spans = vec![
+            Span::styled("› ", Style::default().fg(colors.info)),
+            Span::styled(body.clone(), dim),
+        ];
+        if i == 0 {
+            let used = 2 + termide_ui::str_display_width(&body) + label_width;
+            spans.push(Span::raw(" ".repeat(width.saturating_sub(used + 1))));
+            spans.push(Span::styled(label.clone(), dim));
+        }
+        lines.push(Line::from(spans));
+    }
+    if total > STATE_QUEUED_ROWS {
+        lines.push(Line::styled(
+            format!("  {}", t.agent_state_queued_more(total - STATE_QUEUED_ROWS)),
+            dim,
+        ));
+    }
+    lines
+}
+
 fn now_hms() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
@@ -4208,9 +4324,18 @@ impl Panel for AgentPanel {
             .map_or(0, |pending| pending.form().height(area.width))
             .min(area.height.saturating_sub(bar_rows + 1));
         let has_separator = form_rows > 0 && area.height > bar_rows + form_rows;
+        // The state strip (a pending pause, queued messages) sits between the
+        // transcript and the card, leaving the transcript at least one row.
+        let text_width = area.width.saturating_sub(1).max(1);
+        let mut state = self.state_lines(text_width);
+        let room = area
+            .height
+            .saturating_sub(bar_rows + form_rows + u16::from(has_separator) + 1);
+        state.truncate(room as usize);
+        let state_rows = state.len() as u16;
         let transcript_height = area
             .height
-            .saturating_sub(bar_rows + form_rows)
+            .saturating_sub(bar_rows + form_rows + state_rows)
             .saturating_sub(u16::from(has_separator));
         self.transcript_area = Rect {
             x: area.x,
@@ -4231,9 +4356,8 @@ impl Panel for AgentPanel {
             height: form_rows,
         };
 
-        // The rightmost column is the scrollbar gutter, so wrapped text never
-        // sits under the bar.
-        let text_width = area.width.saturating_sub(1).max(1);
+        // The rightmost column is the scrollbar gutter (`text_width` above), so
+        // wrapped text never sits under the bar.
         let colors = self.colors;
         let is_light = self.is_light;
         // The streaming block's live meta (ticking time + spinner) sits after
@@ -4310,6 +4434,10 @@ impl Panel for AgentPanel {
             ctx.is_focused,
         );
 
+        let state_y = area.y + transcript_height;
+        for (row, line) in state.iter().enumerate() {
+            buf.set_line(area.x, state_y + row as u16, line, text_width);
+        }
         if has_separator {
             let y = form_area.y - 1;
             let style = Style::default().fg(if ctx.is_focused {
@@ -5281,6 +5409,94 @@ mod tests {
             raw: event,
             canonical: event,
         }
+    }
+
+    fn strip_text(lines: &[Line<'_>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn the_state_strip_shows_queued_messages_until_the_agent_takes_them() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        assert!(panel.state_lines(40).is_empty());
+        panel.apply(AgentEvent::AgentStart);
+        for text in ["first\nsecond line", "two", "three", "four", "five"] {
+            panel.send(text.to_string());
+        }
+        // Queued while busy: nothing in the transcript, all of it in the strip.
+        assert!(panel
+            .transcript()
+            .items()
+            .iter()
+            .all(|i| !matches!(i, Item::Notice { .. } | Item::User { .. })));
+        let lines = strip_text(&panel.state_lines(40));
+        assert!(lines[0].starts_with('╌'));
+        assert!(lines[1].starts_with("› first") && lines[1].ends_with("queued"));
+        assert!(!lines[1].contains("second line"));
+        assert_eq!(lines[2], "› two");
+        assert!(lines[4].contains("2 more queued"), "{lines:?}");
+        assert!(lines.iter().all(|l| termide_ui::str_display_width(l) <= 40));
+        // The agent takes the two oldest; the strip follows its count.
+        panel.apply(AgentEvent::QueueUpdate {
+            steering: 3,
+            follow_up: 0,
+        });
+        let lines = strip_text(&panel.state_lines(40));
+        assert!(lines[1].starts_with("› three"), "{lines:?}");
+        assert_eq!(lines.len(), 4);
+        panel.apply(AgentEvent::QueueUpdate {
+            steering: 0,
+            follow_up: 0,
+        });
+        assert!(panel.state_lines(40).is_empty());
+    }
+
+    #[test]
+    fn the_state_strip_sits_between_the_transcript_and_the_input() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        panel.apply(AgentEvent::AgentStart);
+        panel.send("waiting its turn".to_string());
+        let rows = render_text(&mut panel, 40, 12);
+        let at = rows
+            .iter()
+            .position(|r| r.starts_with("› waiting its turn"))
+            .expect("queued row");
+        assert!(rows[at - 1].starts_with('╌'), "{rows:?}");
+        // The input bar's titled border follows the strip directly.
+        assert!(
+            !rows[at + 1].trim().is_empty() && !rows[at + 1].starts_with('›'),
+            "{rows:?}"
+        );
+        assert_eq!(at, rows.len() - 1 - panel.input_area.height as usize);
+    }
+
+    #[test]
+    fn a_pause_lives_in_the_state_strip_and_closes_the_run_as_paused() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        panel.apply(AgentEvent::AgentStart);
+        type_text(&mut panel, "/pause");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        let t = termide_i18n::t();
+        let lines = strip_text(&panel.state_lines(60));
+        assert!(lines[1].contains(t.agent_notice_will_pause()), "{lines:?}");
+        panel.apply(AgentEvent::Paused);
+        panel.apply(AgentEvent::AgentEnd);
+        let lines = strip_text(&panel.state_lines(80));
+        assert!(lines[1].contains(t.agent_notice_paused()), "{lines:?}");
+        // History keeps only the event: the run's closing line, marked paused.
+        let items = panel.transcript().items();
+        assert!(items.iter().all(|i| !matches!(i, Item::Notice { .. })));
+        assert!(matches!(
+            items.last(),
+            Some(Item::RunEnd {
+                paused: true,
+                ok: true,
+                ..
+            })
+        ));
     }
 
     fn type_text(panel: &mut AgentPanel, text: &str) {

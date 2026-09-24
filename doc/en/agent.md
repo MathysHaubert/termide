@@ -101,7 +101,7 @@ you have named or sent even one message to is always kept.
 
 | Key | Action |
 |---|---|
-| `Enter` | Send. While the agent works, the text is queued for the next turn instead |
+| `Enter` | Send. While the agent works, the text is queued for the next turn instead and waits in the state strip above the input |
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every block |
@@ -156,7 +156,16 @@ conversation rather than holding content. The others are the panel's notices:
 (a stopped goal, a busy agent), `✗` for an error outside a block (a failed
 compaction, an MCP error). An error inside a turn stays in its answer block.
 Annotations never fold, their text wraps to the width, consecutive ones share a
-single dashed rule, and the chat cursor passes over them.
+single dashed rule, and the chat cursor passes over them. A run stopped with
+`/pause` closes as `‖ Worked for 1m12s · paused at 21:03:41`.
+
+What holds right now rather than what happened lives in the state strip, a few
+rows between the conversation and the input that appear only when there is
+something to show: a pending pause (`‖ will pause after the current step`), an
+active one with the `/continue` hint, and each message queued while the agent
+works (`› …`, its first line; after three, a count of the rest). A queued
+message leaves the strip when the agent takes it and shows up in the
+conversation as your message.
 
 The system prompt in effect is shown as a folded `# ` block at the start of a
 session and again whenever it changes before your next message (switching agent

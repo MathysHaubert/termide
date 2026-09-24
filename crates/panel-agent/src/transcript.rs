@@ -149,6 +149,8 @@ pub enum Item {
         at: String,
         /// Whether the run ended without an error or an abort.
         ok: bool,
+        /// The run stopped at a `/pause`, resumable with `/continue`.
+        paused: bool,
     },
 }
 
@@ -1250,7 +1252,12 @@ fn render_item(
             ));
             lines
         }
-        Item::RunEnd { elapsed_ms, at, ok } => {
+        Item::RunEnd {
+            elapsed_ms,
+            at,
+            ok,
+            paused,
+        } => {
             // Left-aligned like every annotation, so it reads as the run's
             // total rather than one more right-aligned block figure.
             let mut lines = vec![separator(width, colors)];
@@ -1261,9 +1268,13 @@ fn render_item(
                         .fg(colors.info)
                         .add_modifier(Modifier::BOLD),
                 ),
-                &run_end_text(*elapsed_ms, at),
+                &run_end_text(*elapsed_ms, at, *paused),
                 dim,
-                Some(status_span(*ok, colors)),
+                Some(if *paused && *ok {
+                    Span::styled(PAUSED_GLYPH, Style::default().fg(colors.warning))
+                } else {
+                    status_span(*ok, colors)
+                }),
                 width,
                 colors,
                 is_light,
@@ -1304,9 +1315,18 @@ fn annotation(
     lines
 }
 
+/// The mark of a paused run, on its closing line and in the state strip.
+pub(crate) const PAUSED_GLYPH: &str = "‖";
+
 /// The text of a run's closing line, e.g. `Worked for 3m41s · done at 21:03:16`.
-pub(crate) fn run_end_text(elapsed_ms: u32, at: &str) -> String {
-    termide_i18n::t().agent_run_done(&fmt_dur(elapsed_ms), at)
+pub(crate) fn run_end_text(elapsed_ms: u32, at: &str, paused: bool) -> String {
+    let t = termide_i18n::t();
+    let duration = fmt_dur(elapsed_ms);
+    if paused {
+        t.agent_run_paused(&duration, at)
+    } else {
+        t.agent_run_done(&duration, at)
+    }
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
@@ -1682,6 +1702,7 @@ mod tests {
             elapsed_ms: 221_000,
             at: "21:03:41".into(),
             ok: true,
+            paused: false,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
         let last = lines.last().unwrap();
@@ -1712,6 +1733,7 @@ mod tests {
             elapsed_ms: 5000,
             at: "12:00:05".into(),
             ok: false,
+            paused: false,
         });
         transcript.push(Item::Notice {
             text: "goal stopped".into(),
