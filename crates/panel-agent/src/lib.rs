@@ -6443,13 +6443,17 @@ mod tests {
         assert_eq!(panel.input_text(), "fix the flaky");
         assert!(!panel.input_area().has_selection());
 
-        let events = panel.handle_key(chord(KeyCode::Char('v'), KeyModifiers::CONTROL));
-        assert!(events.iter().any(|e| matches!(e, PanelEvent::NeedsRedraw)));
-        assert_eq!(panel.input_text(), "fix the flaky test");
-
         // With nothing selected, the clipboard keys are the prompt's to ignore.
         let events = panel.handle_key(chord(KeyCode::Char('x'), KeyModifiers::CONTROL));
         assert!(events.is_empty(), "nothing selected, nothing cut");
+
+        // A machine without a display (CI) copies over OSC 52, which cannot be
+        // read back, so the paste half runs only where the clipboard reads.
+        if termide_ui::clipboard::paste().is_some() {
+            let events = panel.handle_key(chord(KeyCode::Char('v'), KeyModifiers::CONTROL));
+            assert!(events.iter().any(|e| matches!(e, PanelEvent::NeedsRedraw)));
+            assert_eq!(panel.input_text(), "fix the flaky test");
+        }
         if let Some(text) = before {
             let _ = termide_ui::clipboard::copy(&text);
         }
