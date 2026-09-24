@@ -6,6 +6,7 @@
 //! [`Transcript`] from `tick()`, so it never blocks the UI thread. Every
 //! transcript change also goes to the JSONL [`Session`] when one is attached.
 
+mod select;
 mod transcript;
 
 use std::any::Any;
@@ -460,6 +461,11 @@ pub struct AgentPanel {
     /// Consecutive clicks on a form row, so a single click selects and a
     /// double click confirms; keyed by the row index.
     form_clicks: ClickTracker<usize>,
+    /// Where the left button went down in the transcript, until it is
+    /// released: a release without a drag is a click on the block there.
+    press: Option<select::Cell>,
+    /// Text selected in the transcript with the mouse, copied by `Ctrl+C`.
+    text_selection: Option<select::TextSelection>,
     /// Large pastes held out of the input as a short placeholder, expanded back
     /// inline on submit, so a big block does not swamp the prompt box.
     pastes: Vec<Paste>,
@@ -650,6 +656,8 @@ impl AgentPanel {
             completion: None,
             completion_span: None,
             form_clicks: ClickTracker::new(),
+            press: None,
+            text_selection: None,
             pastes: Vec::new(),
             paste_seq: 0,
             chat_focus: false,
@@ -858,6 +866,55 @@ impl AgentPanel {
             }
             None => false,
         }
+    }
+
+    /// The transcript cell under screen position (`column`, `row`), clamped
+    /// into the transcript.
+    fn cell_at(&self, column: u16, row: u16) -> select::Cell {
+        let area = self.transcript_area;
+        let row = row.clamp(area.y, (area.y + area.height).saturating_sub(1));
+        let col = column
+            .saturating_sub(area.x)
+            .min(area.width.saturating_sub(2));
+        select::Cell {
+            line: self.top + (row - area.y) as usize,
+            col: col as usize,
+        }
+    }
+
+    /// A click on transcript line `line`: focus the chat and select the block
+    /// there; a second click on the block already selected folds/unfolds it.
+    fn click_line(&mut self, line: usize) -> Vec<PanelEvent> {
+        // A click on a run's closing line selects the block above it.
+        let Some(index) = self
+            .transcript
+            .item_at_line(line)
+            .and_then(|index| self.transcript.selectable_near(index))
+        else {
+            return vec![PanelEvent::NeedsRedraw];
+        };
+        if self.chat_focus && self.selected == index {
+            self.transcript.toggle_expanded(index);
+        } else {
+            self.chat_focus = true;
+            self.selected = index;
+        }
+        vec![PanelEvent::NeedsRedraw]
+    }
+
+    /// Copy the text selected in the transcript with the mouse. Returns
+    /// whether there was any.
+    fn copy_text_selection(&mut self) -> bool {
+        let Some(selection) = self.text_selection else {
+            return false;
+        };
+        let width = self.transcript_area.width.saturating_sub(1).max(1) as usize;
+        let text = selection.text(self.transcript.rendered(), width);
+        if text.trim().is_empty() {
+            return false;
+        }
+        self.copy_text(&text);
+        true
     }
 
     /// Copy the prompt's selection and delete it.
@@ -4431,6 +4488,19 @@ impl Panel for AgentPanel {
                         cell.set_style(style);
                     }
                 }
+                // A mouse selection over the text, as a terminal shows one.
+                if let Some((start, end)) = self
+                    .text_selection
+                    .and_then(|sel| sel.columns_on(self.top + row, text_width as usize))
+                {
+                    for dx in start..end {
+                        buf[(area.x + dx as u16, area.y + row as u16)].set_style(
+                            Style::default()
+                                .fg(colors.selection_fg)
+                                .bg(colors.selection_bg),
+                        );
+                    }
+                }
             }
         }
         self.scrollbars.vertical = ScrollBar::render_tracked(
@@ -4725,7 +4795,7 @@ impl Panel for AgentPanel {
             // Prompt clipboard: the panel owns these so a large paste keeps its
             // placeholder handling and a failure can raise a notice.
             KeyCode::Char('c') if ctrl => {
-                if !self.copy_input_selection() {
+                if !self.copy_input_selection() && !self.copy_text_selection() {
                     return vec![];
                 }
             }
@@ -4786,7 +4856,7 @@ impl Panel for AgentPanel {
         // every click, and because a release must reach the bar to end a drag
         // that started in it — even after the pointer has been dragged up into
         // the transcript. A pending question keeps its clicks to itself.
-        if self.pending.is_none() && self.input.mouse_hits(event) {
+        if self.pending.is_none() && self.press.is_none() && self.input.mouse_hits(event) {
             self.input.handle_mouse(event);
             match event.kind {
                 MouseEventKind::Up(_) => return vec![],
@@ -4799,6 +4869,30 @@ impl Panel for AgentPanel {
         match event.kind {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let Some(anchor) = self.press else {
+                    return vec![];
+                };
+                // Dragged past an edge, the transcript scrolls under it.
+                let area = self.transcript_area;
+                if event.row < area.y {
+                    self.scroll_by(-1);
+                } else if event.row >= area.y + area.height {
+                    self.scroll_by(1);
+                }
+                let head = self.cell_at(event.column, event.row);
+                self.text_selection = Some(select::TextSelection { anchor, head });
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let Some(press) = self.press.take() else {
+                    return vec![];
+                };
+                if self.text_selection.is_some_and(|sel| !sel.is_empty()) {
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                self.text_selection = None;
+                return self.click_line(press.line);
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.pending.is_some() {
                     // A click on a row selects it, and only a second click (a
@@ -4869,23 +4963,10 @@ impl Panel for AgentPanel {
                     }
                     return vec![];
                 }
-                let line = self.top + (event.row - area.y) as usize;
-                // A click on a run's closing line selects the block above it.
-                let Some(index) = self
-                    .transcript
-                    .item_at_line(line)
-                    .and_then(|index| self.transcript.selectable_near(index))
-                else {
-                    return vec![];
-                };
-                // A click focuses the chat and selects the clicked block; a
-                // second click on the block already selected folds/unfolds it.
-                if self.chat_focus && self.selected == index {
-                    self.transcript.toggle_expanded(index);
-                } else {
-                    self.chat_focus = true;
-                    self.selected = index;
-                }
+                // The press may start a text selection; only a release
+                // without a drag clicks the block under it.
+                self.press = Some(self.cell_at(event.column, event.row));
+                self.text_selection = None;
             }
             _ => return vec![],
         }
@@ -5003,7 +5084,9 @@ impl Panel for AgentPanel {
             // Copy takes the chat block while the chat holds focus, and the
             // prompt's selection while the input does.
             PanelCommand::Copy => {
-                if self.chat_focus {
+                if self.copy_text_selection() {
+                    CommandResult::Handled(true)
+                } else if self.chat_focus {
                     match self.selected_block_text() {
                         Some(text) if !text.trim().is_empty() => {
                             self.copy_text(&text);
@@ -5621,6 +5704,49 @@ mod tests {
     }
 
     #[test]
+    fn a_drag_selects_transcript_text_for_copy() {
+        let mut panel = panel(vec![reply("Hello from the model")]);
+        type_text(&mut panel, "hi there");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        let rows = render_text(&mut panel, 40, 12);
+        let area = panel.transcript_area;
+        let y = rows
+            .iter()
+            .position(|r| r.contains("Hello from"))
+            .expect("the answer is on screen") as u16;
+        let row = &rows[y as usize];
+        let x = row[..row.find("Hello").unwrap()].chars().count() as u16;
+        let mouse = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        panel.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), x, y), area);
+        panel.handle_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), x + 9, y),
+            area,
+        );
+        panel.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), x + 9, y), area);
+        // A drag is a selection, not a click: the chat keeps its focus state.
+        assert!(!panel.chat_focus);
+        let width = panel.transcript_area.width.saturating_sub(1) as usize;
+        let selection = panel.text_selection.expect("a selection");
+        assert_eq!(
+            selection.text(panel.transcript.rendered(), width),
+            "Hello from"
+        );
+        // It shows in the selection colours.
+        let buf = render_buf(&mut panel, 40, 12);
+        assert_eq!(buf[(x, y)].bg, ThemeColors::default().selection_bg);
+        // A plain click clears it.
+        panel.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), x, y), area);
+        panel.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), x, y), area);
+        assert!(panel.text_selection.is_none());
+    }
+
+    #[test]
     fn the_input_grows_to_half_the_panel() {
         let mut panel = panel(vec![]);
         let text = (1..=12)
@@ -6062,6 +6188,13 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         };
         panel.handle_mouse(click, area);
+        // The click lands on release, once it is clear no drag follows.
+        assert!(!panel.chat_focus, "a press alone does not click");
+        let release = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            ..click
+        };
+        panel.handle_mouse(release, area);
         assert!(panel.chat_focus, "a click focuses the chat");
         assert!(panel
             .selected_block_text()

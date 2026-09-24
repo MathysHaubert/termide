@@ -173,8 +173,10 @@ conversation rather than holding content. The others are the panel's notices:
 `·` for information (a model switch, a finished compaction), `!` for a warning
 (a stopped goal, a busy agent), `✗` for an error outside a block (a failed
 compaction, an MCP error). An error inside a turn stays in its answer block.
-Annotations never fold and the chat cursor passes over them. A notice's text
-wraps to the width under a dashed rule, which consecutive notices share.
+Annotations never fold. A notice's text wraps to the width under a dashed rule,
+which consecutive notices share; the chat cursor can stop on a notice, so an
+error can be selected and copied like a block, while it passes over a run's
+closing line.
 
 What holds right now rather than what happened lives in the state strip, a few
 rows between the conversation and the input that appear only when there is
@@ -217,10 +219,11 @@ In the prompt, `Ctrl+C` copies whatever is selected there instead — selected
 text is shown inverted, so it is clear what a copy will take.
 
 Mouse selection works inside the prompt box: press to place the cursor, drag to
-select (across wrapped rows), release, then copy or cut. TermIDE captures the
-mouse, so to select text in the *transcript* with the mouse instead hold your
-terminal's bypass modifier (usually `Shift`, `Option`/`Alt` in some terminals)
-and drag as usual.
+select (across wrapped rows), release, then copy or cut. In the transcript a
+drag selects text the way a terminal does, from the cell it started on to the
+one under the pointer, scrolling when dragged past an edge; `Ctrl+C` copies it,
+each row trimmed of its trailing padding. A click without a drag (acting on
+release) selects the block under it instead and clears the text selection.
 
 What the agent runs is captured cleanly for the model: colour and cursor
 escapes, progress-bar redraws, spinner frames and long runs of near-identical

@@ -494,13 +494,14 @@ impl Transcript {
         }
     }
 
-    /// Whether the chat cursor can stop on item `index`. An annotation is not
-    /// a block, so selection passes over it.
+    /// Whether the chat cursor can stop on item `index`. A notice (an error,
+    /// say) can be selected and copied; a run's closing line only marks the
+    /// end, so selection passes over it.
     #[must_use]
     pub fn is_selectable(&self, index: usize) -> bool {
         self.items
             .get(index)
-            .is_some_and(|item| !is_annotation(item))
+            .is_some_and(|item| !matches!(item, Item::RunEnd { .. }))
     }
 
     /// The nearest selectable item at or before `index`, else after it.
@@ -531,7 +532,14 @@ impl Transcript {
         }
         let (lead, trail) = match self.items.get(index)? {
             Item::User { .. } => (1, 1),
-            Item::System { .. } | Item::Assistant { .. } | Item::Notice { .. } => (1, 0),
+            Item::System { .. } | Item::Assistant { .. } => (1, 0),
+            // A notice after another shares its rule, so has none to skip.
+            Item::Notice { .. } => {
+                let shares = index
+                    .checked_sub(1)
+                    .is_some_and(|prev| matches!(self.items[prev], Item::Notice { .. }));
+                (usize::from(!shares), 0)
+            }
             Item::Thinking { .. } | Item::Tool { .. } | Item::RunEnd { .. } => (0, 0),
         };
         let (first, last) = (first + lead, last.saturating_sub(trail));
@@ -602,6 +610,12 @@ impl Transcript {
             }
             self.flat_dirty = false;
         }
+        &self.flat
+    }
+
+    /// The flattened lines as last laid out by [`Transcript::lines`].
+    #[must_use]
+    pub fn rendered(&self) -> &[Line<'static>] {
         &self.flat
     }
 
@@ -2272,8 +2286,8 @@ mod tests {
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(lines.iter().any(|l| l.contains("✗ HTTP 500")));
         assert!(lines.iter().any(|l| l.contains("· compacted 1200 tokens")));
-        // A notice is an annotation: the chat cursor passes over it.
-        assert!(!transcript.is_selectable(1));
+        // A notice can be selected, so an error can be copied.
+        assert!(transcript.is_selectable(1));
         // Shell headline uses `$`; folded to one row, it shows how long it
         // took (`🕒`) and no status glyph.
         assert!(lines
