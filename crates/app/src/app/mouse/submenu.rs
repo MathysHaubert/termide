@@ -320,22 +320,14 @@ impl App {
             if let Some(section) = self.state.ui.current_ai_section.clone() {
                 let nested_items = self.state.ai_section_items(&section);
                 if !nested_items.is_empty() {
-                    let parent_width =
-                        ai_items.iter().map(|i| i.label.width()).max().unwrap_or(10) as u16 + 4;
-                    let nested_x = menu_x + parent_width;
+                    let nested_x = menu_x + dropdown_width(&ai_items);
                     let nested_y = 2 + self.state.ui.ai_submenu.selected as u16;
 
                     // The agent file-choice (third level) sits to the right of
                     // the nested list, at the selected agent's row.
                     if self.state.ui.ai_agent_choice.open {
                         let choice_items = get_ai_agent_choice_items();
-                        let nested_width = nested_items
-                            .iter()
-                            .map(|i| i.label.width())
-                            .max()
-                            .unwrap_or(10) as u16
-                            + 4;
-                        let choice_x = nested_x + nested_width;
+                        let choice_x = nested_x + dropdown_width(&nested_items);
                         let choice_y = nested_y + 1 + self.state.ui.ai_nested.selected as u16;
                         if let Some(index) =
                             hit_dropdown_item(x, y, choice_x, choice_y, &choice_items)
