@@ -167,7 +167,15 @@ alone, while this one is the run's total. When the run ends the clock freezes
 where it stood. A run that finishes cleanly on an answer keeps it in the
 answer's meta (`✻ 3m41s`); any other run keeps it as a closing line after its
 last block, with the time it ended and how — `✻ 3m41s · 21:03:41 ✗` for a
-failed or aborted run, `‖ 1m12s · 21:03:41` for one stopped with `/pause`.
+failed or aborted run.
+
+A run stopped with `/pause` gets a pause line instead, `‖ 1m12s`: it counts
+how long the pause has lasted and keeps that length once the run continues. A continued run's clock goes on from the
+original request, so its total includes the pause. Clicking the run clock
+pauses the run, like `/pause`; clicking the pause line (or the pause in the
+state strip) continues it, like `/continue`. While a pause waits for the
+current step to finish, clicking its notice in the state strip withdraws it
+and the run goes on.
 
 The closing line is one kind of annotation — a line that marks a moment in the
 conversation rather than holding content. The others are the panel's notices:

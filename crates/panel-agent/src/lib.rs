@@ -1451,6 +1451,12 @@ impl AgentPanel {
         true
     }
 
+    /// Withdraw a pause asked for that the run has not reached yet.
+    fn cancel_pause(&mut self) {
+        self.runtime.cancel_pause();
+        self.pause_requested = false;
+    }
+
     /// Resume the paused run. Its clock goes on from the request, and the
     /// pause's line keeps how long the pause lasted.
     fn resume(&mut self) {
@@ -1617,10 +1623,10 @@ impl AgentPanel {
                 self.activity = None;
                 if self.run_paused {
                     // The run waits at a pause: its line ticks the pause's
-                    // length, and the run's own clock stays for `/continue`.
+                    // length (no time of day), and the run's own clock stays
+                    // for `/continue`.
                     self.pause_start = Some(Instant::now());
-                    self.transcript
-                        .end_run(0, &now_hms(), !self.run_failed, true);
+                    self.transcript.end_run(0, "", !self.run_failed, true);
                 } else if let Some(start) = self.run_start.take() {
                     self.transcript.end_run(
                         millis(start.elapsed()),
@@ -4581,8 +4587,10 @@ impl Panel for AgentPanel {
         for (row, line) in state.iter().enumerate() {
             buf.set_line(area.x, state_y + row as u16, line, text_width);
         }
-        // The strip's pause line (after its rule) continues the run on a click.
-        self.pause_row = (self.paused && !self.is_busy() && state.len() > 1).then_some(state_y + 1);
+        // The strip's pause line (after its rule) is a click target: it
+        // continues a paused run, or withdraws a pause not reached yet.
+        let pause_shown = (self.paused && !self.is_busy()) || self.pause_requested;
+        self.pause_row = (pause_shown && state.len() > 1).then_some(state_y + 1);
         if has_separator {
             let y = form_area.y - 1;
             let style = Style::default().fg(if ctx.is_focused {
@@ -5018,9 +5026,14 @@ impl Panel for AgentPanel {
                     && event.column < area.x + area.width
                     && event.row >= area.y
                     && event.row < area.y + area.height;
-                // The state strip's pause line continues the run.
-                if self.paused && self.pause_row == Some(event.row) {
-                    self.resume();
+                // The state strip's pause line continues a paused run, or
+                // withdraws a pause the run has not reached yet.
+                if self.pause_row == Some(event.row) {
+                    if self.paused && !self.is_busy() {
+                        self.resume();
+                    } else if self.pause_requested {
+                        self.cancel_pause();
+                    }
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 if !inside {
@@ -5675,6 +5688,88 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_pause_ticks_its_own_length_and_the_run_clock_resumes_from_the_request() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        panel.apply(AgentEvent::AgentStart);
+        let start = panel.run_start.expect("the run started");
+        panel.apply(AgentEvent::Paused);
+        panel.apply(AgentEvent::AgentEnd);
+        // Paused: the run keeps its start, and the pause's line counts the
+        // pause itself.
+        assert_eq!(panel.run_start, Some(start));
+        panel.pause_start = Some(Instant::now() - Duration::from_secs(3));
+        panel.tick();
+        let lines = strip_text(panel.transcript.lines(40, &panel.colors, false));
+        // The duration alone, no time of day.
+        assert_eq!(lines.last().map(|l| l.trim()), Some("‖ 3s"));
+        // Resumed: the pause's length stays on its line, the run's clock goes
+        // on from the request.
+        panel.paused = false;
+        panel.resuming = true;
+        panel.apply(AgentEvent::AgentStart);
+        assert_eq!(panel.run_start, Some(start));
+        assert!(panel.pause_start.is_none());
+        assert!(matches!(
+            panel.transcript.items().last(),
+            Some(Item::RunEnd { paused: true, elapsed_ms, .. }) if *elapsed_ms >= 3000
+        ));
+        // A fresh run (not a resume) starts its own clock.
+        panel.apply(AgentEvent::AgentEnd);
+        panel.apply(AgentEvent::AgentStart);
+        assert_ne!(panel.run_start, Some(start));
+    }
+
+    #[test]
+    fn clicks_on_the_run_clock_pause_and_on_the_pause_resume() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        panel.apply(AgentEvent::AgentStart);
+        panel.apply(AgentEvent::MessageStart);
+        let rows = render_text(&mut panel, 40, 12);
+        let area = panel.transcript_area;
+        let y = rows
+            .iter()
+            .position(|r| {
+                transcript::RUN_FRAMES
+                    .iter()
+                    .any(|f| r.trim_start().starts_with(f))
+            })
+            .expect("the run clock is on screen") as u16;
+        let click = |panel: &mut AgentPanel, row| {
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::Up(MouseButton::Left),
+            ] {
+                panel.handle_mouse(
+                    MouseEvent {
+                        kind,
+                        column: area.x + 30,
+                        row,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    area,
+                );
+            }
+        };
+        click(&mut panel, y);
+        assert!(panel.pause_requested, "a click on the clock asks to pause");
+        // A click on the strip's pending-pause line withdraws it.
+        let _ = render_text(&mut panel, 40, 12);
+        let row = panel.pause_row.expect("the strip shows the pending pause");
+        click(&mut panel, row);
+        assert!(!panel.pause_requested, "the pending pause is withdrawn");
+        // Asked again, the pause goes ahead.
+        click(&mut panel, y);
+        assert!(panel.pause_requested);
+        // Once paused, the pause's line is the target that resumes.
+        panel.apply(AgentEvent::Paused);
+        panel.apply(AgentEvent::AgentEnd);
+        let _ = render_text(&mut panel, 40, 12);
+        let line = panel.transcript.line_count() - 1;
+        assert!(panel.transcript.is_live_pause_line(line));
+        assert!(!panel.transcript.is_clock_line(line));
     }
 
     fn type_text(panel: &mut AgentPanel, text: &str) {

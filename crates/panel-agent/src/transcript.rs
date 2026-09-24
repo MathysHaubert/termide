@@ -1612,9 +1612,14 @@ pub(crate) const RUN_FRAMES: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "�
 /// closed the run or on its closing line.
 pub(crate) const RUN_GLYPH: &str = "✻";
 
-/// The text of a run's closing line after its glyph: `3m41s · 21:03:41`.
+/// The text of a run's closing line after its glyph: `3m41s · 21:03:41`, or
+/// the duration alone for a pause, which carries no time of day.
 pub(crate) fn run_end_text(elapsed_ms: u32, at: &str) -> String {
-    format!("{} · {at}", fmt_dur(elapsed_ms))
+    if at.is_empty() {
+        fmt_dur(elapsed_ms)
+    } else {
+        format!("{} · {at}", fmt_dur(elapsed_ms))
+    }
 }
 
 /// One-line description of a call's arguments: the command for `bash`, the
@@ -2238,12 +2243,12 @@ mod tests {
         // A paused run rests on `‖` and carries no status.
         transcript.push(Item::RunEnd {
             elapsed_ms: 72_000,
-            at: "21:05:00".into(),
+            at: String::new(),
             ok: true,
             paused: true,
         });
         let lines = text_of(transcript.lines(60, &colors, false));
-        assert_eq!(lines.last().unwrap().trim(), "‖ 1m12s · 21:05:00");
+        assert_eq!(lines.last().unwrap().trim(), "‖ 1m12s");
         // It is a closing line, not a block: never folded, never selected.
         assert!(!transcript.toggle_expanded(1));
         assert!(!transcript.is_selectable(1));

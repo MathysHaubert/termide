@@ -99,6 +99,9 @@ pub trait Backend: Send {
     /// Ask the active run to pause gracefully at the next step boundary; the
     /// default is a no-op (an external agent has no such control).
     fn pause(&self) {}
+    /// Withdraw a pause asked for that the run has not reached yet; the
+    /// default is a no-op, like [`Self::pause`].
+    fn cancel_pause(&self) {}
     /// Continue a paused run; the default reports it is unsupported.
     fn resume(&self) -> Result<(), PromptError> {
         Err(PromptError::Unsupported)
@@ -157,6 +160,9 @@ impl Backend for AgentRuntime {
     }
     fn pause(&self) {
         AgentRuntime::pause(self);
+    }
+    fn cancel_pause(&self) {
+        AgentRuntime::cancel_pause(self);
     }
     fn resume(&self) -> Result<(), PromptError> {
         AgentRuntime::resume(self)
@@ -391,6 +397,12 @@ impl AgentRuntime {
         if self.is_busy() {
             self.queues.pause();
         }
+    }
+
+    /// Withdraw a pause asked for that the run has not reached yet. Once the
+    /// run has stopped at it, the pause stands and `resume` continues it.
+    pub fn cancel_pause(&self) {
+        self.queues.clear_pause();
     }
 
     /// Continue a paused run on the existing transcript. Fails with
