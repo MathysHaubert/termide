@@ -231,7 +231,12 @@ pub(crate) fn resolve_mount_for_path(path: &Path) -> Option<MountInfo> {
 /// larger: on macOS/APFS it is 1 MiB while `f_frsize` is 4 KiB, so scaling by
 /// `f_bsize` inflates every figure 256x (a 1.8 TB volume reports 464 TB).
 /// Some platforms leave `f_frsize` unset, hence the `f_bsize` fallback.
+///
+/// The `statvfs` field types differ between platforms (`u64` on 64-bit Linux,
+/// `u32` block counts on macOS), so the `as u64` casts are needed on some and
+/// redundant on others.
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 pub(crate) fn statvfs_bytes(path: &Path) -> Option<(u64, u64)> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -452,6 +457,8 @@ mod tests {
     /// on macOS scaling by `f_bsize` (1 MiB) instead of `f_frsize` (4 KiB)
     /// inflated a 1.8 TB volume to ~464 TB.
     #[cfg(unix)]
+    // The casts mirror `statvfs_bytes`, which explains why they stay.
+    #[allow(clippy::unnecessary_cast)]
     #[test]
     fn test_statvfs_bytes_matches_statvfs_and_is_plausible() {
         let path = std::path::Path::new("/");
