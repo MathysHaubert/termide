@@ -11,10 +11,10 @@ use crate::app::App;
 use termide_i18n as i18n;
 use termide_theme::Theme;
 use termide_ui_render::{
-    get_bookmarks_group_items, get_bookmarks_items, get_commands_group_items, get_commands_items,
-    get_menu_item_x_position, get_options_items, get_sessions_items, get_shell_items,
-    get_tools_items, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX,
-    SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
+    dropdown_width, get_bookmarks_group_items, get_bookmarks_items, get_commands_group_items,
+    get_commands_items, get_menu_item_x_position, get_options_items, get_sessions_items,
+    get_shell_items, get_tools_items, BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX,
+    OPTIONS_MENU_INDEX, SESSIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 
 /// Hit-test a dropdown menu and return the clicked item index (if any).
@@ -28,7 +28,7 @@ pub(in crate::app) fn hit_dropdown_item(
     dropdown_y: u16,
     items: &[termide_ui_render::DropdownItem],
 ) -> Option<usize> {
-    let width = items.iter().map(|i| i.label.width()).max().unwrap_or(10) as u16 + 4;
+    let width = dropdown_width(items);
     let height = items.len() as u16 + 2; // +2 for borders
     if x >= menu_x && x < menu_x + width && y >= dropdown_y && y < dropdown_y + height {
         let item_index = y.saturating_sub(dropdown_y + 1) as usize;
@@ -52,12 +52,7 @@ impl App {
             self.detach_available(),
             Some(&self.state.config.general.keybindings),
         );
-        let options_width = options_items
-            .iter()
-            .map(|i| i.label.width())
-            .max()
-            .unwrap_or(10) as u16
-            + 4;
+        let options_width = dropdown_width(&options_items);
         let options_height = options_items.len() as u16 + 2; // +2 for borders
 
         // Check if nested submenu (Themes) is open
@@ -238,8 +233,7 @@ impl App {
             if !shell_items.is_empty() {
                 // Calculate nested dropdown position (same formula as in ui.rs rendering)
                 let dropdown_y = 1_u16;
-                let parent_width =
-                    items.iter().map(|i| i.label.width()).max().unwrap_or(10) as u16 + 4;
+                let parent_width = dropdown_width(&items);
                 let nested_x = menu_x + parent_width;
                 let nested_y = dropdown_y + 1 + self.state.ui.tools_submenu.selected as u16;
                 if let Some(index) = hit_dropdown_item(x, y, nested_x, nested_y, &shell_items) {
@@ -289,12 +283,7 @@ impl App {
                 if !nested_items.is_empty() {
                     let menu_x = get_menu_item_x_position(COMMANDS_MENU_INDEX);
                     let parent_items = get_commands_items(&registry);
-                    let parent_width = parent_items
-                        .iter()
-                        .map(|i| i.label.width())
-                        .max()
-                        .unwrap_or(10) as u16
-                        + 4;
+                    let parent_width = dropdown_width(&parent_items);
                     let nested_x = menu_x + parent_width;
                     let nested_y = 2 + self.state.ui.commands_submenu.selected as u16;
                     if let Some(index) = hit_dropdown_item(x, y, nested_x, nested_y, &nested_items)
@@ -378,12 +367,7 @@ impl App {
                 );
                 if !nested_items.is_empty() {
                     let menu_x = get_menu_item_x_position(BOOKMARKS_MENU_INDEX);
-                    let parent_width = bookmarks_items
-                        .iter()
-                        .map(|i| i.label.width())
-                        .max()
-                        .unwrap_or(10) as u16
-                        + 4;
+                    let parent_width = dropdown_width(&bookmarks_items);
                     let nested_x = menu_x + parent_width;
                     let nested_y = 2 + self.state.ui.bookmarks_submenu.selected as u16;
                     if let Some(index) = hit_dropdown_item(x, y, nested_x, nested_y, &nested_items)
@@ -406,5 +390,49 @@ impl App {
 
         self.state.close_menu();
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use termide_ui_render::DropdownItem;
+
+    // Regression: `hit_dropdown_item` sized dropdowns as `label + 4`, while
+    // `Dropdown` draws them `label + shortcut column + 6` wide. Clicks on the
+    // right part of a drawn dropdown fell outside it, and nested submenus
+    // (placed at `menu_x + drawn width`) were hit-tested at the wrong column.
+
+    #[test]
+    fn click_on_shortcut_column_selects_the_row() {
+        let items = vec![
+            DropdownItem::new("Open", "open"),
+            DropdownItem::new("Terminal", "terminal")
+                .with_submenu()
+                .with_shortcut(Some("Alt+T".into())),
+            DropdownItem::new("Files", "files").with_shortcut(Some("Alt+F".into())),
+        ];
+        let width = dropdown_width(&items);
+
+        // On the "Alt+F" text of the "Files" row (index 2, below the border).
+        assert_eq!(hit_dropdown_item(width - 4, 3, 0, 0, &items), Some(2));
+        // One column past the right border.
+        assert_eq!(hit_dropdown_item(width, 3, 0, 0, &items), None);
+    }
+
+    #[test]
+    fn click_near_right_border_of_nested_submenu_selects_the_row() {
+        let shells = vec![
+            DropdownItem::new("Sh", "/bin/sh"),
+            DropdownItem::new("Bash", "/bin/bash"),
+        ];
+        let (x0, y0) = (20, 3);
+        let width = dropdown_width(&shells);
+
+        // Last column inside the right border, on the "Bash" row.
+        assert_eq!(
+            hit_dropdown_item(x0 + width - 2, y0 + 2, x0, y0, &shells),
+            Some(1)
+        );
     }
 }
