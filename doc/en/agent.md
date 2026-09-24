@@ -67,7 +67,7 @@ built-in shortcut for what an agent's own `[acp]` table does by hand.
 The session fills the panel, the input box sits at the bottom, under a titled
 border that carries the agent's name (`─ default ─`) so parallel agent panels
 are easy to tell apart. A long line wraps to the panel width and the box grows
-to fit — up to five rows — before it starts scrolling. Like a new
+to fit — up to half the panel's height — before it starts scrolling. Like a new
 terminal, the agent works in the directory of the panel that had focus when
 you opened it (a file manager's directory, an editor's file), or in the project
 root. The panel title is your first request, so several agent panels stay
@@ -254,7 +254,7 @@ in `/` and reopens the list for its contents, so you can drill in. The agent
 reads the file you name; `@` is only quick path entry, nothing is attached
 behind your back.
 
-A large paste (more than 20 lines or 2000 characters) is held out of the
+A large paste (more than five lines or 2000 characters) is held out of the
 prompt box as a short `[#1 pasted 40 lines]` placeholder instead of flooding
 it; the full text is spliced back in place of the placeholder when you send,
 so the model still gets all of it. A smaller paste goes in as it is.

@@ -45,12 +45,10 @@ use termide_ui::{
 
 pub use transcript::{Item, NoticeKind, Transcript};
 
-/// Longest input the panel grows to before it scrolls.
-const MAX_INPUT_ROWS: u16 = 5;
 /// A paste past either bound is held as a short placeholder rather than
 /// inlined, so a big block does not swamp the prompt box.
 const PASTE_MAX_CHARS: usize = 2000;
-const PASTE_MAX_LINES: usize = 20;
+const PASTE_MAX_LINES: usize = 5;
 /// Context-menu action that renames the session.
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that deletes the session (behind a confirmation).
@@ -3377,11 +3375,13 @@ impl AgentPanel {
 
     fn input_rows(&self, available: u16, width: u16) -> u16 {
         // Size by wrapped (visual) rows so a long prompt grows the box instead
-        // of being clipped; the `› ` prompt takes two columns.
+        // of being clipped; the `› ` prompt takes two columns. It grows up to
+        // half the panel, leaving the other half to the conversation, and
+        // scrolls beyond that.
         let text_width = width.saturating_sub(2).max(1) as usize;
         let rows =
             termide_ui::input_bar::wrapped_row_count(&self.input_text(), text_width).max(1) as u16;
-        rows.min(MAX_INPUT_ROWS)
+        rows.min((available / 2).max(1))
             .min(available.saturating_sub(2).max(1))
     }
 
@@ -5575,6 +5575,34 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    #[test]
+    fn the_input_grows_to_half_the_panel() {
+        let mut panel = panel(vec![]);
+        let text = (1..=12)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panel.input_area_mut().insert_str(&text);
+        // A 40-row panel lets the prompt take 20 rows; 12 lines fit in full.
+        assert_eq!(panel.input_rows(40, 60), 12);
+        // A 16-row one stops it at 8, and the prompt scrolls inside.
+        assert_eq!(panel.input_rows(16, 60), 8);
+    }
+
+    #[test]
+    fn a_paste_of_more_than_five_lines_is_masked() {
+        let mut panel = panel(vec![]);
+        panel.paste("a\nb\nc\nd\ne");
+        assert_eq!(
+            panel.input_text(),
+            "a\nb\nc\nd\ne",
+            "five lines stay inline"
+        );
+        let mut panel = self::panel(vec![]);
+        panel.paste("1\n2\n3\n4\n5\n6");
+        assert_eq!(panel.input_text(), "[#1 pasted 6 lines]");
     }
 
     #[test]
