@@ -461,6 +461,8 @@ impl Translation for RuntimeTranslation {
         settings_agent_reasoning,
         settings_agent_autofold,
         settings_web_backend,
+        menu_ai_show_browser,
+        menu_ai_hide_browser,
         settings_web_engine,
         settings_web_display,
         settings_web_chrome_path,

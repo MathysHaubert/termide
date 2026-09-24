@@ -250,11 +250,39 @@ fn base_tools(dirs: &AgentDirs, web: Option<&Arc<Web>>) -> ToolRegistry {
     tools
 }
 
+/// The web service of the process and the settings it was built from.
+static SHARED: std::sync::Mutex<Option<(WebConfig, Arc<Web>)>> = std::sync::Mutex::new(None);
+
+/// The web service the agents share, once an agent panel has created it.
+fn current_web() -> Option<Arc<Web>> {
+    SHARED
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(_, web)| Arc::clone(web))
+}
+
+/// For the AI menu: whether the agents' browser is shown in a window, `None`
+/// when there is no browser to show (no agent yet, or no browser at all).
+#[must_use]
+pub fn web_browser_shown() -> Option<bool> {
+    current_web()
+        .filter(|web| web.can_show())
+        .map(|web| web.is_watching())
+}
+
+/// Show or hide the agents' browser window; returns whether it is now shown.
+pub(crate) fn toggle_web_browser() -> Option<bool> {
+    let web = current_web().filter(|web| web.can_show())?;
+    let shown = !web.is_watching();
+    web.set_watching(shown);
+    Some(shown)
+}
+
 /// The web service every agent of the process shares, so one browser serves
 /// them all. It is rebuilt only when the settings that shape it change; a
 /// panel still holding the old one keeps it until it closes.
 fn shared_web(settings: &WebSettings, dirs: &AgentDirs) -> Arc<Web> {
-    static SHARED: std::sync::Mutex<Option<(WebConfig, Arc<Web>)>> = std::sync::Mutex::new(None);
     let config = web_config(settings, dirs);
     let mut shared = SHARED.lock().unwrap();
     match shared.as_ref() {

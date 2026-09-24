@@ -329,15 +329,32 @@ pub const PROJECTS_SUBMENU_CHANGE_ROOT: usize = 2;
 /// The AI submenu: four fixed sections, each opening a nested list. The item
 /// keys (`agents`/`sessions`/`skills`/`prompts`) are the contract the app's AI
 /// menu handler decodes; the `AI_SUBMENU_*` indices below address the rows.
-pub fn get_ai_items() -> Vec<DropdownItem> {
+///
+/// `browser` is whether the agents' web browser is shown in a window, `None`
+/// when there is no browser to show; with a value, a separator and a row
+/// keyed `browser` that switches it follow the sections.
+pub fn get_ai_items(browser: Option<bool>) -> Vec<DropdownItem> {
     let t = i18n::t();
-    vec![
+    let mut items = vec![
         DropdownItem::new(t.menu_ai_agents(), "agents").with_submenu(),
         DropdownItem::new(t.menu_ai_sessions(), "sessions").with_submenu(),
         DropdownItem::new(t.menu_ai_skills(), "skills").with_submenu(),
         DropdownItem::new(t.menu_ai_prompts(), "prompts").with_submenu(),
-    ]
+    ];
+    if let Some(shown) = browser {
+        let label = if shown {
+            t.menu_ai_hide_browser()
+        } else {
+            t.menu_ai_show_browser()
+        };
+        items.push(DropdownItem::separator());
+        items.push(DropdownItem::new(label, AI_BROWSER_KEY));
+    }
+    items
 }
+
+/// Key of the AI submenu row that shows or hides the agents' browser.
+pub const AI_BROWSER_KEY: &str = "browser";
 
 /// Number of items in the AI submenu.
 pub const AI_SUBMENU_ITEM_COUNT: usize = 4;
@@ -1070,6 +1087,23 @@ mod menu_shortcut_tests {
             Some("Alt+H"),
             "only the primary key, not the whole `Alt+H, F1` list"
         );
+    }
+
+    #[test]
+    fn the_browser_row_follows_the_ai_sections_only_when_there_is_a_browser() {
+        let plain = get_ai_items(None);
+        assert_eq!(plain.len(), AI_SUBMENU_ITEM_COUNT);
+        let with_browser = get_ai_items(Some(false));
+        assert_eq!(with_browser.len(), AI_SUBMENU_ITEM_COUNT + 2);
+        assert!(with_browser[AI_SUBMENU_ITEM_COUNT].is_separator);
+        let row = &with_browser[AI_SUBMENU_ITEM_COUNT + 1];
+        assert_eq!(row.key, AI_BROWSER_KEY);
+        assert_ne!(
+            row.label,
+            get_ai_items(Some(true))[AI_SUBMENU_ITEM_COUNT + 1].label
+        );
+        // The sections keep their indices.
+        assert_eq!(with_browser[AI_SUBMENU_PROMPTS].key, "prompts");
     }
 
     /// The TOOLS_SUBMENU_* indices address rows of `get_tools_items`; the two

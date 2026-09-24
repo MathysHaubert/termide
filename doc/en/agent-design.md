@@ -185,7 +185,18 @@ watching the agent: every page opens in the tab the browser started with,
 which is not closed after reading, so the last page stays on screen for a
 look or the developer tools; if the user closes it, the next page opens in a
 new one that stays in turn. The tab is not brought to the front, so the
-terminal keeps the focus. Without a display server the browser runs headless
+terminal keeps the focus.
+
+Whether to watch is the user's call, not the model's, so it is not a tool:
+a second tool doing what `fetch` does with a window would cost schema tokens
+on every request and invite the model to pick the wrong one, and Playwright
+MCP and browser-use likewise make headless a server setting *(unverified)*.
+Beside the setting, the **AI** menu has a switch, **Show/Hide browser
+window**: it flips a flag on the shared service and relaunches the browser on
+a thread of its own, so the window appears or goes at once without blocking
+the UI behind a call in progress; the idle shutdown leaves a watched browser
+alone. "Show me this page" is a different request, answered in the user's
+own browser (`open <url>` through `bash`), not in the agent's. Without a display server the browser runs headless
 whatever the setting says.
 
 When an engine answers with a challenge anyway, its window is restored and

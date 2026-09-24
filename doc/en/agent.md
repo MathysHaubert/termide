@@ -335,7 +335,11 @@ display = "headless"     # headless (no window); minimized; visible
 still tells a windowless browser apart. `visible` leaves the window on screen
 to watch the agent work: every page opens in the same tab, which stays on the
 last page the agent read, so you can look at it or open the developer tools
-there. Closing that tab is fine; the next page opens in a new one.
+there. Closing that tab is fine; the next page opens in a new one. To watch
+for a while without changing the setting, use **Show browser window** in the
+**AI** menu: the browser is relaunched in a visible window at once and stays
+there, idle or not, until **Hide browser window** — for every agent panel,
+since they share one browser. The profile and its cookies carry over.
 On Linux without a display server the browser runs without a window whatever
 the setting says.
 
@@ -465,6 +469,10 @@ together (see [The agent directory](#the-agent-directory)).
   by running an agent, so they have no create rows.
 - Each session row shows, dim on the right, when it was last worked on
   (e.g. "2h ago").
+
+Below the sections, once an agent panel has been opened, **Show browser
+window** puts the agents' web browser on screen to watch it work (see
+[Web](#web)), and **Hide browser window** takes it away again.
 
 ## The agent directory
 

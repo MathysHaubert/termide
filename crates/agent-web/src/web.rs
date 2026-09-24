@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -105,6 +106,9 @@ pub struct Web {
     profile: PathBuf,
     slot: Mutex<BrowserSlot>,
     cache: Mutex<VecDeque<CachedPage>>,
+    /// The user asked to watch the browser: it runs in a visible window
+    /// whatever the display setting says, until they stop watching.
+    watching: AtomicBool,
 }
 
 impl Web {
@@ -121,6 +125,14 @@ impl Web {
         if config.backend == Backend::Chrome && chrome.is_none() {
             log::warn!("web backend is chrome but no usable browser was found; using http");
         }
+        // `visible` in the settings starts out watched; stopping then falls
+        // back to no window.
+        let display = effective_display(config.display);
+        let unwatched = if display == Display::Visible {
+            Display::Headless
+        } else {
+            display
+        };
         Arc::new(Self {
             chrome,
             engine: config.engine,
@@ -128,12 +140,64 @@ impl Web {
             slot: Mutex::new(BrowserSlot {
                 browser: None,
                 last_used: Instant::now(),
-                display: effective_display(config.display),
-                configured: effective_display(config.display),
+                display: unwatched,
+                configured: unwatched,
                 reaper_started: false,
             }),
             cache: Mutex::new(VecDeque::new()),
+            watching: AtomicBool::new(display == Display::Visible),
         })
+    }
+
+    /// Whether the browser can be shown in a window at all: there is one to
+    /// drive and a display server to show it on.
+    #[must_use]
+    pub fn can_show(&self) -> bool {
+        self.chrome.is_some() && effective_display(Display::Visible) == Display::Visible
+    }
+
+    /// Whether the browser runs in a visible window for the user to watch.
+    #[must_use]
+    pub fn is_watching(&self) -> bool {
+        self.watching.load(Ordering::Relaxed)
+    }
+
+    /// Show the browser in a visible window, or stop showing it. Returns at
+    /// once; the browser is relaunched on a thread of its own (after any call
+    /// in progress), so the window opens or closes right away rather than on
+    /// the agent's next page. Profile and cookies carry over.
+    pub fn set_watching(self: &Arc<Self>, watching: bool) {
+        if !self.can_show() || self.watching.swap(watching, Ordering::Relaxed) == watching {
+            return;
+        }
+        let web = Arc::clone(self);
+        std::thread::spawn(move || {
+            if watching {
+                if let Err(error) = web.with_browser(&CancelToken::new(), |_, _| Ok(())) {
+                    log::warn!("cannot show the web browser: {error}");
+                }
+                return;
+            }
+            let mut slot = web.slot.lock().unwrap();
+            let shown = slot
+                .browser
+                .as_ref()
+                .is_some_and(|browser| browser.display() == Display::Visible);
+            if shown {
+                if let Some(browser) = slot.browser.take() {
+                    browser.close();
+                }
+            }
+        });
+    }
+
+    /// The display a browser launched now gets.
+    fn launch_display(&self, slot: &BrowserSlot) -> Display {
+        if self.is_watching() {
+            Display::Visible
+        } else {
+            slot.display
+        }
     }
 
     /// Whether `web_search` can work: it needs the browser and an engine.
@@ -213,17 +277,23 @@ impl Web {
         if cancel.is_cancelled() {
             return Err("cancelled".into());
         }
-        let alive = slot.browser.as_mut().is_some_and(Browser::is_alive);
-        if !alive {
-            slot.browser = None;
-            slot.browser = Some(Browser::launch(chrome, &self.profile, slot.display)?);
+        let display = self.launch_display(&slot);
+        let usable = slot
+            .browser
+            .as_mut()
+            .is_some_and(|browser| browser.is_alive() && browser.display() == display);
+        if !usable {
+            // Dead, or started with another display (watching was switched).
+            if let Some(browser) = slot.browser.take() {
+                browser.close();
+            }
+            slot.browser = Some(Browser::launch(chrome, &self.profile, display)?);
             if !slot.reaper_started {
                 slot.reaper_started = true;
                 start_reaper(Arc::downgrade(self));
             }
         }
         slot.last_used = Instant::now();
-        let display = slot.display;
         let result = work(slot.browser.as_ref().expect("launched above"), display);
         slot.last_used = Instant::now();
         result
@@ -356,8 +426,9 @@ fn start_reaper(web: Weak<Web>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(IDLE_CHECK);
         let Some(web) = web.upgrade() else { return };
+        // A window the user is watching stays until they stop watching.
         let idle = match web.slot.try_lock() {
-            Ok(mut slot) if slot.last_used.elapsed() >= IDLE_SHUTDOWN => {
+            Ok(mut slot) if slot.last_used.elapsed() >= IDLE_SHUTDOWN && !web.is_watching() => {
                 slot.display = slot.configured;
                 slot.browser.take()
             }
@@ -472,6 +543,39 @@ mod tests {
         }
         assert!(looks_like_html(b"  <!DOCTYPE html><html>"));
         assert!(!looks_like_html(b"{\"a\": 1}"));
+    }
+
+    #[test]
+    fn a_visible_setting_starts_watched_and_stops_to_no_window() {
+        let web = Web::new(WebConfig {
+            backend: Backend::Http,
+            engine: None,
+            chrome_path: None,
+            display: Display::Visible,
+            profile: std::env::temp_dir(),
+        });
+        let slot = web.slot.lock().unwrap();
+        // Without a display server the setting itself falls back to headless.
+        if effective_display(Display::Visible) == Display::Visible {
+            assert!(web.is_watching());
+            assert_eq!(web.launch_display(&slot), Display::Visible);
+        }
+        web.watching.store(false, Ordering::Relaxed);
+        assert_eq!(web.launch_display(&slot), Display::Headless);
+    }
+
+    #[test]
+    fn watching_needs_a_browser() {
+        let web = Web::new(WebConfig {
+            backend: Backend::Http,
+            engine: None,
+            chrome_path: None,
+            display: Display::Headless,
+            profile: std::env::temp_dir(),
+        });
+        assert!(!web.can_show());
+        web.set_watching(true);
+        assert!(!web.is_watching(), "nothing to show without a browser");
     }
 
     #[test]

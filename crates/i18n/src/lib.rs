@@ -662,6 +662,9 @@ pub trait Translation: Send + Sync {
     fn settings_agent_autofold(&self) -> &str;
     /// Settings modal: AI tab, web tools field labels.
     fn settings_web_backend(&self) -> &str;
+    /// AI menu: the row that shows or hides the agents' web browser window.
+    fn menu_ai_show_browser(&self) -> &str;
+    fn menu_ai_hide_browser(&self) -> &str;
     fn settings_web_engine(&self) -> &str;
     fn settings_web_display(&self) -> &str;
     fn settings_web_chrome_path(&self) -> &str;

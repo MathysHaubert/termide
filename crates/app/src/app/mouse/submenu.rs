@@ -323,7 +323,7 @@ impl App {
     /// Handle click on the AI submenu (sections) and its nested section list.
     pub(in crate::app) fn handle_ai_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
         let menu_x = get_menu_item_x_position(AI_MENU_INDEX);
-        let ai_items = get_ai_items();
+        let ai_items = get_ai_items(super::super::agent_panel::web_browser_shown());
 
         // Nested section list first.
         if self.state.ui.ai_nested.open {

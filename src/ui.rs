@@ -156,7 +156,7 @@ fn render_dropdowns_and_modals(
         let menu_x = get_menu_item_x_position(AI_MENU_INDEX);
         let dropdown_y = 1_u16;
 
-        let ai_items = get_ai_items();
+        let ai_items = get_ai_items(termide_app::web_browser_shown());
         let dropdown = Dropdown::new(
             &ai_items,
             state.ui.ai_submenu.selected,
