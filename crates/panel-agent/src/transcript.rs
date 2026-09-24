@@ -48,11 +48,18 @@ fn foldable_lines(item: &Item) -> usize {
         Item::Thinking { text, .. } => text.trim().lines().count(),
         // The answer is always shown in full, so it never folds.
         Item::Assistant { .. } => 0,
-        Item::Tool { result, live, .. } => match (result, live) {
-            (Some(result), _) => result.plain_text().lines().count(),
-            (None, Some(live)) => live.lines().count(),
-            (None, None) => 0,
-        },
+        Item::Tool {
+            call, result, live, ..
+        } => {
+            let output = match (result, live) {
+                (Some(result), _) => result.plain_text().lines().count(),
+                (None, Some(live)) => live.lines().count(),
+                (None, None) => 0,
+            };
+            // A long shell command folds too, even when its output is short.
+            let command = shell_command(call).map_or(0, |c| c.lines().count());
+            output.max(command)
+        }
         Item::Notice { .. } => 0,
     }
 }
@@ -630,11 +637,182 @@ fn fill_bg(lines: &mut [Line<'static>], width: u16, bg: ratatui::style::Color) {
     }
 }
 
-/// The first line of a tool call: `$ <command>` for a shell, a localized
-/// action plus its path for read/write/edit, else the tool name and a summary.
-fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<'static>> {
+/// The command of a shell call, whose headline wraps and folds instead of
+/// being a single clipped line.
+fn shell_command(call: &ToolCall) -> Option<String> {
+    matches!(call.name.as_str(), "bash" | "shell").then(|| {
+        call.arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .replace('\t', "    ")
+    })
+}
+
+/// The `$ <command>` headline of a shell call after `prefix` (the fold
+/// marker, if any), each command line wrapped under the `$` rather than
+/// clipped. Collapsed, a command of more than [`FOLD_THRESHOLD`] lines folds
+/// like every other block: its first line, a "… N more lines" note, the last
+/// few.
+fn command_lines(
+    command: &str,
+    mut prefix: Vec<Span<'static>>,
+    collapsed: bool,
+    width: u16,
+    colors: &ThemeColors,
+) -> Vec<Line<'static>> {
     let t = termide_i18n::t();
     let dim = Style::default().fg(colors.disabled);
+    prefix.push(Span::styled("$ ", Style::default().fg(colors.info)));
+    let indent: usize = prefix.iter().map(|s| width_of(&s.content)).sum();
+    let avail = (width as usize).saturating_sub(indent);
+    let all: Vec<&str> = command.lines().collect();
+    let (head, hidden, tail) = if collapsed && all.len() > FOLD_THRESHOLD {
+        let (hidden, tail_start) = fold_split(all.len());
+        (&all[..FOLD_HEAD_LINES], hidden, &all[tail_start..])
+    } else {
+        (&all[..], 0, &all[..0])
+    };
+    let mut prefix = Some(prefix);
+    let mut lines = Vec::new();
+    let mut push_rows = |line: &str, lines: &mut Vec<Line<'static>>| {
+        for row in wrap_row(line, avail) {
+            let mut spans = prefix
+                .take()
+                .unwrap_or_else(|| vec![Span::raw(" ".repeat(indent))]);
+            spans.push(Span::styled(row, dim));
+            lines.push(Line::from(spans));
+        }
+    };
+    if all.is_empty() {
+        push_rows("", &mut lines);
+    }
+    for line in head {
+        push_rows(line, &mut lines);
+    }
+    if hidden > 0 {
+        lines.push(Line::styled(
+            format!("{}{}", " ".repeat(indent), t.agent_more_lines(hidden)),
+            dim,
+        ));
+    }
+    for line in tail {
+        push_rows(line, &mut lines);
+    }
+    lines
+}
+
+/// Split `line` into rows no wider than `width` columns, breaking after the
+/// last space in reach and mid-word only when a row has none. Spaces are kept,
+/// so a command reads exactly as it was run.
+fn wrap_row(line: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut row_w = 0;
+    // Byte offset just past the row's last space, where a break is clean.
+    let mut last_space: Option<usize> = None;
+    for ch in line.chars() {
+        let cw = width_of(ch.encode_utf8(&mut [0; 4]));
+        if row_w + cw > width && !row.is_empty() {
+            let rest = last_space.map_or_else(String::new, |cut| row.split_off(cut));
+            rows.push(std::mem::replace(&mut row, rest));
+            row_w = width_of(&row);
+            last_space = None;
+        }
+        row.push(ch);
+        row_w += cw;
+        if ch == ' ' {
+            last_space = Some(row.len());
+        }
+    }
+    rows.push(row);
+    rows
+}
+
+/// How a line of an edit's result is painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffKind {
+    /// The summary sentence before the diff.
+    Summary,
+    /// A `---`/`+++` file header.
+    File,
+    /// A `@@` hunk header or a `\ No newline` note.
+    Hunk,
+    Added,
+    Removed,
+    Context,
+}
+
+/// Classify every line of an edit's result. A `---`/`+++` line is a file
+/// header only before the first hunk; inside one it is a removed or added line
+/// whose text happens to start with dashes or pluses.
+fn diff_kinds(lines: &[&str]) -> Vec<DiffKind> {
+    let mut in_diff = false;
+    let mut in_hunk = false;
+    lines
+        .iter()
+        .map(|line| {
+            if line.starts_with("@@") {
+                in_diff = true;
+                in_hunk = true;
+                return DiffKind::Hunk;
+            }
+            if !in_hunk && (line.starts_with("--- ") || line.starts_with("+++ ")) {
+                in_diff = true;
+                return DiffKind::File;
+            }
+            if !in_hunk {
+                return if in_diff {
+                    DiffKind::File
+                } else {
+                    DiffKind::Summary
+                };
+            }
+            match line.as_bytes().first() {
+                Some(b'+') => DiffKind::Added,
+                Some(b'-') => DiffKind::Removed,
+                Some(b'\\') => DiffKind::Hunk,
+                _ => DiffKind::Context,
+            }
+        })
+        .collect()
+}
+
+/// One indented line of tool output: dim, or — for an edit's diff — colored
+/// the way the git diff panel colors it, an added or removed line tinted
+/// across the whole row.
+fn output_line(
+    line: &str,
+    kind: Option<DiffKind>,
+    width: u16,
+    colors: &ThemeColors,
+) -> Line<'static> {
+    let style = match kind {
+        None | Some(DiffKind::Summary | DiffKind::Hunk) => Style::default().fg(colors.disabled),
+        Some(DiffKind::File) => Style::default().fg(colors.info),
+        Some(DiffKind::Context) => Style::default().fg(colors.fg),
+        Some(DiffKind::Added) => Style::default()
+            .fg(colors.success)
+            .bg(termide_ui::diff_line_bg(colors.success, colors.bg)),
+        Some(DiffKind::Removed) => Style::default()
+            .fg(colors.error)
+            .bg(termide_ui::diff_line_bg(colors.error, colors.bg)),
+    };
+    let mut spans = vec![Span::raw("  "), Span::styled(line.to_string(), style)];
+    if style.bg.is_some() {
+        let pad = (width as usize).saturating_sub(2 + width_of(line));
+        spans.push(Span::styled(" ".repeat(pad), style));
+    }
+    Line::from(spans)
+}
+
+/// The first line of a non-shell tool call (a shell's is [`command_lines`]):
+/// a localized action plus its path for read/write/edit, else the tool name
+/// and a summary.
+fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<'static>> {
+    let t = termide_i18n::t();
     let fg = Style::default().fg(colors.fg);
     let arg = |key: &str| {
         call.arguments
@@ -643,12 +821,7 @@ fn tool_headline(call: &ToolCall, width: u16, colors: &ThemeColors) -> Vec<Span<
             .unwrap_or("")
             .to_string()
     };
-    let accent = Style::default().fg(colors.info);
     match call.name.as_str() {
-        "bash" | "shell" => vec![
-            Span::styled("$ ", accent),
-            Span::styled(arg("command"), dim),
-        ],
         "read" => vec![
             Span::styled(format!("{} ", t.agent_tool_read()), fg),
             Span::styled(arg("path"), fg),
@@ -944,16 +1117,25 @@ fn render_item(
             // Trim the stray blank lines a command's output ends with, so the
             // padding stays even.
             let all: Vec<&str> = body.trim().lines().collect();
-            // Only a long output is worth folding; a short one shows in full
-            // with no marker.
-            let foldable = all.len() > FOLD_THRESHOLD;
+            // Only a long output or command is worth folding; a short one
+            // shows in full with no marker.
+            let foldable = is_foldable(item);
+            let output_folds = all.len() > FOLD_THRESHOLD;
             let mut head = Vec::new();
             if foldable {
                 head.push(Span::styled(if collapsed { "▸ " } else { "▾ " }, dim));
             }
-            head.extend(tool_headline(call, width, colors));
-            lines.push(Line::from(head));
-            if foldable && collapsed {
+            if let Some(command) = shell_command(call) {
+                lines.extend(command_lines(&command, head, collapsed, width, colors));
+            } else {
+                head.extend(tool_headline(call, width, colors));
+                lines.push(Line::from(head));
+            }
+            // An edit's result is a unified diff, painted like the git diff
+            // panel paints one.
+            let kinds = (call.name == "edit").then(|| diff_kinds(&all));
+            let kind = |i: usize| kinds.as_ref().map(|k| k[i]);
+            if output_folds && collapsed {
                 let start = all.len().saturating_sub(TOOL_PREVIEW_LINES);
                 if start > 0 {
                     lines.push(Line::styled(
@@ -961,12 +1143,12 @@ fn render_item(
                         dim,
                     ));
                 }
-                for line in &all[start..] {
-                    lines.push(Line::styled(format!("  {line}"), dim));
+                for (i, line) in all.iter().enumerate().skip(start) {
+                    lines.push(output_line(line, kind(i), width, colors));
                 }
             } else {
-                for line in all.iter().take(EXPANDED_OUTPUT_LINES) {
-                    lines.push(Line::styled(format!("  {line}"), dim));
+                for (i, line) in all.iter().enumerate().take(EXPANDED_OUTPUT_LINES) {
+                    lines.push(output_line(line, kind(i), width, colors));
                 }
                 if all.len() > EXPANDED_OUTPUT_LINES {
                     lines.push(Line::styled(
@@ -1381,6 +1563,98 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("▾ # rule 1")));
         assert!(lines.iter().any(|l| l.contains("rule 4")));
         assert!(lines.iter().any(|l| l.contains("rule 8")));
+    }
+
+    #[test]
+    fn a_long_command_wraps_under_its_prompt() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        let command = "cargo test --workspace --all-features -- --nocapture";
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": command })),
+            result: None,
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+        });
+        let lines = text_of(transcript.lines(20, &colors, false));
+        // No row is clipped: every one fits, continuation rows indent under
+        // the `$`, and the rows read back as the command.
+        assert!(lines.iter().all(|l| width_of(l) <= 20), "{lines:?}");
+        assert!(lines[1].starts_with("$ cargo test"));
+        assert!(lines[2].starts_with("  "));
+        let joined: String = lines[1..]
+            .iter()
+            .map(|l| l.strip_prefix("$ ").or(l.strip_prefix("  ")).unwrap())
+            .collect();
+        assert_eq!(joined, command);
+    }
+
+    #[test]
+    fn a_long_command_folds_like_other_blocks() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        let script = (1..=9)
+            .map(|n| format!("echo {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": script })),
+            result: Some(ToolResultMessage::text(&call("bash", json!({})), "ok")),
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+        });
+        // Collapsed: the first line behind the marker, the hidden count, then
+        // the last few — even though the output itself is short.
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(lines[1].starts_with("▸ $ echo 1"), "{lines:?}");
+        assert!(lines[2].contains("4 more lines"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "echo 9"));
+        assert!(!lines.iter().any(|l| l.trim() == "echo 3"));
+        assert!(transcript.toggle_expanded(0));
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(lines.iter().any(|l| l.trim() == "echo 3"));
+        assert!(lines[1].starts_with("▾ $ echo 1"));
+        // Continuation lines align under the command, past the marker and `$`.
+        assert!(lines[2].starts_with("    echo 2"), "{lines:?}");
+    }
+
+    #[test]
+    fn an_edit_result_is_colored_like_a_diff() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.set_autofold(false);
+        let body = "Edited a.rs (1 replacement).\n\n--- a/a.rs\n+++ b/a.rs\n\
+                    @@ -1,2 +1,2 @@\n keep\n-old\n+new\n--- dashes\n";
+        transcript.push(Item::Tool {
+            call: call("edit", json!({ "path": "a.rs" })),
+            result: Some(ToolResultMessage::text(&call("edit", json!({})), body)),
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+        });
+        let lines = transcript.lines(30, &colors, false).to_vec();
+        let style_of = |needle: &str| {
+            let line = lines
+                .iter()
+                .find(|l| l.spans.iter().any(|s| s.content == needle))
+                .unwrap_or_else(|| panic!("no line {needle:?}"));
+            let span = line.spans.iter().find(|s| s.content == needle).unwrap();
+            (span.style, line)
+        };
+        let (added, row) = style_of("+new");
+        assert_eq!(added.fg, Some(colors.success));
+        assert!(added.bg.is_some());
+        // The tint runs across the whole row, as in the git diff panel.
+        assert_eq!(width_of(&text_of(std::slice::from_ref(row))[0]), 30);
+        let (removed, _) = style_of("-old");
+        assert_eq!(removed.fg, Some(colors.error));
+        // Inside a hunk a line of dashes is a removal, not a file header.
+        assert_eq!(style_of("--- dashes").0.fg, Some(colors.error));
+        assert_eq!(style_of("--- a/a.rs").0.fg, Some(colors.info));
+        assert_eq!(style_of(" keep").0.fg, Some(colors.fg));
+        assert_eq!(style_of("Edited a.rs (1 replacement).").0.bg, None);
     }
 
     #[test]

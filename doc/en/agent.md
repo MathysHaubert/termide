@@ -136,8 +136,10 @@ same, keeping its command line and the last few lines of output. A block of
 five lines or fewer has nothing worth
 hiding, so it is shown in full with no fold marker. Your
 message reads as plain text on a faint background; the reasoning, the system
-prompt and a tool's output are dim text. A shell call reads as its command (dim)
-behind the `$ ` prompt, a file tool as a localized action and its path (`Read
+prompt and a tool's output are dim text, except an edit's diff, which is
+coloured the way the Git diff panel colours one. A shell call reads as its
+command (dim) behind the `$ ` prompt, wrapped to the width; a command longer
+than five lines folds like any other block. A file tool as a localized action and its path (`Read
 src/main.rs`), any other tool as its name and a summary. The reasoning is its own
 block above the answer, and its text wraps to the width. Every block except your
 message opens with a dim dashed rule that sets it apart from the one before. A
