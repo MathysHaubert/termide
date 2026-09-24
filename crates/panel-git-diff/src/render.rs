@@ -1,56 +1,12 @@
 //! Diff rendering (file headers, hunks, line numbers, scrollbar) for the Git Diff Panel.
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use unicode_width::UnicodeWidthStr;
 
 use termide_git::{self as git};
-use termide_ui::ScrollBar;
+use termide_ui::{diff_line_bg, ScrollBar};
 
 use crate::{FileStatus, GitDiffPanel, LineKind};
-
-/// Blend two colors together.
-/// `ratio` 0.0 = all color1, 1.0 = all color2
-fn blend_colors(color1: Color, color2: Color, ratio: f32) -> Color {
-    let (r1, g1, b1) = match color1 {
-        Color::Rgb(r, g, b) => (r, g, b),
-        Color::White => (255, 255, 255),
-        Color::Black => (0, 0, 0),
-        Color::Gray => (128, 128, 128),
-        Color::Red => (255, 0, 0),
-        Color::Green => (0, 255, 0),
-        Color::Yellow => (255, 255, 0),
-        Color::Blue => (0, 0, 255),
-        Color::Magenta => (255, 0, 255),
-        Color::Cyan => (0, 255, 255),
-        _ => (128, 128, 128),
-    };
-    let (r2, g2, b2) = match color2 {
-        Color::Rgb(r, g, b) => (r, g, b),
-        Color::White => (255, 255, 255),
-        Color::Black => (0, 0, 0),
-        Color::Gray => (128, 128, 128),
-        Color::Red => (255, 0, 0),
-        Color::Green => (0, 255, 0),
-        Color::Yellow => (255, 255, 0),
-        Color::Blue => (0, 0, 255),
-        Color::Magenta => (255, 0, 255),
-        Color::Cyan => (0, 255, 255),
-        _ => (128, 128, 128),
-    };
-
-    let ratio = ratio.clamp(0.0, 1.0);
-    let inv = 1.0 - ratio;
-
-    Color::Rgb(
-        (r1 as f32 * inv + r2 as f32 * ratio) as u8,
-        (g1 as f32 * inv + g2 as f32 * ratio) as u8,
-        (b1 as f32 * inv + b2 as f32 * ratio) as u8,
-    )
-}
 
 impl GitDiffPanel {
     /// Render the panel content
@@ -77,8 +33,8 @@ impl GitDiffPanel {
         self.visible_height = content_area.height as usize;
 
         // Colors for diff - blend theme colors with background for adaptive styling
-        let added_bg = blend_colors(theme.success, theme.bg, 0.85);
-        let removed_bg = blend_colors(theme.error, theme.bg, 0.85);
+        let added_bg = diff_line_bg(theme.success, theme.bg);
+        let removed_bg = diff_line_bg(theme.error, theme.bg);
         let added_style = Style::default().fg(theme.success).bg(added_bg);
         let removed_style = Style::default().fg(theme.error).bg(removed_bg);
         let context_style = Style::default().fg(theme.fg);
