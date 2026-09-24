@@ -42,7 +42,13 @@ fn main() {
         let browser =
             termide_agent_web::Browser::launch(&chrome, &profile, display).expect("launch");
         let cancel = CancelToken::new();
-        let page = browser.open(subject, &cancel).expect("open");
+        // A second URL after `::` opens after the first, to see the tab reused.
+        let (first, second) = subject.split_once("::").unwrap_or((subject, ""));
+        if !second.is_empty() {
+            drop(browser.open(first, &cancel).expect("open"));
+        }
+        let target = if second.is_empty() { first } else { second };
+        let page = browser.open(target, &cancel).expect("open");
         println!(
             "{}",
             page.eval(extra.unwrap_or("document.title"), &cancel)

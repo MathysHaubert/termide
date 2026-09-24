@@ -49,13 +49,13 @@ impl Backend {
 }
 
 impl Display {
-    /// The setting's value; unknown text falls back to `minimized`.
+    /// The setting's value; unknown text falls back to `headless`.
     #[must_use]
     pub fn parse(value: &str) -> Self {
         match value.trim() {
-            "headless" => Self::Headless,
+            "minimized" => Self::Minimized,
             "visible" => Self::Visible,
-            _ => Self::Minimized,
+            _ => Self::Headless,
         }
     }
 }
@@ -86,8 +86,10 @@ struct BrowserSlot {
     browser: Option<Browser>,
     last_used: Instant,
     /// The display to launch with; a headless browser that met a challenge
-    /// switches this to a minimized window for the rest of the process.
+    /// switches this to a minimized window until the browser next closes.
     display: Display,
+    /// The display the settings ask for, restored when the browser closes.
+    configured: Display,
     reaper_started: bool,
 }
 
@@ -127,6 +129,7 @@ impl Web {
                 browser: None,
                 last_used: Instant::now(),
                 display: effective_display(config.display),
+                configured: effective_display(config.display),
                 reaper_started: false,
             }),
             cache: Mutex::new(VecDeque::new()),
@@ -226,7 +229,9 @@ impl Web {
         result
     }
 
-    /// Close a headless browser and launch minimized windows from now on.
+    /// Close a headless browser and launch a minimized window instead, until
+    /// that browser closes; what the user solves there stays in the profile
+    /// for the headless browser after it.
     fn switch_to_window(&self) {
         let mut slot = self.slot.lock().unwrap();
         slot.display = Display::Minimized;
@@ -352,7 +357,10 @@ fn start_reaper(web: Weak<Web>) {
         std::thread::sleep(IDLE_CHECK);
         let Some(web) = web.upgrade() else { return };
         let idle = match web.slot.try_lock() {
-            Ok(mut slot) if slot.last_used.elapsed() >= IDLE_SHUTDOWN => slot.browser.take(),
+            Ok(mut slot) if slot.last_used.elapsed() >= IDLE_SHUTDOWN => {
+                slot.display = slot.configured;
+                slot.browser.take()
+            }
             _ => None,
         };
         if let Some(browser) = idle {
@@ -444,9 +452,9 @@ mod tests {
         assert_eq!(Backend::parse("chrome"), Backend::Chrome);
         assert_eq!(Backend::parse("http"), Backend::Http);
         assert_eq!(Backend::parse(""), Backend::Auto);
-        assert_eq!(Display::parse("headless"), Display::Headless);
+        assert_eq!(Display::parse("minimized"), Display::Minimized);
         assert_eq!(Display::parse("visible"), Display::Visible);
-        assert_eq!(Display::parse("nonsense"), Display::Minimized);
+        assert_eq!(Display::parse("nonsense"), Display::Headless);
     }
 
     #[test]

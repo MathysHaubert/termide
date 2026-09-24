@@ -123,7 +123,7 @@ setting.
 backend = "auto"         # auto | chrome | http
 engine = "duckduckgo"    # an engine file under ai/web/engines/
 chrome_path = ""         # empty: look in the usual places
-display = "minimized"    # minimized | headless | visible
+display = "headless"     # headless | minimized | visible
 ```
 
 - `http` loads pages with `termide-fetch` (GET only, time and size limits, no
@@ -148,27 +148,52 @@ profile gathers (a consent page
 passed once, a solved captcha) persist between runs. If the profile is in use
 by another termide instance, a throwaway profile is used for that run.
 
-There is no stealth: no spoofed user agent, no patched fingerprint. Detection
-is an arms race that a coding tool should not join, and it breaks the search
-engines' terms.
-
-What that costs was measured (Chrome 154, macOS, a fresh profile, one query
-per engine): headless, only Bing answered; DuckDuckGo (both endpoints),
+Measured first (Chrome 154, macOS, a fresh profile, one query per engine):
+headless as it comes, only Bing answered; DuckDuckGo (both endpoints),
 Google, Yandex, Brave Search, Startpage and Mojeek answered with a captcha or
-a block page, headless Chrome naming itself in its user agent. The same
-browser with a real window got results from DuckDuckGo and Yandex as well;
-Google still asked for a captcha, the address having been flagged by then.
-So the default display is `minimized`: a real window, created in the
-background and minimized before the page loads, which leaves the terminal
-focused (checked: the frontmost application stayed the terminal throughout).
-`headless` remains for machines without a display server and is chosen there
-automatically; `visible` keeps the window on screen.
+a block page. The same browser with a real window got results from
+DuckDuckGo and Yandex as well; Google still asked for a captcha, the address
+having been flagged by then.
+
+Since version 112, headless Chrome is the same browser as the windowed one,
+and comparing what pages see showed how little is left of the difference:
+the client hints (`Sec-CH-UA`, `navigator.userAgentData`) already name
+"Google Chrome", WebGL reports the real GPU, and `navigator.webdriver` is
+true in both (it comes from being driven over DevTools, and DuckDuckGo lets
+the window through regardless). What differed was the user-agent string,
+`HeadlessChrome/154.0.0.0` for `Chrome/154.0.0.0`, and the screen (800×600,
+24-bit, ratio 1, against the display's own). Launched with the windowed
+user-agent string, headless got ten results from DuckDuckGo and Bing in two
+separate runs, where unchanged it got a captcha and one result; Yandex and
+Google could not be judged, both refusing the real window too by then.
+
+So the default display is `headless`, launched with `--user-agent` set to
+the string the same browser sends with a window. That string is rebuilt from
+the major version (`<binary> --version`), everything else in it being frozen
+by Chrome's user-agent reduction, so it never drifts from the binary. The
+flag and not `Emulation.setUserAgentOverride`: an override without full
+`userAgentMetadata` drops the client hints altogether (checked), which would
+be a louder tell than the word it replaces, while the flag leaves them as
+they are. Nothing else is altered: no screen or GPU emulation, no scripts
+patching the page, no synthetic input; detection beyond that is an arms race
+a coding tool should not join, and the answer to a challenge stays the user.
+
+`minimized` is a real window, created in the background and minimized
+before the page loads, which leaves the terminal focused (checked: the
+frontmost application stayed the terminal throughout). `visible` is for
+watching the agent: every page opens in the tab the browser started with,
+which is not closed after reading, so the last page stays on screen for a
+look or the developer tools; if the user closes it, the next page opens in a
+new one that stays in turn. The tab is not brought to the front, so the
+terminal keeps the focus. Without a display server the browser runs headless
+whatever the setting says.
 
 When an engine answers with a challenge anyway, its window is restored and
 brought to the front, the tool reports the wait while it lasts, and the page
 is watched until the challenge is gone; after five minutes or on cancel the
-search fails. A headless browser that meets a challenge has no window to
-show, so it is closed and relaunched minimized for the rest of the process.
+search fails. A headless browser has no window to show, so it is closed and
+relaunched minimized for that search; the next idle shutdown returns to the
+configured display, and what the user solved stays in the profile.
 
 A search page is ready when the engine's result or challenge selectors match,
 not when the document finishes loading (Yandex never does); a list rendered

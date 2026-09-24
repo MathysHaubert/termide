@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -72,6 +73,47 @@ pub fn find_chrome() -> Option<PathBuf> {
     }
 }
 
+/// The user agent the same browser sends with a window. Headless Chrome
+/// differs from it by one word, `HeadlessChrome` for `Chrome`; everything
+/// else in the string is frozen by Chrome's user-agent reduction (the
+/// platform token per OS, the version as `<major>.0.0.0`), so only the
+/// major version has to be learned, from `--version`. `None` when it cannot
+/// be (the browser then sends its own).
+fn windowed_user_agent(executable: &Path) -> Option<String> {
+    let output = std::process::Command::new(executable)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let major = major_version(&String::from_utf8_lossy(&output.stdout))?;
+    Some(reduced_user_agent(major))
+}
+
+/// The major version in `--version` output such as `Google Chrome
+/// 154.0.8037.58` or `Chromium 154.0.8037.58 built on Debian`.
+fn major_version(text: &str) -> Option<u32> {
+    text.split_whitespace()
+        .find(|word| word.contains('.') && word.starts_with(|c: char| c.is_ascii_digit()))?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn reduced_user_agent(major: u32) -> String {
+    let platform = if cfg!(target_os = "macos") {
+        "Macintosh; Intel Mac OS X 10_15_7"
+    } else if cfg!(target_os = "windows") {
+        "Windows NT 10.0; Win64; x64"
+    } else {
+        "X11; Linux x86_64"
+    };
+    format!(
+        "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    )
+}
+
 /// Whether another browser process holds `profile`. Chrome leaves a
 /// `SingletonLock` symlink whose target ends in `-<pid>`; a live pid means a
 /// second launch would hand its work to that process and exit.
@@ -106,8 +148,8 @@ fn process_alive(_pid: i32) -> bool {
 /// How the browser shows itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
-    /// No window at all. Search engines tell a headless browser apart and
-    /// answer it with a challenge far more often.
+    /// No window at all, presenting the user agent the same browser has with
+    /// one. A challenge relaunches the browser with a window for the user.
     Headless,
     /// A real window, minimized as soon as a tab opens, restored when the
     /// user has to step in.
@@ -122,6 +164,9 @@ pub struct Browser {
     display: Display,
     /// A throwaway profile to delete on close, when the agent's own was busy.
     temp_profile: Option<PathBuf>,
+    /// With a visible window, the one tab every page opens in, kept on the
+    /// last page so the user can see what the agent read: target and session.
+    watched: Mutex<Option<(String, String)>>,
 }
 
 impl Browser {
@@ -162,6 +207,11 @@ impl Browser {
         } else if cfg!(target_os = "linux") {
             args.push("--password-store=basic".into());
         }
+        if display == Display::Headless {
+            if let Some(user_agent) = windowed_user_agent(executable) {
+                args.push(format!("--user-agent={user_agent}"));
+            }
+        }
         match display {
             Display::Headless => args.extend(["--headless".into(), "about:blank".into()]),
             // Tabs open in windows of their own, created minimized in `open`.
@@ -175,6 +225,7 @@ impl Browser {
             cdp,
             display,
             temp_profile,
+            watched: Mutex::new(None),
         };
         browser
             .cdp
@@ -221,6 +272,39 @@ impl Browser {
     }
 
     fn navigate(&self, url: &str, cancel: &CancelToken) -> Result<Page<'_>, String> {
+        if self.display != Display::Visible {
+            let page = self.new_tab(cancel)?;
+            page.go(url, cancel)?;
+            return Ok(page);
+        }
+        let page = self.watched_tab(cancel)?;
+        match page.go(url, cancel) {
+            // The user closed the watched tab: open the page in a new one.
+            Err(_) if !cancel.is_cancelled() && !self.target_exists(&page.target_id, cancel) => {
+                *self.watched.lock().unwrap() = None;
+                let page = self.watched_tab(cancel)?;
+                page.go(url, cancel)?;
+                Ok(page)
+            }
+            result => result.map(|()| page),
+        }
+    }
+
+    fn target_exists(&self, target_id: &str, cancel: &CancelToken) -> bool {
+        self.cdp
+            .call("Target.getTargets", json!({}), None, QUICK, Some(cancel))
+            .map(|targets| {
+                targets["targetInfos"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|info| info["targetId"] == target_id)
+            })
+            .unwrap_or(false)
+    }
+
+    /// A fresh tab, closed when the page is dropped.
+    fn new_tab(&self, cancel: &CancelToken) -> Result<Page<'_>, String> {
         let target = self.cdp.call(
             "Target.createTarget",
             json!({
@@ -236,36 +320,73 @@ impl Browser {
             .as_str()
             .ok_or("no target id")?
             .to_string();
+        let attached = self.attach(&target_id, cancel);
+        // From here on the page closes its tab when dropped, on every path.
+        let mut page = Page {
+            browser: self,
+            target_id,
+            session_id: String::new(),
+            keep: false,
+        };
+        page.session_id = attached?;
+        if self.display == Display::Minimized {
+            page.set_window_state("minimized", cancel)?;
+        }
+        Ok(page)
+    }
+
+    /// The tab of a visible window that every page opens in and that stays:
+    /// the one the browser started with, or a new one once that is gone.
+    fn watched_tab(&self, cancel: &CancelToken) -> Result<Page<'_>, String> {
+        let mut watched = self.watched.lock().unwrap();
+        if watched.is_none() {
+            let targets =
+                self.cdp
+                    .call("Target.getTargets", json!({}), None, QUICK, Some(cancel))?;
+            let existing = targets["targetInfos"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|info| info["type"] == "page")
+                .and_then(|info| info["targetId"].as_str())
+                .map(str::to_string);
+            let target_id = match existing {
+                Some(id) => id,
+                None => self.cdp.call(
+                    "Target.createTarget",
+                    json!({ "url": "about:blank" }),
+                    None,
+                    QUICK,
+                    Some(cancel),
+                )?["targetId"]
+                    .as_str()
+                    .ok_or("no target id")?
+                    .to_string(),
+            };
+            let session_id = self.attach(&target_id, cancel)?;
+            *watched = Some((target_id, session_id));
+        }
+        let (target_id, session_id) = watched.clone().expect("set above");
+        Ok(Page {
+            browser: self,
+            target_id,
+            session_id,
+            keep: true,
+        })
+    }
+
+    fn attach(&self, target_id: &str, cancel: &CancelToken) -> Result<String, String> {
         let attached = self.cdp.call(
             "Target.attachToTarget",
             json!({ "targetId": target_id, "flatten": true }),
             None,
             QUICK,
             Some(cancel),
-        );
-        // From here on the page closes its tab when dropped, on every path.
-        let mut page = Page {
-            browser: self,
-            target_id,
-            session_id: String::new(),
-        };
-        page.session_id = attached?["sessionId"]
-            .as_str()
-            .ok_or("no session id")?
-            .to_string();
-        if self.display == Display::Minimized {
-            page.set_window_state("minimized", cancel)?;
-        }
-        let navigated = page.call(
-            "Page.navigate",
-            json!({ "url": url }),
-            NAVIGATE_TIMEOUT,
-            cancel,
         )?;
-        if let Some(error) = navigated["errorText"].as_str().filter(|e| !e.is_empty()) {
-            return Err(format!("cannot open {url}: {error}"));
-        }
-        Ok(page)
+        attached["sessionId"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "no session id".to_string())
     }
 
     fn set_window_state(
@@ -324,14 +445,31 @@ impl Drop for Browser {
     }
 }
 
-/// A tab opened by [`Browser::open`]; closed when dropped.
+/// A tab opened by [`Browser::open`]; closed when dropped, except the
+/// watched tab of a visible window.
 pub struct Page<'a> {
     browser: &'a Browser,
     target_id: String,
     session_id: String,
+    /// The watched tab of a visible window: left open when dropped.
+    keep: bool,
 }
 
 impl Page<'_> {
+    /// Load `url` in this tab; waiting for it is the caller's business.
+    fn go(&self, url: &str, cancel: &CancelToken) -> Result<(), String> {
+        let navigated = self.call(
+            "Page.navigate",
+            json!({ "url": url }),
+            NAVIGATE_TIMEOUT,
+            cancel,
+        )?;
+        match navigated["errorText"].as_str().filter(|e| !e.is_empty()) {
+            Some(error) => Err(format!("cannot open {url}: {error}")),
+            None => Ok(()),
+        }
+    }
+
     fn call(
         &self,
         method: &str,
@@ -491,6 +629,9 @@ impl Page<'_> {
 
 impl Drop for Page<'_> {
     fn drop(&mut self) {
+        if self.keep {
+            return;
+        }
         let _ = self.browser.cdp.call(
             "Target.closeTarget",
             json!({ "targetId": self.target_id }),
@@ -568,6 +709,20 @@ fn spawn_with_pipe(_executable: &Path, _args: &[String]) -> Result<(Child, Cdp),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_windowed_user_agent_comes_from_the_major_version() {
+        assert_eq!(major_version("Google Chrome 154.0.8037.58\n"), Some(154));
+        assert_eq!(
+            major_version("Chromium 139.0.7258.5 built on Debian GNU/Linux 12"),
+            Some(139)
+        );
+        assert_eq!(major_version("Microsoft Edge 150.0.1.2 "), Some(150));
+        assert_eq!(major_version("no version here"), None);
+        let agent = reduced_user_agent(154);
+        assert!(agent.contains(" Chrome/154.0.0.0 "), "{agent}");
+        assert!(!agent.contains("Headless"));
+    }
 
     #[cfg(unix)]
     #[test]

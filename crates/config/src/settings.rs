@@ -162,9 +162,9 @@ pub struct WebSettings {
     /// the usual places.
     #[serde(default)]
     pub chrome_path: String,
-    /// How the browser shows itself: `minimized` (a real window kept out of
-    /// the way, restored when a captcha needs the user), `headless` (no
-    /// window; search engines challenge it far more often) or `visible`.
+    /// How the browser shows itself: `headless` (no window; a captcha brings
+    /// one up for the user), `minimized` (a real window kept out of the way)
+    /// or `visible` (a window on screen, to watch what the agent opens).
     #[serde(default = "web_defaults::display")]
     pub display: String,
 }
@@ -183,7 +183,7 @@ impl Default for WebSettings {
 /// Values `[ai.web] backend` accepts.
 pub const WEB_BACKENDS: [&str; 3] = ["auto", "chrome", "http"];
 /// Values `[ai.web] display` accepts.
-pub const WEB_DISPLAYS: [&str; 3] = ["minimized", "headless", "visible"];
+pub const WEB_DISPLAYS: [&str; 3] = ["headless", "minimized", "visible"];
 
 /// The search engines termide ships; the user may add more as files.
 #[must_use]
@@ -202,7 +202,7 @@ mod web_defaults {
         "duckduckgo".to_string()
     }
     pub fn display() -> String {
-        "minimized".to_string()
+        "headless".to_string()
     }
 }
 

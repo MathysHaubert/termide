@@ -310,15 +310,15 @@ A seventh tool, **skill**, appears when skills are defined; see
 (Chrome, Chromium, Edge or Brave), because search engines refuse scripted
 requests and many pages are built by JavaScript. The browser runs with a
 profile of its own in `ai/web/browser/` under the configuration directory, never
-your everyday profile, so the agent has none of your logins. Its window opens
-minimized and keeps out of the way; one browser serves every agent panel, and
-it quits after five idle minutes.
+your everyday profile, so the agent has none of your logins. It runs without a
+window, introducing itself as the same browser does with one; one browser
+serves every agent panel, and it quits after five idle minutes.
 
-When a search engine asks to confirm that a human is searching, its window is
-restored in front of you and the agent's tool call shows the wait: solve the
-check and the search carries on. The agent's profile remembers the clearance,
-so it is not asked for on every search. There is no attempt to hide the
-automation from the engine.
+When a search engine asks to confirm that a human is searching, a window with
+that page opens in front of you and the agent's tool call shows the wait:
+solve the check and the search carries on. The agent's profile remembers the
+clearance, so it is not asked for on every search, and the browser goes back
+to running without a window once it has been idle.
 
 Without such a browser, `fetch` still reads pages over plain HTTP (pages built
 by JavaScript then come back mostly empty), and `web_search` is not offered.
@@ -328,13 +328,16 @@ by JavaScript then come back mostly empty), and `web_search` is not offered.
 backend = "auto"         # auto: the browser when found, else plain HTTP; chrome; http
 engine = "duckduckgo"    # duckduckgo, bing, google, yandex, or your own
 chrome_path = ""         # the browser executable; empty looks in the usual places
-display = "minimized"    # minimized; headless (no window); visible
+display = "headless"     # headless (no window); minimized; visible
 ```
 
-`headless` needs no window but search engines challenge it on nearly every
-query, and a challenge cannot be shown there; the browser then switches to a
-minimized window by itself. On Linux without a display server the browser
-runs headless whatever the setting says.
+`minimized` gives the browser a real window kept minimized, for an engine that
+still tells a windowless browser apart. `visible` leaves the window on screen
+to watch the agent work: every page opens in the same tab, which stays on the
+last page the agent read, so you can look at it or open the developer tools
+there. Closing that tab is fine; the next page opens in a new one.
+On Linux without a display server the browser runs without a window whatever
+the setting says.
 
 Each search engine is a small file in `ai/web/engines/`: the address to send
 the query to and the CSS selectors that pick the results out of the page.

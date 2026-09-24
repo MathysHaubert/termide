@@ -781,7 +781,7 @@ mod field_index_tests {
 
         assert_eq!(get_field_value(&config, SettingsTab::Ai, 8), "auto");
         assert_eq!(get_field_value(&config, SettingsTab::Ai, 9), "duckduckgo");
-        assert_eq!(get_field_value(&config, SettingsTab::Ai, 10), "minimized");
+        assert_eq!(get_field_value(&config, SettingsTab::Ai, 10), "headless");
         assert_eq!(get_field_value(&config, SettingsTab::Ai, 11), "(auto)");
 
         apply_enum_value(&mut config, SettingsTab::Ai, 9, "bing");
