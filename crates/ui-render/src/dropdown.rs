@@ -86,6 +86,35 @@ pub struct Dropdown<'a> {
     scroll_offset: usize,
 }
 
+/// On-screen width of a dropdown holding `items`, borders included.
+///
+/// This is the single source of truth for the geometry: the renderer uses it
+/// to size a dropdown and to place a nested submenu to its right, and the
+/// mouse handlers use it to hit-test clicks. Recomputing it anywhere else lets
+/// the click targets drift away from what is drawn.
+pub fn dropdown_width(items: &[DropdownItem]) -> u16 {
+    let max_label_len = items
+        .iter()
+        .map(|item| str_display_width(&item.label))
+        .max()
+        .unwrap_or(0);
+    // Shortcuts share the row with the labels, so the widest of each has
+    // to fit side by side or the two would overlap.
+    let max_shortcut_len = items
+        .iter()
+        .filter_map(|item| item.shortcut.as_deref())
+        .map(str_display_width)
+        .max()
+        .unwrap_or(0);
+    let shortcut_column = if max_shortcut_len == 0 {
+        0
+    } else {
+        max_shortcut_len + 2
+    };
+    // 2 (borders) + 1 (space) + label + shortcut + 3 (" ▶ ")
+    (max_label_len + shortcut_column + 6).min(48) as u16
+}
+
 impl<'a> Dropdown<'a> {
     pub fn new(
         items: &'a [DropdownItem],
@@ -115,28 +144,7 @@ impl<'a> Dropdown<'a> {
 
     /// Get the width of this dropdown
     pub fn width(&self) -> u16 {
-        let max_label_len = self
-            .items
-            .iter()
-            .map(|item| str_display_width(&item.label))
-            .max()
-            .unwrap_or(0);
-        // Shortcuts share the row with the labels, so the widest of each has
-        // to fit side by side or the two would overlap.
-        let max_shortcut_len = self
-            .items
-            .iter()
-            .filter_map(|item| item.shortcut.as_deref())
-            .map(str_display_width)
-            .max()
-            .unwrap_or(0);
-        let shortcut_column = if max_shortcut_len == 0 {
-            0
-        } else {
-            max_shortcut_len + 2
-        };
-        // 2 (borders) + 1 (space) + label + shortcut + 3 (" ▶ ")
-        (max_label_len + shortcut_column + 6).min(48) as u16
+        dropdown_width(self.items)
     }
 
     /// Get the height of this dropdown
