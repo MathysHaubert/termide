@@ -121,9 +121,10 @@ pub struct AiSettings {
     #[serde(default)]
     pub context_window_fallback: Option<u64>,
 
-    /// Upper bound on the model's output tokens per turn (one response).
+    /// Upper bound on the model's output tokens per turn (one response). Zero
+    /// or a negative number sets no bound and leaves the length to the model.
     #[serde(default = "agent_defaults::max_tokens")]
-    pub max_tokens_per_turn: u64,
+    pub max_tokens_per_turn: i64,
 
     /// Prefer reasoning: request `reasoning_effort` / extended thinking from
     /// models that support it (ignored by models that do not).
@@ -151,6 +152,15 @@ impl AiSettings {
     pub fn effective_context_window(&self) -> u64 {
         self.context_window_fallback
             .unwrap_or(DEFAULT_CONTEXT_WINDOW_FALLBACK)
+    }
+
+    /// The per-turn output bound to request, `None` when the setting is zero
+    /// or negative and the model decides the length itself.
+    #[must_use]
+    pub fn output_limit(&self) -> Option<u64> {
+        u64::try_from(self.max_tokens_per_turn)
+            .ok()
+            .filter(|&n| n > 0)
     }
 }
 
@@ -546,7 +556,7 @@ mod agent_defaults {
         // depends on the provider, so the user names it when using a hosted one.
         String::new()
     }
-    pub fn max_tokens() -> u64 {
+    pub fn max_tokens() -> i64 {
         4_096
     }
     pub fn autofold() -> bool {
@@ -877,6 +887,24 @@ impl Config {
         self.database.keybindings.with_defaults();
         self.viewer.keybindings.with_defaults();
         self.terminal.keybindings.with_defaults();
+    }
+}
+
+#[cfg(test)]
+mod ai_settings_tests {
+    use super::*;
+
+    #[test]
+    fn a_non_positive_output_limit_means_none() {
+        let mut settings = AiSettings::default();
+        assert_eq!(settings.output_limit(), Some(4096));
+        settings.max_tokens_per_turn = 0;
+        assert_eq!(settings.output_limit(), None);
+        settings.max_tokens_per_turn = -1;
+        assert_eq!(settings.output_limit(), None);
+        // A negative number is valid in the config file.
+        let parsed: AiSettings = toml::from_str("max_tokens_per_turn = -1").unwrap();
+        assert_eq!(parsed.output_limit(), None);
     }
 }
 

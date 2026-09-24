@@ -1000,7 +1000,7 @@ pub(crate) mod test_support {
             provider: "scripted".into(),
             id: "test".into(),
             context_window: 8192,
-            max_tokens: 1024,
+            max_tokens: Some(1024),
             reasoning: false,
         }
     }

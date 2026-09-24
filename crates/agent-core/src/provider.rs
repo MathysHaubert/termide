@@ -31,8 +31,10 @@ pub struct ModelSpec {
     pub id: String,
     /// Context window in tokens; drives compaction thresholds.
     pub context_window: u64,
-    /// Upper bound for output tokens per response.
-    pub max_tokens: u64,
+    /// Upper bound for output tokens per response; `None` leaves the length
+    /// to the model (a provider whose API requires a bound sends its own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     /// Whether the model exposes a thinking/reasoning channel.
     #[serde(default)]
     pub reasoning: bool,

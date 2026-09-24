@@ -88,7 +88,10 @@ impl AnthropicProvider {
     pub fn build_body(&self, request: &Request<'_>) -> Value {
         let mut body = Map::new();
         body.insert("model".into(), json!(request.model.id));
-        body.insert("max_tokens".into(), json!(request.model.max_tokens));
+        // The Messages API requires a bound, so an unlimited turn sends a
+        // generous one of its own.
+        let max_tokens = request.model.max_tokens.unwrap_or(UNLIMITED_MAX_TOKENS);
+        body.insert("max_tokens".into(), json!(max_tokens));
         body.insert("stream".into(), json!(true));
         if !request.system_prompt.is_empty() {
             body.insert("system".into(), json!(request.system_prompt));
@@ -109,7 +112,7 @@ impl AnthropicProvider {
             body.insert("tools".into(), Value::Array(tools));
         }
         if request.model.reasoning {
-            if let Some(budget) = thinking_budget(request.thinking, request.model.max_tokens) {
+            if let Some(budget) = thinking_budget(request.thinking, max_tokens) {
                 body.insert(
                     "thinking".into(),
                     json!({ "type": "enabled", "budget_tokens": budget }),
@@ -328,6 +331,11 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
     flush(&mut out, &mut pending_results);
     out
 }
+
+/// The output bound sent when none is configured: the Messages API requires
+/// one. Claude 4 models accept at least this many output tokens; an older
+/// model with a lower ceiling needs an explicit limit.
+const UNLIMITED_MAX_TOKENS: u64 = 32_000;
 
 /// The thinking budget for a level, always leaving room for the answer.
 fn thinking_budget(level: ThinkingLevel, max_tokens: u64) -> Option<u64> {
@@ -597,7 +605,7 @@ mod tests {
             provider: "anthropic".into(),
             id: "claude-x".into(),
             context_window: 200_000,
-            max_tokens: 4096,
+            max_tokens: Some(4096),
             reasoning,
         }
     }
@@ -612,6 +620,25 @@ mod tests {
             acc.finish("anthropic", "claude-x", None, &mut |e| seen.push(e)),
             seen,
         )
+    }
+
+    #[test]
+    fn an_unlimited_turn_still_sends_the_bound_the_api_requires() {
+        let provider = AnthropicProvider::new("anthropic").with_api_key(Some("k".into()));
+        let model = ModelSpec {
+            max_tokens: None,
+            ..model(false)
+        };
+        let messages = vec![Message::User(UserMessage::text("hi"))];
+        let request = Request {
+            model: &model,
+            system_prompt: "",
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        };
+        let body = provider.build_body(&request);
+        assert_eq!(body["max_tokens"], json!(UNLIMITED_MAX_TOKENS));
     }
 
     #[test]

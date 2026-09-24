@@ -507,7 +507,7 @@ impl SettingsModal {
             }
             SettingsTab::Ai => {
                 if index == 5 {
-                    self.config.ai.max_tokens_per_turn = val;
+                    self.config.ai.max_tokens_per_turn = i64::try_from(val).unwrap_or(i64::MAX);
                 }
             }
             _ => {}

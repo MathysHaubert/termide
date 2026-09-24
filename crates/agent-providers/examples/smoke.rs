@@ -54,7 +54,7 @@ fn main() {
         provider: "local".into(),
         id: model_id,
         context_window,
-        max_tokens: 2048,
+        max_tokens: Some(2048),
         reasoning: true,
     };
     let provider = Arc::new(

@@ -21,7 +21,7 @@ provider = "openai_compatible"   # openai_compatible (default), anthropic_compat
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"
 # context_window_fallback = 32000   # used only when the server does not report a window
-max_tokens_per_turn = 4096
+max_tokens_per_turn = 4096          # 0 or negative: no limit, the model decides
 prefer_reasoning = false            # send reasoning_effort to models that support it
 api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 autofold = true              # fold each block to a preview by default
@@ -36,7 +36,9 @@ the endpoint cannot list them. The API key is read from
 the environment variable named by `api_key_env`, so the configuration file
 never holds a secret. Local servers usually need no key at all; leave the
 variable unset. `autofold = false` shows every block expanded instead of
-folded to a preview.
+folded to a preview. With `max_tokens_per_turn` at zero or below no output
+limit is sent and the model decides how long to reply; the Anthropic API
+requires one, so there it becomes a generous 32000.
 
 For a hosted OpenAI-compatible endpoint, keep `provider = "openai_compatible"` and point
 `base_url` and `api_key_env` at it, for example OpenAI itself

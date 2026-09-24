@@ -304,7 +304,10 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
                 },
                 |n| n.to_string(),
             ),
-            5 => config.ai.max_tokens_per_turn.to_string(),
+            5 => config
+                .ai
+                .output_limit()
+                .map_or_else(|| "(no limit)".to_string(), |n| n.to_string()),
             6 => bool_str(config.ai.prefer_reasoning),
             7 => bool_str(config.ai.autofold),
             _ => String::new(),

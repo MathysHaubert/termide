@@ -5398,7 +5398,7 @@ mod tests {
                 provider: "scripted".into(),
                 id: "m".into(),
                 context_window: 1000,
-                max_tokens: 100,
+                max_tokens: Some(100),
                 reasoning: false,
             },
             tools: ToolRegistry::new(),

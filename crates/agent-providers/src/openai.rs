@@ -111,10 +111,10 @@ impl OpenAiCompatProvider {
         body.insert("messages".into(), Value::Array(messages));
         body.insert("stream".into(), json!(true));
         body.insert("stream_options".into(), json!({ "include_usage": true }));
-        body.insert(
-            self.compat.max_tokens_field.clone(),
-            json!(request.model.max_tokens),
-        );
+        // No limit configured: leave the reply's length to the model.
+        if let Some(max_tokens) = request.model.max_tokens {
+            body.insert(self.compat.max_tokens_field.clone(), json!(max_tokens));
+        }
         if !request.tools.is_empty() {
             let tools: Vec<Value> = request
                 .tools
@@ -447,7 +447,7 @@ mod tests {
             provider: "test".into(),
             id: "qwen".into(),
             context_window: 32_000,
-            max_tokens: 512,
+            max_tokens: Some(512),
             reasoning: true,
         }
     }
@@ -516,6 +516,25 @@ mod tests {
                 max_attempts: 3,
                 base_delay: Duration::from_millis(10),
             })
+    }
+
+    #[test]
+    fn an_unlimited_turn_sends_no_output_bound() {
+        let provider = OpenAiCompatProvider::new("p", "http://x/v1/");
+        let model = ModelSpec {
+            max_tokens: None,
+            ..model()
+        };
+        let messages = vec![Message::User(UserMessage::text("hi"))];
+        let request = Request {
+            model: &model,
+            system_prompt: "",
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        };
+        let body = provider.build_body(&request);
+        assert!(body.get("max_tokens").is_none(), "{body}");
     }
 
     #[test]
