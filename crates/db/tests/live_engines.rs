@@ -67,6 +67,19 @@ fn assert_browse(conn: &DbConnection, active_is_bool: bool) {
         .unwrap();
     assert_eq!(filtered, 2, "case-insensitive contains should match 2 rows");
 
+    // LIKE wildcards in the operand match literally: no name contains `_`.
+    let literal = vec![Condition {
+        column: "name".into(),
+        op: FilterOp::Contains,
+        value: Some(DbValue::Text("_".into())),
+    }];
+    let none = conn
+        .count("termide_it_users", literal)
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert_eq!(none, 0, "`_` should not act as a wildcard");
+
     let page = conn
         .page(PageRequest {
             table: "termide_it_users".into(),

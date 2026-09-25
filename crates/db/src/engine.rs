@@ -409,11 +409,12 @@ fn placeholder(backend: DbBackend, idx: usize) -> String {
     }
 }
 
-/// Escape LIKE wildcards so user input matches literally (with `ESCAPE '\'`).
+/// Escape LIKE wildcards so user input matches literally (with `ESCAPE '!'`).
+///
+/// `!` rather than `\`: MySQL treats a backslash inside a string literal as an
+/// escape, so `ESCAPE '\'` is an unterminated literal there.
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+    s.replace('!', "!!").replace('%', "!%").replace('_', "!_")
 }
 
 /// Build the ` WHERE …` clause (with leading space) plus the ordered bind
@@ -441,7 +442,7 @@ fn build_where(backend: DbBackend, conds: &[Condition]) -> (String, Vec<DbValue>
                 };
                 let ph = placeholder(backend, idx);
                 idx += 1;
-                parts.push(format!("{col} {like} {ph} ESCAPE '\\'"));
+                parts.push(format!("{col} {like} {ph} ESCAPE '!'"));
                 let raw = match &c.value {
                     Some(DbValue::Text(s)) => s.clone(),
                     Some(v) => v.display(),
