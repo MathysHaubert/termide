@@ -216,7 +216,8 @@ you have named or sent even one message to is always kept.
 The conversation is a stack of blocks, each opened by an accent-coloured mark:
 `› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
 for a shell call, `< ` for a file read, `> ` for a write, `± ` for an edit,
-`# ` for the system prompt. The answer is shown in full;
+`/ ` for a skill, `& ` for a subagent, `* ` for an MCP tool, `# ` for the
+system prompt. The answer is shown in full;
 a user message or the system prompt longer than five lines is
 folded to a preview that keeps the first line and the last few, with a
 `… N more lines` note between them. A block of five lines or fewer has nothing
@@ -238,8 +239,12 @@ glyph and a localized action in the same accent, then its subject: the
 reasoning as `@ Thinking` and its text, a shell call as `$ Running` and its
 command (dim, wrapped to the width), a file tool with its path
 (`< Reading src/main.rs`, `> Writing`, `± Editing`), a web tool with the URL or
-the query (`↓ Fetching https://docs.rs`, `? Searching ratatui scrollbar`); any
-other tool as its name and a summary. The reasoning is its own block above the
+the query (`↓ Fetching https://docs.rs`, `? Searching ratatui scrollbar`), a
+skill with its name and arguments (`/ Using skill review src/x.rs`), a
+subagent with its name and the first line of the task (`& Delegating to
+reviewer: check the diff`), an MCP tool with its server, name and arguments as
+`key=value` (`* Using MCP github: create_issue title=Crash`); any other tool
+as its name and a summary. The reasoning is its own block above the
 answer, and its text wraps to the width. Only the system prompt
 opens with a dim dashed rule that sets it apart from the block before; an
 annotation has none, its glyph marks it. A blank line follows your message and another precedes the answer; the

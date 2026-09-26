@@ -1148,9 +1148,9 @@ fn output_line(
 }
 
 /// The first line of a non-shell tool call (a shell's is [`command_lines`]):
-/// a type glyph, a localized action and its subject for the file and web
-/// tools (the path, URL or query), else the tool name and a summary. The fold `marker`, if any, follows the action or
-/// the name.
+/// a type glyph, a localized action and its subject for the file, web, skill,
+/// task and MCP tools, else the tool name and a summary. The fold `marker`, if
+/// any, follows the action or the name.
 fn tool_headline(
     call: &ToolCall,
     marker: Option<Span<'static>>,
@@ -1166,26 +1166,56 @@ fn tool_headline(
             .unwrap_or("")
             .to_string()
     };
-    // A file or web tool opens with its type glyph like every block — `<`
-    // read and `>` write, as a shell redirects, `±` for an edit's diff, `↓`
-    // for a page fetched, `?` for a search — then its localized action in the
-    // same accent and its subject (the path, URL or query).
+    // A tool opens with its type glyph like every block — `<` read and `>`
+    // write, as a shell redirects, `±` for an edit's diff, `↓` for a page
+    // fetched, `?` for a search, `/` for a skill as it is typed by hand, `&`
+    // for a subagent, as a shell backgrounds a job, `*` for an MCP tool —
+    // then its localized action in the same accent and its subject.
     let accent = Style::default().fg(colors.info);
-    let action = |glyph: &str, verb: &str, subject: &str| {
+    let action = |glyph: &str, verb: &str, subject: String| {
         let mut spans = vec![
             Span::styled(format!("{glyph} "), accent),
             Span::styled(format!("{verb} "), accent),
         ];
         spans.extend(marker.clone());
-        spans.push(Span::styled(arg(subject), fg));
+        spans.push(Span::styled(subject, fg));
         spans
     };
+    let with_args = |head: String, args: &str| {
+        if args.is_empty() {
+            head
+        } else {
+            format!("{head} {args}")
+        }
+    };
     match call.name.as_str() {
-        "read" => action("<", t.agent_tool_read(), "path"),
-        "write" => action(">", t.agent_tool_write(), "path"),
-        "edit" => action("±", t.agent_tool_edit(), "path"),
-        "fetch" => action("↓", t.agent_tool_fetch(), "url"),
-        "web_search" => action("?", t.agent_tool_web_search(), "query"),
+        "read" => action("<", t.agent_tool_read(), arg("path")),
+        "write" => action(">", t.agent_tool_write(), arg("path")),
+        "edit" => action("±", t.agent_tool_edit(), arg("path")),
+        "fetch" => action("↓", t.agent_tool_fetch(), arg("url")),
+        "web_search" => action("?", t.agent_tool_web_search(), arg("query")),
+        "skill" => action(
+            "/",
+            t.agent_tool_skill(),
+            with_args(arg("name"), arg("args").trim()),
+        ),
+        "task" => {
+            let prompt = arg("prompt");
+            let first = prompt.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+            action(
+                "&",
+                t.agent_tool_task(),
+                format!("{}: {}", arg("agent"), first.trim()),
+            )
+        }
+        name if mcp_parts(name).is_some() => {
+            let (server, tool) = mcp_parts(name).unwrap_or_default();
+            action(
+                "*",
+                t.agent_tool_mcp(),
+                with_args(format!("{server}: {tool}"), &inline_args(&call.arguments)),
+            )
+        }
         _ => {
             let mut spans = vec![
                 Span::styled(
@@ -1204,6 +1234,32 @@ fn tool_headline(
             spans
         }
     }
+}
+
+/// The server and tool of an MCP call: `<server>__<tool>`, as `agent-mcp`
+/// names the tools it brings in, or `mcp__<server>__<tool>`, as an external
+/// agent reports one. No built-in tool has `__` in its name; a server whose
+/// own name does is split at its first `__`.
+fn mcp_parts(name: &str) -> Option<(&str, &str)> {
+    let name = name.strip_prefix("mcp__").unwrap_or(name);
+    let (server, tool) = name.split_once("__")?;
+    (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
+}
+
+/// A call's arguments as `key=value` pairs on one line, a string bare and
+/// anything else as JSON, so a headline reads as a command rather than an
+/// object.
+fn inline_args(arguments: &Value) -> String {
+    let Value::Object(map) = arguments else {
+        return String::new();
+    };
+    map.iter()
+        .map(|(key, value)| match value {
+            Value::String(text) => format!("{key}={}", text.replace('\n', " ")),
+            other => format!("{key}={other}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The lines of `item` at `width`, folded when `collapsed` and the item folds,
@@ -1810,6 +1866,48 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    #[test]
+    fn skill_task_and_mcp_calls_open_with_a_glyph_and_an_action() {
+        let colors = ThemeColors::default();
+        let headline = |name: &str, args: Value| -> String {
+            tool_headline(&call(name, args), None, 80, &colors)
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+        assert_eq!(
+            headline("skill", json!({ "name": "review", "args": "src/x.rs" })),
+            "/ Using skill review src/x.rs"
+        );
+        assert_eq!(
+            headline("skill", json!({ "name": "deploy" })),
+            "/ Using skill deploy"
+        );
+        assert_eq!(
+            headline(
+                "task",
+                json!({ "agent": "reviewer", "prompt": "\ncheck the diff\nthen report" })
+            ),
+            "& Delegating to reviewer: check the diff"
+        );
+        assert_eq!(
+            headline(
+                "github__create_issue",
+                json!({ "title": "Crash", "labels": ["bug"] })
+            ),
+            "* Using MCP github: create_issue labels=[\"bug\"] title=Crash"
+        );
+        // As an external agent reports an MCP call.
+        assert_eq!(
+            headline("mcp__termide__open", json!({})),
+            "* Using MCP termide: open"
+        );
+        // Anything else keeps its name and a summary.
+        assert_eq!(headline("lists", json!({})), "lists ");
+        assert_eq!(mcp_parts("__x"), None);
+        assert_eq!(mcp_parts("web_search"), None);
     }
 
     #[test]

@@ -691,6 +691,12 @@ pub trait Translation: Send + Sync {
     fn agent_tool_fetch(&self) -> &str;
     /// Agent transcript: the action verb for a `web_search` tool call.
     fn agent_tool_web_search(&self) -> &str;
+    /// Agent transcript: the action words for a `skill` tool call.
+    fn agent_tool_skill(&self) -> &str;
+    /// Agent transcript: the action words for a `task` call (a subagent).
+    fn agent_tool_task(&self) -> &str;
+    /// Agent transcript: the action words for an MCP server's tool call.
+    fn agent_tool_mcp(&self) -> &str;
     /// Agent notices: what defines a `/name` — a built-in command, a prompt
     /// template, a command script, a skill — as the object of "runs" and
     /// "hides".
