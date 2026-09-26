@@ -102,6 +102,11 @@ pub enum ToolResultContent {
 pub struct UserMessage {
     pub content: Vec<UserContent>,
     pub timestamp: u64,
+    /// The `/name args` the user typed when a template, command script or
+    /// skill produced `content`: what the transcript heads the message with.
+    /// Never sent to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl UserMessage {
@@ -110,7 +115,21 @@ impl UserMessage {
         Self {
             content: vec![UserContent::Text { text: text.into() }],
             timestamp: now_millis(),
+            command: None,
         }
+    }
+
+    /// The message as produced by the typed `command`.
+    #[must_use]
+    pub fn with_command(mut self, command: Option<String>) -> Self {
+        self.command = command;
+        self
+    }
+
+    /// What the user typed: the command when there is one, else the text.
+    #[must_use]
+    pub fn typed(&self) -> String {
+        self.command.clone().unwrap_or_else(|| self.plain_text())
     }
 
     /// `messages` as one, their texts joined by a blank line, or `None` for
@@ -307,6 +326,7 @@ mod tests {
             Message::User(UserMessage {
                 content: vec![UserContent::Text { text: "hi".into() }],
                 timestamp: 0,
+                command: None,
             }),
             Message::Assistant(assistant.clone()),
             Message::ToolResult(ToolResultMessage {
@@ -329,6 +349,24 @@ mod tests {
         assert_eq!(decoded, messages);
         assert_eq!(assistant.plain_text(), "hello");
         assert_eq!(assistant.tool_calls().count(), 1);
+    }
+
+    #[test]
+    fn a_typed_command_rides_along_but_stays_optional_on_disk() {
+        let plain = UserMessage::text("hi");
+        assert!(!serde_json::to_string(&plain).unwrap().contains("command"));
+        assert_eq!(plain.typed(), "hi");
+
+        let expanded = UserMessage::text("Review a.rs.").with_command(Some("/review a.rs".into()));
+        assert_eq!(expanded.typed(), "/review a.rs");
+        let encoded = serde_json::to_string(&expanded).unwrap();
+        let decoded: UserMessage = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, expanded);
+        // A log written before the field existed still reads.
+        let old: UserMessage =
+            serde_json::from_str(r#"{"content":[{"type":"text","text":"x"}],"timestamp":1}"#)
+                .unwrap();
+        assert_eq!(old.command, None);
     }
 
     #[test]

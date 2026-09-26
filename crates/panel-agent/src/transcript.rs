@@ -76,6 +76,12 @@ fn is_foldable(item: &Item, fold: FoldMode) -> bool {
         return false;
     }
     match item {
+        // What a command expanded to folds under the command whatever its size.
+        Item::User {
+            text,
+            command: Some(_),
+            ..
+        } => !text.trim().is_empty(),
         Item::User { text, .. } | Item::System { text } => {
             text.trim().lines().count() > FOLD_THRESHOLD
         }
@@ -131,6 +137,9 @@ pub enum Item {
         text: String,
         /// Local wall-clock time the message was sent, e.g. `21:03:14`.
         at: String,
+        /// The `/name args` typed when a template, script or skill produced
+        /// `text`: the block's headline, with `text` folded under it.
+        command: Option<String>,
     },
     /// The system prompt in effect, shown (folded by default) at the start of a
     /// session and whenever it changes before a new message. Marked with `#`.
@@ -1243,7 +1252,7 @@ fn render_body(
     let t = termide_i18n::t();
     let dim = Style::default().fg(colors.disabled);
     match item {
-        Item::User { text, at } => {
+        Item::User { text, at, command } => {
             let trimmed = text.trim();
             let all: Vec<&str> = trimmed.lines().collect();
             let mark = Style::default()
@@ -1253,7 +1262,36 @@ fn render_body(
             // The plate is a blank line, the text, the time, and a blank line —
             // all on the faint background, with an even margin around them.
             let mut plate = vec![Line::default()];
-            if collapsed && all.len() > USER_PREVIEW_LINES {
+            if let Some(command) = command {
+                // Headed by the command as typed; what it expanded to — what
+                // the model got — folds to a line count under it.
+                let mut head = Builder::new(width, colors, is_light);
+                head.styled("› ", mark);
+                head.push_style(bold);
+                head.text(command.trim());
+                head.pop_style();
+                head.end_paragraph();
+                plate.extend(head.finish().lines);
+                if collapsed {
+                    plate.push(Line::styled(
+                        format!("  {}", t.agent_more_lines(all.len())),
+                        Style::default().fg(colors.fg),
+                    ));
+                } else {
+                    // Indented under the command, keeping the text's own lines.
+                    let body = wrap_plain(
+                        trimmed,
+                        width.saturating_sub(2),
+                        Style::default().fg(colors.fg),
+                        colors,
+                        is_light,
+                    );
+                    plate.extend(body.into_iter().map(|mut line| {
+                        line.spans.insert(0, Span::raw("  "));
+                        line
+                    }));
+                }
+            } else if collapsed && all.len() > USER_PREVIEW_LINES {
                 // A long paste folds to its first line, a "… N more lines"
                 // marker, then the last few — the ellipsis between first and
                 // last, like every other block. The model still gets the whole
@@ -1775,12 +1813,34 @@ mod tests {
     }
 
     #[test]
+    fn a_typed_command_heads_the_user_block_over_its_folded_expansion() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User {
+            text: "Review a.rs.\nQuote the lines.".into(),
+            at: String::new(),
+            command: Some("/review a.rs".into()),
+        });
+        let folded = text_of(transcript.lines(40, &colors, false)).join("\n");
+        assert!(folded.contains("› /review a.rs"), "{folded}");
+        assert!(folded.contains("… 2 more lines"), "{folded}");
+        assert!(!folded.contains("Quote the lines."), "{folded}");
+
+        transcript.toggle_expanded(0);
+        let unfolded = text_of(transcript.lines(40, &colors, false)).join("\n");
+        assert!(unfolded.contains("› /review a.rs"), "{unfolded}");
+        assert!(unfolded.contains("  Review a.rs."), "{unfolded}");
+        assert!(unfolded.contains("  Quote the lines."), "{unfolded}");
+    }
+
+    #[test]
     fn the_live_footer_appears_after_the_last_line_and_clears() {
         let colors = ThemeColors::default();
         let mut transcript = Transcript::default();
         transcript.push(Item::User {
             text: "hi".into(),
             at: String::new(),
+            command: None,
         });
         let base = transcript.lines(40, &colors, false).len();
 
@@ -1866,6 +1926,7 @@ mod tests {
         transcript.push(Item::User {
             text: "Fix the bug".into(),
             at: String::new(),
+            command: None,
         });
         // Reasoning and the answer stream into their own blocks.
         transcript
@@ -1953,6 +2014,7 @@ mod tests {
         transcript.push(Item::User {
             text: "hi".into(),
             at: String::new(),
+            command: None,
         });
         // A long output is foldable, so autofold-off keeps it open.
         let body = (1..=8).map(|n| format!("line {n}")).collect::<Vec<_>>();
@@ -2139,6 +2201,7 @@ mod tests {
         transcript.push(Item::User {
             text: "go".into(),
             at: String::new(),
+            command: None,
         });
         transcript.stream_thinking("a thought\nand more");
         transcript.finish_thinking("12:00:00", None);
@@ -2218,6 +2281,7 @@ mod tests {
         transcript.push(Item::User {
             text: "go".into(),
             at: "21:00:00".into(),
+            command: None,
         });
         transcript.stream_answer("done");
         transcript.finish_assistant("done".into(), None, None, "21:03:41".into(), false);
@@ -2470,6 +2534,7 @@ mod tests {
         transcript.push(Item::User {
             text: "go".into(),
             at: "21:00:00".into(),
+            command: None,
         });
         transcript.push(Item::RunEnd {
             elapsed_ms: 221_000,
@@ -2540,6 +2605,7 @@ mod tests {
         transcript.push(Item::User {
             text: "next".into(),
             at: String::new(),
+            command: None,
         });
         transcript.push(Item::Notice {
             text: "a long notice that has to wrap onto a second row".into(),

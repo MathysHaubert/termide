@@ -512,7 +512,8 @@ pub struct AgentPanel {
     pending: Option<Pending>,
     /// Command scripts the user let run for this session, by name.
     allowed_commands: HashSet<String>,
-    /// A command script running on a thread; its output becomes a request.
+    /// A command script running on a thread, with the command as typed; its
+    /// output becomes a request.
     command_run: Option<Receiver<(String, Result<String, String>)>>,
     /// What the files the agent changes looked like before each request,
     /// for `/undo`; shared with the hook that records them.
@@ -1258,6 +1259,8 @@ impl AgentPanel {
         self.completion = None;
         self.history_pos = None;
         self.draft.clear();
+        // What reaches `send` through a slash arm was expanded from this.
+        let command = slash_command(&text).map(|_| text.clone());
         let text = match slash_command(&text) {
             Some((UNDO_COMMAND, _)) => {
                 self.clear_input();
@@ -1484,18 +1487,24 @@ impl AgentPanel {
             return vec![PanelEvent::NeedsRedraw];
         }
         self.clear_input();
-        self.send(text)
+        self.send_as(text, command)
     }
 
     /// Send `text` as the next request: a new run when idle, a steering
     /// message while the agent works.
     fn send(&mut self, text: String) -> Vec<PanelEvent> {
+        self.send_as(text, None)
+    }
+
+    /// [`Self::send`] for text a typed `/name args` produced: the transcript
+    /// and the input history show the command, the model gets the text.
+    fn send_as(&mut self, text: String, command: Option<String>) -> Vec<PanelEvent> {
         self.follow = true;
-        let message = UserMessage::text(text);
+        let message = UserMessage::text(text).with_command(command);
         if self.is_busy() {
             // The message waits in the state strip until the agent takes it,
             // then shows as a user block.
-            self.queued_texts.push_back(message.plain_text());
+            self.queued_texts.push_back(message.typed());
             self.runtime.steer(message);
             self.set_queued(self.runtime.queue_lens());
         } else {
@@ -2037,6 +2046,7 @@ impl AgentPanel {
                         self.transcript.push(Item::User {
                             text: user.plain_text(),
                             at: now_hms(),
+                            command: user.command.clone(),
                         });
                         None
                     }
@@ -3305,9 +3315,10 @@ impl AgentPanel {
     fn history(&self) -> Vec<String> {
         let mut history: Vec<String> = Vec::new();
         for item in self.transcript.items() {
-            if let Item::User { text, .. } = item {
-                if history.last() != Some(text) {
-                    history.push(text.clone());
+            if let Item::User { text, command, .. } = item {
+                let typed = command.as_ref().unwrap_or(text);
+                if history.last() != Some(typed) {
+                    history.push(typed.clone());
                 }
             }
         }
@@ -3332,9 +3343,9 @@ impl AgentPanel {
         };
         let typed = self.input_area().text();
         let text = if typed.trim().is_empty() {
-            queued.plain_text()
+            queued.typed()
         } else {
-            format!("{}\n\n{typed}", queued.plain_text())
+            format!("{}\n\n{typed}", queued.typed())
         };
         self.set_input(&text);
         true
@@ -4151,10 +4162,15 @@ impl AgentPanel {
         let (tx, rx) = mpsc::channel();
         let cwd = self.cwd.clone();
         let name = script.name.clone();
-        let reported = name.clone();
+        // The request is headed by the command as typed.
+        let command = if args.is_empty() {
+            format!("/{name}")
+        } else {
+            format!("/{name} {args}")
+        };
         std::thread::spawn(move || {
             let outcome = script.run(&args, &cwd);
-            let _ = tx.send((reported, outcome));
+            let _ = tx.send((command, outcome));
         });
         self.command_run = Some(rx);
         self.pending_events.push(PanelEvent::SetStatusMessage {
@@ -4167,9 +4183,9 @@ impl AgentPanel {
     fn poll_command(&mut self) -> bool {
         let outcome = self.command_run.as_ref().map(Receiver::try_recv);
         match outcome {
-            Some(Ok((_, Ok(text)))) => {
+            Some(Ok((command, Ok(text)))) => {
                 self.command_run = None;
-                self.send(text);
+                self.send_as(text, Some(command));
                 true
             }
             Some(Ok((_, Err(error)))) => {
@@ -5102,6 +5118,7 @@ fn push_history(transcript: &mut Transcript, logged: &LoggedMessage) {
         Message::User(user) => transcript.push(Item::User {
             text: user.plain_text(),
             at,
+            command: user.command.clone(),
         }),
         Message::Assistant(assistant) => {
             let cost = match logged.timing {
@@ -5217,7 +5234,9 @@ impl Panel for AgentPanel {
         let subject = named
             .or_else(|| {
                 self.transcript.items().iter().find_map(|item| match item {
-                    Item::User { text, .. } => Some(truncate_title(text)),
+                    Item::User { text, command, .. } => {
+                        Some(truncate_title(command.as_ref().unwrap_or(text)))
+                    }
                     _ => None,
                 })
             })
@@ -8825,6 +8844,7 @@ mod tests {
         panel.transcript.push(Item::User {
             text: "go".into(),
             at: String::new(),
+            command: None,
         });
         // Mid-conversation the CLI agent would not see it: refused.
         assert!(!panel.switch_connection("cli"));
@@ -8914,6 +8934,7 @@ mod tests {
         panel.transcript.push(Item::User {
             text: "go".into(),
             at: String::new(),
+            command: None,
         });
         assert!(!panel.is_fresh());
         panel.apply_toolset(&["read".to_string()]);
@@ -9772,6 +9793,45 @@ mod tests {
         );
         assert_eq!(slash_command("/skill:"), None);
         assert_eq!(slash_command("/other:review"), None);
+    }
+
+    #[test]
+    fn an_expanded_command_keeps_what_was_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = AgentPanel::new(AgentPanelSetup {
+            catalog: Arc::new(Skilled::new()),
+            session_dir: Some(dir.path().to_path_buf()),
+            ..setup(vec![reply("ok")])
+        });
+        send(&mut panel, "/deploy v1");
+        assert!(
+            panel.transcript().items().iter().any(|item| matches!(
+                item,
+                Item::User { text, command: Some(command), .. }
+                    if text == "Ship v1." && command == "/deploy v1"
+            )),
+            "{:?}",
+            panel.transcript().items()
+        );
+        // The input history recalls the command, not its expansion.
+        assert_eq!(panel.history(), ["/deploy v1"]);
+
+        // The log keeps it, so a reopened session shows the same headline.
+        let path = panel
+            .session
+            .as_ref()
+            .expect("a session")
+            .path()
+            .to_path_buf();
+        let reopened = Session::open(&path).unwrap();
+        let mut transcript = Transcript::default();
+        for logged in &reopened.context_messages_with_times(&CompactionPrompts::default()) {
+            push_history(&mut transcript, logged);
+        }
+        assert!(transcript.items().iter().any(|item| matches!(
+            item,
+            Item::User { command: Some(command), .. } if command == "/deploy v1"
+        )));
     }
 
     #[test]

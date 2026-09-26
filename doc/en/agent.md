@@ -920,11 +920,12 @@ argument-hint: <path>
 Review $1. Point at bugs first, style last, and quote the lines you mean.
 ```
 
-`/review src/parser.rs` then sends the expanded text, which appears in the
-session as what the model actually received. **Insert prompt…** in the `[≡]`
-menu lists the templates and puts the chosen `/name ` into the input. A
-message starting with `/` that names no template is not sent; a path such as
-`/usr/bin/ls` is plain text.
+`/review src/parser.rs` then sends the expanded text. In the session the
+message is headed by what you typed, `/review src/parser.rs`, with the text
+the model actually received folded under it; `↑` recalls the command, not the
+text. **Insert prompt…** in the `[≡]` menu lists the templates and puts the
+chosen `/name ` into the input. A message starting with `/` that names no
+template is not sent; a path such as `/usr/bin/ls` is plain text.
 
 ### Command scripts
 
@@ -944,13 +945,13 @@ printf 'Review this diff%s:\n\n' "${1:+ with attention to $1}"
 git diff --staged
 ```
 
-The output appears in the session as your request, so what the model got is
-visible. A script that exits with an error, prints nothing or exceeds its
-timeout (60 s by default) sends nothing and reports why. Scripts from the
-configuration level are your own and run at once; one that came with the
-project or the directory asks first, in a card like a permission: run once,
-for this session, always (a rule `[ai.permissions.command]` is written)
-or not at all.
+The output appears in the session as your request, folded under the command as
+a template's text is, so what the model got is a click away. A script that
+exits with an error, prints nothing or exceeds its timeout (60 s by default)
+sends nothing and reports why. Scripts from the configuration level are your
+own and run at once; one that came with the project or the directory asks
+first, in a card like a permission: run once, for this session, always (a rule
+`[ai.permissions.command]` is written) or not at all.
 
 Built-in commands, templates, scripts and skills share the `/` names. When
 several define one, a built-in command wins, then a template, then a script,
