@@ -55,8 +55,8 @@ pub use goal::{parse_verdict, GoalPrompt, GoalVerdict, SEED_GOAL};
 pub use handoff::{HandoffPrompt, SEED_HANDOFF};
 pub use hooks::{HookConfig, HookEvent, HOOKS_FILE};
 pub use layers::{
-    ensure_global_layout, split_front_matter, AgentDefinition, AgentDirs, AgentSpec,
-    PromptTemplate, SkillInfo, BROWSER_PROFILE_DIR, DEFAULT_AGENT, GLOBAL_AGENT_DIR,
+    ensure_global_layout, expand_arguments, split_front_matter, AgentDefinition, AgentDirs,
+    AgentSpec, PromptTemplate, SkillInfo, BROWSER_PROFILE_DIR, DEFAULT_AGENT, GLOBAL_AGENT_DIR,
     PROJECT_AGENT_DIR, PROMPTS_DIR, ROOT_SOUL_FILE, SEED_ENGINES, SESSIONS_DIR, SHARED_SKILLS_DIR,
     SHIMS_DIR, SKILLS_DIR, SKILL_FILE, SOUL_FILE, SPEC_FILE, SYSTEM_DIR, WEB_ENGINES_DIR,
 };

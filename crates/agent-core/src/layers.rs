@@ -85,55 +85,64 @@ pub struct PromptTemplate {
 }
 
 impl PromptTemplate {
-    /// The body with `args` substituted: `$ARGUMENTS` takes the whole
-    /// string, `$1`…`$9` its whitespace-separated words. A body without any
-    /// placeholder gets non-empty `args` appended on a line of their own, so
-    /// `/review src/x.rs` works with a template that never mentions
-    /// arguments (Claude Code's and Codex's behaviour).
+    /// The body with `args` substituted, see [`expand_arguments`].
     #[must_use]
     pub fn expand(&self, args: &str) -> String {
-        let args = args.trim();
-        let words: Vec<&str> = args.split_whitespace().collect();
-        let mut out = String::with_capacity(self.body.len() + args.len());
-        let mut used = false;
-        let mut rest = self.body.as_str();
-        while let Some(i) = rest.find('$') {
-            out.push_str(&rest[..i]);
-            let tail = &rest[i + 1..];
-            if let Some(after) = tail.strip_prefix("ARGUMENTS") {
-                out.push_str(args);
-                used = true;
-                rest = after;
-            } else if let Some(digit) = tail.chars().next().filter(char::is_ascii_digit) {
-                let index = digit.to_digit(10).unwrap_or(0) as usize;
-                if index >= 1 {
-                    out.push_str(words.get(index - 1).copied().unwrap_or(""));
-                    used = true;
-                } else {
-                    out.push_str("$0");
-                }
-                rest = &tail[1..];
-            } else {
-                out.push('$');
-                rest = tail;
-            }
-        }
-        out.push_str(rest);
-        let mut out = out.trim_end().to_string();
-        if !used && !args.is_empty() {
-            out.push_str("\n\n");
-            out.push_str(args);
-        }
-        out
+        expand_arguments(&self.body, args)
     }
 }
 
-/// One skill as the prompt lists it: name, one-line description and where
-/// its `SKILL.md` is.
+/// `body` with `args` substituted: `$ARGUMENTS` takes the whole string,
+/// `$1`…`$9` its whitespace-separated words. A body without any placeholder
+/// gets non-empty `args` appended on a line of their own, so `/review
+/// src/x.rs` works with a template or skill that never mentions arguments
+/// (Claude Code's and Codex's behaviour).
+#[must_use]
+pub fn expand_arguments(body: &str, args: &str) -> String {
+    let args = args.trim();
+    let words: Vec<&str> = args.split_whitespace().collect();
+    let mut out = String::with_capacity(body.len() + args.len());
+    let mut used = false;
+    let mut rest = body;
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        if let Some(after) = tail.strip_prefix("ARGUMENTS") {
+            out.push_str(args);
+            used = true;
+            rest = after;
+        } else if let Some(digit) = tail.chars().next().filter(char::is_ascii_digit) {
+            let index = digit.to_digit(10).unwrap_or(0) as usize;
+            if index >= 1 {
+                out.push_str(words.get(index - 1).copied().unwrap_or(""));
+                used = true;
+            } else {
+                out.push_str("$0");
+            }
+            rest = &tail[1..];
+        } else {
+            out.push('$');
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    let mut out = out.trim_end().to_string();
+    if !used && !args.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(args);
+    }
+    out
+}
+
+/// One skill as the prompt lists it: name, one-line description, argument
+/// hint and where its `SKILL.md` is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillInfo {
     pub name: String,
     pub description: String,
+    /// What to pass as the skill's arguments (`argument-hint`), empty when
+    /// it takes none.
+    pub argument_hint: String,
     pub path: PathBuf,
 }
 
@@ -524,8 +533,8 @@ impl AgentDirs {
 
     /// Every skill the roots define, by name, sorted; a name in a higher
     /// root hides the same name below. A skill is a directory holding a
-    /// `SKILL.md`; the name and description come from its front matter, the
-    /// directory name standing in for a missing name.
+    /// `SKILL.md`; the name, description and argument hint come from its
+    /// front matter, the directory name standing in for a missing name.
     #[must_use]
     pub fn skills(&self) -> Vec<SkillInfo> {
         let mut skills: BTreeMap<String, SkillInfo> = BTreeMap::new();
@@ -548,6 +557,7 @@ impl AgentDirs {
                 skills.entry(name.clone()).or_insert(SkillInfo {
                     name,
                     description: fields.get("description").cloned().unwrap_or_default(),
+                    argument_hint: fields.get("argument-hint").cloned().unwrap_or_default(),
                     path,
                 });
             }
@@ -913,7 +923,7 @@ mod tests {
         );
         write(
             &project.join(".agents/skills/review"),
-            "---\ndescription: Review a diff\nallowed-tools: read\n---\nHow to review.\n",
+            "---\ndescription: Review a diff\nargument-hint: <path>\nallowed-tools: read\n---\nHow to review.\n",
         );
         write(&global.join("skills/notes"), "No front matter at all.\n");
         std::fs::create_dir_all(global.join("skills/not-a-skill")).unwrap();
@@ -926,6 +936,8 @@ mod tests {
         assert!(skills[0].path.starts_with(cwd.join(".termide/ai/skills")));
         assert_eq!(skills[1].description, "");
         assert_eq!(skills[2].description, "Review a diff");
+        assert_eq!(skills[2].argument_hint, "<path>");
+        assert_eq!(skills[0].argument_hint, "");
 
         let (fields, body) = split_front_matter("---\nname: x\n---\nbody\n");
         assert_eq!(fields["name"], "x");

@@ -890,6 +890,13 @@ model loads the skill with the `skill` tool, which returns the text of
 skill never asks for permission. The tool exists only when at least one skill
 does, and it is not subject to an agent's `tools` list.
 
+A skill can take arguments the way a [prompt template](#prompt-templates)
+does: `argument-hint` in the front matter says what to pass and is listed
+after the name (`- review <path>: Review a file`), the model passes the
+arguments along with the name, and `$ARGUMENTS` and `$1`…`$9` in the body are
+filled in; a body without placeholders gets the arguments appended on a line
+of their own.
+
 ### Prompt templates
 
 A prompt template is a Markdown file `prompts/<name>.md`, at any of the three

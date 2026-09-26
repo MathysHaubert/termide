@@ -210,11 +210,14 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
             .skills
             .iter()
             .map(|skill| {
-                if skill.description.is_empty() {
-                    format!("- {}", skill.name)
-                } else {
-                    format!("- {}: {}", skill.name, skill.description)
+                let mut line = format!("- {}", skill.name);
+                if !skill.argument_hint.is_empty() {
+                    line.push_str(&format!(" {}", skill.argument_hint));
                 }
+                if !skill.description.is_empty() {
+                    line.push_str(&format!(": {}", skill.description));
+                }
+                line
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -371,18 +374,20 @@ mod tests {
             crate::layers::SkillInfo {
                 name: "deploy".into(),
                 description: "Ship a release".into(),
+                argument_hint: "<version>".into(),
                 path: dir.path().join("SKILL.md"),
             },
             crate::layers::SkillInfo {
                 name: "notes".into(),
                 description: String::new(),
+                argument_hint: String::new(),
                 path: dir.path().join("SKILL.md"),
             },
         ];
         options.skills = &skills;
         let listed = build_system_prompt(&options);
         assert!(
-            listed.contains("- deploy: Ship a release\n- notes\n"),
+            listed.contains("- deploy <version>: Ship a release\n- notes\n"),
             "{listed}"
         );
 

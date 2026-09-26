@@ -14,6 +14,16 @@ pub(crate) fn required_str<'a>(call: &'a ToolCall, key: &str) -> Result<&'a str,
     }
 }
 
+pub(crate) fn optional_str<'a>(call: &'a ToolCall, key: &str) -> Result<Option<&'a str>, String> {
+    match call.arguments.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("`{key}` must be a string")),
+    }
+}
+
 pub(crate) fn optional_u64(call: &ToolCall, key: &str) -> Result<Option<u64>, String> {
     match call.arguments.get(key) {
         None | Some(serde_json::Value::Null) => Ok(None),
