@@ -156,6 +156,10 @@ impl AgentCatalog for FsCatalog {
         self.dirs.commands()
     }
 
+    fn skills(&self) -> Vec<termide_agent_core::SkillInfo> {
+        self.dirs.skills()
+    }
+
     fn list(&self) -> Vec<AgentEntry> {
         self.dirs
             .agents()

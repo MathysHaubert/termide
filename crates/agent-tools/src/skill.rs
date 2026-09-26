@@ -9,12 +9,9 @@
 //! Arguments fill the body's `$ARGUMENTS` and `$1`…`$9`, as a prompt
 //! template's do.
 
-use std::path::Path;
-
 use serde_json::{json, Value};
 use termide_agent_core::{
-    expand_arguments, split_front_matter, CancelToken, SkillInfo, Tool, ToolCall, ToolContext,
-    ToolResultMessage, ToolUpdate,
+    CancelToken, SkillInfo, Tool, ToolCall, ToolContext, ToolResultMessage, ToolUpdate,
 };
 
 use crate::args::{optional_str, required_str};
@@ -85,51 +82,12 @@ impl SkillTool {
                 names.join(", ")
             ));
         };
-        let raw = std::fs::read_to_string(&skill.path)
-            .map_err(|error| format!("cannot read {}: {error}", skill.path.display()))?;
-        let (_, body) = split_front_matter(&raw);
-        let dir = skill.path.parent().unwrap_or(Path::new("."));
-        let files = companion_files(dir);
-        let mut text = expand_arguments(body, args);
-        if !files.is_empty() {
-            text.push_str(&format!(
-                "\n\nFiles of this skill, under {}:\n",
-                dir.display()
-            ));
-            for file in &files {
-                text.push_str(&format!("- {file}\n"));
-            }
-        }
+        let loaded = skill.load(args)?;
         Ok((
-            text,
-            json!({ "name": skill.name, "path": skill.path, "files": files }),
+            loaded.text,
+            json!({ "name": skill.name, "path": skill.path, "files": loaded.files }),
         ))
     }
-}
-
-/// Every file under `dir` except `SKILL.md`, as paths relative to `dir`,
-/// sorted, so the model can `read` the ones it needs.
-fn companion_files(dir: &Path) -> Vec<String> {
-    fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
-        let Ok(read_dir) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(base, &path, out);
-            } else if let Ok(relative) = path.strip_prefix(base) {
-                let relative = relative.to_string_lossy().replace('\\', "/");
-                if relative != termide_agent_core::SKILL_FILE {
-                    out.push(relative);
-                }
-            }
-        }
-    }
-    let mut files = Vec::new();
-    walk(dir, dir, &mut files);
-    files.sort();
-    files
 }
 
 #[cfg(test)]

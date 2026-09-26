@@ -640,6 +640,10 @@ pub trait Translation: Send + Sync {
     fn agent_notice_compacted_fmt(&self, tokens: u64, kept: usize) -> String;
     fn agent_notice_handoff_written_fmt(&self, path: &str) -> String;
     fn agent_notice_no_command_fmt(&self, name: &str, available: &str) -> String;
+    /// `/name` is defined by several kinds: the one it runs and the hidden ones.
+    fn agent_notice_slash_shadowed_fmt(&self, name: &str, runs: &str, hidden: &str) -> String;
+    /// How to reach a skill whose `/name` another kind takes.
+    fn agent_notice_slash_skill_hint_fmt(&self, name: &str) -> String;
     fn agent_notice_loop_stopped_max_fmt(&self, count: usize) -> String;
     fn agent_notice_goal_stopped_max_fmt(&self, count: usize) -> String;
     fn agent_notice_goal_working_fmt(&self, goal: &str) -> String;
@@ -687,6 +691,13 @@ pub trait Translation: Send + Sync {
     fn agent_tool_fetch(&self) -> &str;
     /// Agent transcript: the action verb for a `web_search` tool call.
     fn agent_tool_web_search(&self) -> &str;
+    /// Agent notices: what defines a `/name` — a built-in command, a prompt
+    /// template, a command script, a skill — as the object of "runs" and
+    /// "hides".
+    fn agent_slash_kind_builtin(&self) -> &str;
+    fn agent_slash_kind_template(&self) -> &str;
+    fn agent_slash_kind_script(&self) -> &str;
+    fn agent_slash_kind_skill(&self) -> &str;
     /// Settings modal: the Agent tab label.
     fn settings_tab_agent(&self) -> &str;
     /// Settings modal: Agent tab field labels.

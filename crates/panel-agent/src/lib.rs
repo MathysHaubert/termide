@@ -7,6 +7,7 @@
 //! transcript change also goes to the JSONL [`Session`] when one is attached.
 
 mod select;
+mod slash;
 mod transcript;
 
 use std::any::Any;
@@ -28,8 +29,8 @@ use termide_agent_core::{
     HostTools, LateTools, LoggedMessage, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
     PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule,
     PersistScope, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session, SessionSummary,
-    StopReason, StreamEvent, Timing, Tool, ToolCall, ToolContext, ToolDecision, ToolRegistry,
-    ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    SkillInfo, StopReason, StreamEvent, Timing, Tool, ToolCall, ToolContext, ToolDecision,
+    ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -118,6 +119,25 @@ const HANDOFF_COMMAND: &str = "handoff";
 const USAGE_COMMAND: &str = "usage";
 /// The built-in `/prompt` command: open the assembled system prompt in a viewer.
 const PROMPT_COMMAND: &str = "prompt";
+/// Every built-in `/name`, whatever the state; a template, script or skill
+/// of the same name never runs under it (see `slash`).
+const BUILTIN_COMMANDS: [&str; 13] = [
+    UNDO_COMMAND,
+    COMPACT_COMMAND,
+    NEW_COMMAND,
+    CLEAR_COMMAND,
+    RENAME_COMMAND,
+    NAME_COMMAND,
+    PAUSE_COMMAND,
+    CONTINUE_COMMAND,
+    LOOP_COMMAND,
+    GOAL_COMMAND,
+    HANDOFF_COMMAND,
+    USAGE_COMMAND,
+    PROMPT_COMMAND,
+];
+/// Welcome-banner action that explains the `/name`s defined more than once.
+const SLASH_CONFLICTS_ACTION: &str = "agent_slash_conflicts";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
@@ -326,6 +346,10 @@ pub trait AgentCatalog: Send + Sync {
     }
     /// Command scripts (`commands/<name>`), for `/<name>` in the input.
     fn commands(&self) -> Vec<CommandScript> {
+        Vec::new()
+    }
+    /// Skills, for `/<name>` and `/skill:<name>` in the input.
+    fn skills(&self) -> Vec<SkillInfo> {
         Vec::new()
     }
     /// The session's permission mode is now `mode`: what the catalog runs
@@ -695,6 +719,9 @@ pub struct AgentPanel {
     /// action a click on it triggers (re-pick the model, the agent). Rebuilt
     /// every render; empty once the session has content and the banner is gone.
     banner_hits: Vec<(Rect, &'static str)>,
+    /// The `/name`s more than one kind defined when the panel opened, for
+    /// the welcome banner; a click there explains them.
+    shadowed: Vec<String>,
 }
 
 impl AgentPanel {
@@ -792,7 +819,7 @@ impl AgentPanel {
             && !model.id.is_empty())
         .then(|| model.id.clone());
         setup.catalog.set_mode(mode.get());
-        Self {
+        let mut panel = Self {
             runtime,
             external,
             permission_rx,
@@ -897,7 +924,21 @@ impl AgentPanel {
             input_area: Rect::default(),
             scrollbars: ScrollBars::default(),
             banner_hits: Vec::new(),
+            shadowed: Vec::new(),
+        };
+        // Names defined twice are reported once, when the panel opens: on the
+        // welcome banner of a fresh session (a notice would replace it), as
+        // notices under a resumed one.
+        if panel.transcript.items().is_empty() {
+            panel.shadowed = panel
+                .slash_conflicts()
+                .into_iter()
+                .map(|conflict| conflict.name)
+                .collect();
+        } else {
+            panel.notice_slash_conflicts();
         }
+        panel
     }
 
     /// Replace the running agent with one continuing `session` (or a fresh
@@ -1378,21 +1419,34 @@ impl AgentPanel {
                 self.clear_input();
                 return self.handle_status_action(SHOW_PROMPT_ACTION);
             }
-            Some((name, args)) => {
-                let prompts = self.catalog.prompts();
-                if let Some(template) = prompts.iter().find(|p| p.name == name) {
-                    template.expand(args)
-                } else if let Some(script) =
-                    self.catalog.commands().into_iter().find(|c| c.name == name)
-                {
+            Some((name, args)) => match slash::resolve(
+                name,
+                self.catalog.prompts(),
+                self.catalog.commands(),
+                self.catalog.skills(),
+            ) {
+                Some(slash::SlashTarget::Template(template)) => template.expand(args),
+                Some(slash::SlashTarget::Script(script)) => {
                     // A command script: its output becomes the request, once
                     // it has run (and, for a project's script, been allowed).
                     self.clear_input();
                     self.run_command(script, args.to_string());
                     return vec![PanelEvent::NeedsRedraw];
-                } else {
-                    let mut names: Vec<String> = prompts.iter().map(|p| p.name.clone()).collect();
+                }
+                // A skill switched off in the toolset still runs by hand: that
+                // keeps it out of the model's context, not away from the user.
+                Some(slash::SlashTarget::Skill(skill)) => match skill.load(args) {
+                    Ok(loaded) => loaded.text,
+                    Err(error) => {
+                        self.notice(error, NoticeKind::Warn);
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
+                },
+                None => {
+                    let mut names: Vec<String> =
+                        self.catalog.prompts().into_iter().map(|p| p.name).collect();
                     names.extend(self.catalog.commands().into_iter().map(|c| c.name));
+                    names.extend(self.slash_skills().into_iter().map(|(name, _)| name));
                     names.push(COMPACT_COMMAND.to_string());
                     if self.session_dir.is_some() {
                         names.push(NEW_COMMAND.to_string());
@@ -1417,7 +1471,7 @@ impl AgentPanel {
                     );
                     return vec![PanelEvent::NeedsRedraw];
                 }
-            }
+            },
             None => text,
         };
         // A model left to the provider is known once its list arrives; until
@@ -1731,6 +1785,46 @@ impl AgentPanel {
             width,
             &self.colors,
         )
+    }
+
+    /// Each skill as `/` reaches it: by its own name, or as `skill:<name>`
+    /// when a built-in command, a template or a script takes the name.
+    fn slash_skills(&self) -> Vec<(String, SkillInfo)> {
+        let prompts = self.catalog.prompts();
+        let commands = self.catalog.commands();
+        self.catalog
+            .skills()
+            .into_iter()
+            .map(|skill| {
+                let name = skill.name.as_str();
+                let taken = BUILTIN_COMMANDS.contains(&name)
+                    || prompts.iter().any(|p| p.name == name)
+                    || commands.iter().any(|c| c.name == name);
+                let reach = if taken {
+                    format!("{}{name}", slash::SKILL_PREFIX)
+                } else {
+                    name.to_string()
+                };
+                (reach, skill)
+            })
+            .collect()
+    }
+
+    /// The `/name`s more than one kind defines, see [`slash::conflicts`].
+    fn slash_conflicts(&self) -> Vec<slash::Conflict> {
+        slash::conflicts(
+            &BUILTIN_COMMANDS,
+            &self.catalog.prompts(),
+            &self.catalog.commands(),
+            &self.catalog.skills(),
+        )
+    }
+
+    /// One warning per `/name` more than one kind defines.
+    fn notice_slash_conflicts(&mut self) {
+        for conflict in self.slash_conflicts() {
+            self.notice(conflict.describe(), NoticeKind::Warn);
+        }
     }
 
     fn notice(&mut self, text: impl Into<String>, kind: NoticeKind) {
@@ -3437,6 +3531,18 @@ impl AgentPanel {
                     .with_description(description),
             );
         }
+        // A skill whose name something else takes is offered as `skill:<name>`,
+        // found by either spelling.
+        for (reach, skill) in self.slash_skills() {
+            if reach.starts_with(prefix) || skill.name.starts_with(prefix) {
+                items.push(
+                    CompletionItem::new(reach.clone())
+                        .with_label(format!("/{reach}"))
+                        .with_hint(skill.argument_hint)
+                        .with_description(skill.description),
+                );
+            }
+        }
         if UNDO_COMMAND.starts_with(prefix) && !self.external {
             items.push(
                 CompletionItem::new(UNDO_COMMAND)
@@ -4229,6 +4335,20 @@ impl AgentPanel {
             ));
         }
         info.push((field("cwd", cwd, false), None));
+        if !self.shadowed.is_empty() {
+            let names: Vec<String> = self
+                .shadowed
+                .iter()
+                .map(|name| format!("/{name}"))
+                .collect();
+            info.push((
+                Line::from(vec![
+                    Span::styled(format!("{:<12}", "shadowed"), dim),
+                    Span::styled(names.join(", "), Style::default().fg(colors.warning)),
+                ]),
+                Some(SLASH_CONFLICTS_ACTION),
+            ));
+        }
 
         let banner_h = info.len().max(LOGO.len()) as u16;
         let bottom = area.y + area.height;
@@ -4564,13 +4684,15 @@ pub(crate) fn format_tokens(tokens: u64) -> String {
     }
 }
 
-/// `/<name> args` at the start of a message: the template name and the
-/// rest. A word with further slashes (`/usr/bin`) is text, not a command.
+/// `/<name> args` at the start of a message: the command name and the
+/// rest. `skill:` may prefix the name (see `slash`). A word with further
+/// slashes (`/usr/bin`) is text, not a command.
 fn slash_command(text: &str) -> Option<(&str, &str)> {
     let rest = text.strip_prefix('/')?;
     let (name, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-    if name.is_empty()
-        || !name
+    let bare = name.strip_prefix(slash::SKILL_PREFIX).unwrap_or(name);
+    if bare.is_empty()
+        || !bare
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
@@ -5131,6 +5253,10 @@ impl Panel for AgentPanel {
                 on_submit: InputAction::Custom(RENAME_ACTION.to_string()),
             }],
             DELETE_SESSION_ACTION => self.ask_delete_session(),
+            SLASH_CONFLICTS_ACTION => {
+                self.notice_slash_conflicts();
+                vec![PanelEvent::NeedsRedraw]
+            }
             CONNECTION_ACTION => {
                 let Some(connections) = &self.connections else {
                     return Vec::new();
@@ -9563,6 +9689,128 @@ mod tests {
         select(&mut panel, picker, 0);
         assert_eq!(panel.input_text(), "/review ");
     }
+    /// The test catalog plus skills in a directory of its own: `review`,
+    /// which the template of the same name hides, and `deploy`.
+    struct Skilled(tempfile::TempDir);
+
+    impl Skilled {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            for (name, body) in [
+                ("review", "---\nname: review\n---\nSkill review of $1.\n"),
+                (
+                    "deploy",
+                    "---\nname: deploy\nargument-hint: <version>\n---\nShip $1.\n",
+                ),
+            ] {
+                std::fs::create_dir_all(dir.path().join(name)).unwrap();
+                std::fs::write(dir.path().join(name).join("SKILL.md"), body).unwrap();
+            }
+            Self(dir)
+        }
+    }
+
+    impl AgentCatalog for Skilled {
+        fn list(&self) -> Vec<AgentEntry> {
+            Agents.list()
+        }
+        fn resolve(&self, name: &str) -> Option<AgentProfile> {
+            Agents.resolve(name)
+        }
+        fn prompts(&self) -> Vec<PromptTemplate> {
+            Agents.prompts()
+        }
+        fn skills(&self) -> Vec<SkillInfo> {
+            ["deploy", "review"]
+                .into_iter()
+                .map(|name| SkillInfo {
+                    name: name.into(),
+                    description: format!("{name} skill"),
+                    argument_hint: String::new(),
+                    path: self.0.path().join(name).join("SKILL.md"),
+                })
+                .collect()
+        }
+    }
+
+    fn skilled_panel(session: Option<Session>) -> AgentPanel {
+        AgentPanel::new(AgentPanelSetup {
+            catalog: Arc::new(Skilled::new()),
+            session,
+            ..setup(vec![reply("ok"), reply("ok")])
+        })
+    }
+
+    fn send(panel: &mut AgentPanel, text: &str) -> String {
+        type_text(panel, text);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(panel);
+        panel
+            .transcript()
+            .items()
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                Item::User { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn slash_runs_a_skill_after_templates_and_by_its_prefix() {
+        let mut panel = skilled_panel(None);
+        assert_eq!(send(&mut panel, "/deploy v1"), "Ship v1.");
+        assert_eq!(send(&mut panel, "/review a.rs"), "Review a.rs carefully.");
+        assert_eq!(
+            send(&mut panel, "/skill:review a.rs"),
+            "Skill review of a.rs."
+        );
+        assert_eq!(
+            slash_command("/skill:review a"),
+            Some(("skill:review", "a"))
+        );
+        assert_eq!(slash_command("/skill:"), None);
+        assert_eq!(slash_command("/other:review"), None);
+    }
+
+    #[test]
+    fn slash_completion_offers_a_hidden_skill_by_its_prefix() {
+        let mut panel = skilled_panel(None);
+        type_text(&mut panel, "/");
+        let list = panel.completion.as_ref().expect("a completion popup");
+        let names: Vec<&str> = list.items().iter().map(|i| i.value.as_str()).collect();
+        assert!(names.contains(&"deploy"), "{names:?}");
+        assert!(names.contains(&"review") && names.contains(&"skill:review"));
+    }
+
+    #[test]
+    fn shadowed_names_are_reported_when_the_panel_opens() {
+        // A fresh session keeps its banner: the names wait there, a click
+        // explains them.
+        let mut fresh = skilled_panel(None);
+        assert_eq!(fresh.shadowed, ["review"]);
+        assert!(fresh.transcript().items().is_empty());
+        fresh.handle_status_action(SLASH_CONFLICTS_ACTION);
+        assert!(fresh.transcript().items().iter().any(|item| matches!(
+            item,
+            Item::Notice { text, kind: NoticeKind::Warn } if text.contains("/skill:review")
+        )));
+
+        // A resumed session has no banner, so the warning comes as a notice.
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), dir.path()).unwrap();
+        session
+            .append_timed_message(&Message::User(UserMessage::text("hi")), None)
+            .unwrap();
+        let resumed = skilled_panel(Some(Session::open(session.path()).unwrap()));
+        assert!(resumed.shadowed.is_empty());
+        assert!(resumed.transcript().items().iter().any(|item| matches!(
+            item,
+            Item::Notice { text, .. } if text.starts_with("/review")
+        )));
+    }
+
     /// A tool with nothing behind it, standing in for one an MCP server sent.
     struct Late(&'static str);
 

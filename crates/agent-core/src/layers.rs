@@ -146,6 +146,70 @@ pub struct SkillInfo {
     pub path: PathBuf,
 }
 
+/// A skill as it enters the conversation, see [`SkillInfo::load`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedSkill {
+    /// The instructions with the arguments filled in, then the list of the
+    /// files that come with the skill.
+    pub text: String,
+    /// Every file beside `SKILL.md`, relative to its directory, sorted.
+    pub files: Vec<String>,
+}
+
+impl SkillInfo {
+    /// The body of `SKILL.md` without its front matter and with `args`
+    /// substituted ([`expand_arguments`]), followed by the files beside it
+    /// for the model to `read`. Shared by the `skill` tool and `/name` in
+    /// the input.
+    ///
+    /// # Errors
+    ///
+    /// When `SKILL.md` cannot be read.
+    pub fn load(&self, args: &str) -> Result<LoadedSkill, String> {
+        let raw = std::fs::read_to_string(&self.path)
+            .map_err(|error| format!("cannot read {}: {error}", self.path.display()))?;
+        let (_, body) = split_front_matter(&raw);
+        let dir = self.path.parent().unwrap_or(Path::new("."));
+        let files = companion_files(dir);
+        let mut text = expand_arguments(body, args);
+        if !files.is_empty() {
+            text.push_str(&format!(
+                "\n\nFiles of this skill, under {}:\n",
+                dir.display()
+            ));
+            for file in &files {
+                text.push_str(&format!("- {file}\n"));
+            }
+        }
+        Ok(LoadedSkill { text, files })
+    }
+}
+
+/// Every file under `dir` except `SKILL.md`, as paths relative to `dir`,
+/// sorted, so the model can `read` the ones it needs.
+fn companion_files(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        let Ok(read_dir) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else if let Ok(relative) = path.strip_prefix(base) {
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if relative != SKILL_FILE {
+                    out.push(relative);
+                }
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files);
+    files.sort();
+    files
+}
+
 /// Split the YAML front matter (`---` fenced `key: value` lines) off a
 /// Markdown file. Returns the fields and the body; a file without front
 /// matter is all body.

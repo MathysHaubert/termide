@@ -207,7 +207,7 @@ you have named or sent even one message to is always kept.
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
 | `F8` | Delete this session (after a confirmation) and start a fresh one |
-| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, or run the command script `name`; `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it (or, before the step ends, cancels the pause); `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it; `/usage` opens the session-info modal and `/prompt` opens the assembled system prompt |
+| `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, run the command script `name` or send the skill `name` (`/skill:name` when the name is taken); `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it (or, before the step ends, cancels the pause); `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it; `/usage` opens the session-info modal and `/prompt` opens the assembled system prompt |
 | `↑` / `↓` | On the first or last line of the input: take back the messages still queued (`↑`, while any wait), else recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |
 | `Ctrl+↑` / `Ctrl+↓`, `PageUp` / `PageDown` | Scroll the session |
@@ -897,6 +897,12 @@ arguments along with the name, and `$ARGUMENTS` and `$1`…`$9` in the body are
 filled in; a body without placeholders gets the arguments appended on a line
 of their own.
 
+You can send a skill yourself too, as `/name args` or `/skill:name args`: its
+text, with the arguments filled in and its files listed, goes out as your
+request, as a template's does. A skill switched off in the toolset still
+works this way — switching it off keeps it out of the model's context, not
+out of your reach.
+
 ### Prompt templates
 
 A prompt template is a Markdown file `prompts/<name>.md`, at any of the three
@@ -944,8 +950,18 @@ timeout (60 s by default) sends nothing and reports why. Scripts from the
 configuration level are your own and run at once; one that came with the
 project or the directory asks first, in a card like a permission: run once,
 for this session, always (a rule `[ai.permissions.command]` is written)
-or not at all. Templates and scripts share the `/` names; when both exist
-at the same level, the template wins.
+or not at all.
+
+Built-in commands, templates, scripts and skills share the `/` names. When
+several define one, a built-in command wins, then a template, then a script,
+then a skill: a project cannot take over `/clear`, and what was written to be
+typed after `/` beats what was written for the model. `/skill:name` always
+reaches the skill, and the `/` list offers a skill whose name is taken under
+that spelling. Names defined more than once are reported when the panel
+opens: as a **shadowed** row on the welcome screen, which explains them when
+clicked, or as warnings under a resumed session. The same name at several
+levels of one kind is not reported — the higher level hiding the lower is how
+levels work.
 
 ### MCP servers
 

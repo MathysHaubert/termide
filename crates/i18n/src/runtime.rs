@@ -467,6 +467,10 @@ impl Translation for RuntimeTranslation {
         agent_tool_edit,
         agent_tool_fetch,
         agent_tool_web_search,
+        agent_slash_kind_builtin,
+        agent_slash_kind_template,
+        agent_slash_kind_script,
+        agent_slash_kind_skill,
         settings_tab_agent,
         settings_agent_provider,
         settings_agent_base_url,
@@ -951,6 +955,17 @@ impl Translation for RuntimeTranslation {
             "agent_notice_no_command_fmt",
             &[("name", name), ("available", available)],
         )
+    }
+
+    fn agent_notice_slash_shadowed_fmt(&self, name: &str, runs: &str, hidden: &str) -> String {
+        self.format(
+            "agent_notice_slash_shadowed_fmt",
+            &[("name", name), ("runs", runs), ("hidden", hidden)],
+        )
+    }
+
+    fn agent_notice_slash_skill_hint_fmt(&self, name: &str) -> String {
+        self.format("agent_notice_slash_skill_hint_fmt", &[("name", name)])
     }
 
     fn agent_notice_loop_stopped_max_fmt(&self, count: usize) -> String {
