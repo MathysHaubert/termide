@@ -446,7 +446,7 @@ impl App {
             if let Err(e) = termide_project::Session::delete_session(path) {
                 log::error!("Failed to delete session for {:?}: {}", path, e);
                 // Keep the error on screen instead of reopening over it.
-                self.show_error_modal(format!("Failed to delete session: {e}"));
+                self.show_error_modal(i18n::t().projects_delete_failed_fmt(&e.to_string()));
                 return Ok(());
             }
             log::info!("Deleted session for {:?}", path);

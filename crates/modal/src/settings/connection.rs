@@ -139,7 +139,7 @@ impl SettingsModal {
     /// The AI tab's rows for the connections: a heading, one row each, the
     /// row that adds one.
     pub(super) fn connection_list_rows(&self) -> Vec<ContentRow> {
-        let mut rows = vec![ContentRow::Header("Connections")];
+        let mut rows = vec![ContentRow::Header(i18n::t().settings_header_connections())];
         rows.extend((0..self.config.ai.connections.len()).map(ContentRow::Connection));
         rows.push(ContentRow::ConnectionAdd);
         rows
@@ -150,7 +150,11 @@ impl SettingsModal {
     pub(super) fn connection_page_rows(&self) -> Vec<ContentRow> {
         use ContentRow::{ConnectionButtons, Field, Header, Spacer};
         let cli = self.edited().is_some_and(Connection::is_cli);
-        let mut rows = vec![Header("Connection"), Field(NAME), Field(PROVIDER)];
+        let mut rows = vec![
+            Header(i18n::t().settings_header_connection()),
+            Field(NAME),
+            Field(PROVIDER),
+        ];
         if !cli {
             rows.extend([Field(BASE_URL), Field(API_KEY_ENV)]);
         }
@@ -315,9 +319,8 @@ impl SettingsModal {
             MODEL => connection.model.clone(),
             CONTEXT_WINDOW => connection.context_window_fallback.map_or_else(
                 || {
-                    format!(
-                        "(default {})",
-                        termide_config::DEFAULT_CONTEXT_WINDOW_FALLBACK
+                    i18n::t().settings_value_default_fmt(
+                        &termide_config::DEFAULT_CONTEXT_WINDOW_FALLBACK.to_string(),
                     )
                 },
                 |n| n.to_string(),

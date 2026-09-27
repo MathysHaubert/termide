@@ -10,6 +10,7 @@ impl App {
         use termide_modal::{ActiveModal, CommandEntry, CommandPaletteModal};
         use termide_state::PendingAction;
 
+        let t = termide_i18n::t();
         let kb = &self.state.config.general.keybindings;
 
         let kb_str = |b: &Option<termide_config::KeyBinding>| {
@@ -24,88 +25,88 @@ impl App {
             (
                 "new_editor",
                 CommandEntry {
-                    label: "New Editor".into(),
-                    category: "Panels",
+                    label: t.help_desc_new_editor().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.new_editor),
                 },
             ),
             (
                 "new_file_manager",
                 CommandEntry {
-                    label: "New File Manager".into(),
-                    category: "Panels",
+                    label: t.help_desc_new_file_manager().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.new_file_manager),
                 },
             ),
             (
                 "new_terminal",
                 CommandEntry {
-                    label: "New Terminal".into(),
-                    category: "Panels",
+                    label: t.help_desc_new_terminal().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.new_terminal),
                 },
             ),
             (
                 "new_journal",
                 CommandEntry {
-                    label: "New Journal".into(),
-                    category: "Panels",
+                    label: t.help_desc_new_journal().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.new_journal),
                 },
             ),
             (
                 "open_help",
                 CommandEntry {
-                    label: "Open Help".into(),
-                    category: "Panels",
+                    label: t.help_desc_help().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.open_help),
                 },
             ),
             (
                 "open_path",
                 CommandEntry {
-                    label: "Open Path or URL".into(),
-                    category: "Panels",
+                    label: t.help_desc_open_path().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.open_path),
                 },
             ),
             (
                 "open_preferences",
                 CommandEntry {
-                    label: "Open Preferences".into(),
-                    category: "Panels",
+                    label: t.help_desc_open_preferences().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.open_preferences),
                 },
             ),
             (
                 "open_git_status",
                 CommandEntry {
-                    label: "Open Git Status".into(),
-                    category: "Git",
+                    label: t.help_desc_open_git_status().into(),
+                    category: t.palette_category_git(),
                     keybinding: kb_str(&kb.open_git_status),
                 },
             ),
             (
                 "open_git_log",
                 CommandEntry {
-                    label: "Open Git Log".into(),
-                    category: "Git",
+                    label: t.help_desc_open_git_log().into(),
+                    category: t.palette_category_git(),
                     keybinding: kb_str(&kb.open_git_log),
                 },
             ),
             (
                 "open_projects",
                 CommandEntry {
-                    label: "Open Sessions".into(),
-                    category: "Navigation",
+                    label: t.help_desc_open_projects().into(),
+                    category: t.palette_category_navigation(),
                     keybinding: kb_str(&kb.open_projects),
                 },
             ),
             (
                 "open_projects",
                 CommandEntry {
-                    label: "Switch Directory".into(),
-                    category: "Navigation",
+                    label: t.help_desc_switch_directory().into(),
+                    category: t.palette_category_navigation(),
                     keybinding: kb_str(
                         &self.state.config.file_manager.keybindings.switch_directory,
                     ),
@@ -114,104 +115,104 @@ impl App {
             (
                 "open_outline",
                 CommandEntry {
-                    label: "Open Outline".into(),
-                    category: "Navigation",
+                    label: t.help_desc_open_outline().into(),
+                    category: t.palette_category_navigation(),
                     keybinding: kb_str(&kb.open_outline),
                 },
             ),
             (
                 "open_agent",
                 CommandEntry {
-                    label: "Open Agent".into(),
-                    category: "Panels",
+                    label: t.help_desc_open_agent().into(),
+                    category: t.palette_category_panels(),
                     keybinding: kb_str(&kb.open_agent),
                 },
             ),
             (
                 "open_diagnostics",
                 CommandEntry {
-                    label: "Open Diagnostics".into(),
-                    category: "Navigation",
+                    label: t.help_desc_open_diagnostics().into(),
+                    category: t.palette_category_navigation(),
                     keybinding: kb_str(&kb.open_diagnostics),
                 },
             ),
             (
                 "open_bookmark_add",
                 CommandEntry {
-                    label: "Add Bookmark".into(),
-                    category: "Navigation",
+                    label: t.help_desc_open_bookmark_add().into(),
+                    category: t.palette_category_navigation(),
                     keybinding: kb_str(&kb.open_bookmark_add),
                 },
             ),
             (
                 "close_panel",
                 CommandEntry {
-                    label: "Close Panel".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_close_panel().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.close_panel),
                 },
             ),
             (
                 "toggle_stack",
                 CommandEntry {
-                    label: "Toggle Stacking".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_toggle_stack().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.toggle_stack),
                 },
             ),
             (
                 "swap_left",
                 CommandEntry {
-                    label: "Move Panel Left".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_swap_left().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.swap_left),
                 },
             ),
             (
                 "swap_right",
                 CommandEntry {
-                    label: "Move Panel Right".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_swap_right().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.swap_right),
                 },
             ),
             (
                 "move_first",
                 CommandEntry {
-                    label: "Move to First".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_move_first().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.move_first),
                 },
             ),
             (
                 "move_last",
                 CommandEntry {
-                    label: "Move to Last".into(),
-                    category: "Panel Management",
+                    label: t.help_desc_move_last().into(),
+                    category: t.palette_category_panel_management(),
                     keybinding: kb_str(&kb.move_last),
                 },
             ),
             (
                 "detach_instance",
                 CommandEntry {
-                    label: "Detach Session".into(),
-                    category: "Application",
+                    label: t.help_desc_detach_instance().into(),
+                    category: t.palette_category_application(),
                     keybinding: kb_str(&kb.detach_instance),
                 },
             ),
             (
                 "quit",
                 CommandEntry {
-                    label: "Quit".into(),
-                    category: "Application",
+                    label: t.help_desc_quit().into(),
+                    category: t.palette_category_application(),
                     keybinding: kb_str(&kb.quit),
                 },
             ),
             (
                 "menu",
                 CommandEntry {
-                    label: "Toggle Menu".into(),
-                    category: "Application",
+                    label: t.help_desc_menu().into(),
+                    category: t.palette_category_application(),
                     keybinding: kb_str(&kb.toggle_menu),
                 },
             ),
@@ -237,8 +238,8 @@ impl App {
                 );
                 actions.push(format!("run_command:{command_key}"));
                 entries.push(CommandEntry {
-                    label: format!("Run command: {}", display_name),
-                    category: "Commands",
+                    label: t.command_run_label().replace("{name}", display_name),
+                    category: t.palette_category_commands(),
                     keybinding: key_str.to_string(),
                 });
             }

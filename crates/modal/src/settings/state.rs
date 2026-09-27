@@ -252,65 +252,66 @@ impl SettingsModal {
     /// Field indices reference `fields_for_tab(self.active_tab)`.
     pub(super) fn content_rows(&self) -> Vec<ContentRow> {
         use ContentRow::*;
+        let t = i18n::t();
         match self.field_tab() {
             SettingsTab::General => vec![
-                Header("Appearance"),
+                Header(t.settings_header_appearance()),
                 Field(1), // theme
                 Field(2), // language
                 Field(3), // icon_mode
                 Spacer,
-                Header("Input"),
+                Header(t.settings_header_input()),
                 Field(0), // vim_mode
                 Spacer,
-                Header("Layout"),
+                Header(t.settings_header_layout()),
                 Field(4), // auto_stack_threshold
                 Field(5), // min_panel_width
                 Spacer,
-                Header("Notifications"),
+                Header(t.settings_header_notifications()),
                 Field(7), // bell
                 Spacer,
-                Header("Performance"),
+                Header(t.settings_header_performance()),
                 Field(6), // session_retention
                 Field(8), // resource_monitor_interval
                 Spacer,
-                Header("Session"),
+                Header(t.settings_header_session()),
                 Field(9), // always_detachable
             ],
             SettingsTab::Editor => vec![
-                Header("Typing"),
+                Header(t.settings_header_typing()),
                 Field(0), // tab_size
                 Field(2), // auto_indent
                 Field(3), // auto_close_brackets
                 Spacer,
-                Header("Display"),
+                Header(t.settings_header_display()),
                 Field(1), // word_wrap
                 Field(4), // show_git_diff
                 Field(5), // show_blame
                 Spacer,
-                Header("Performance"),
+                Header(t.settings_header_performance()),
                 Field(6), // large_file_threshold
             ],
             SettingsTab::FileManager => vec![
-                Header("Display"),
+                Header(t.settings_header_display()),
                 Field(0), // extended_view_width
                 Field(2), // dir_size_in_wide_view
                 Field(3), // dir_size_budget_ms
                 Spacer,
-                Header("Search"),
+                Header(t.settings_header_search()),
                 Field(1), // content_search_max_file_size_mb
             ],
             SettingsTab::Terminal => vec![Field(0)],
             SettingsTab::Lsp => {
                 let mut rows = vec![
-                    Header("General"),
+                    Header(t.settings_header_general()),
                     Field(0), // enabled
                     Field(1), // auto_completion
                     Spacer,
-                    Header("Timing"),
+                    Header(t.settings_header_timing()),
                     Field(2), // completion_delay
                     Field(3), // hover_delay
                     Spacer,
-                    Header("Servers"),
+                    Header(t.settings_header_servers()),
                     LspAddServer,
                 ];
                 for i in 0..self.lsp_server_keys.len() {
@@ -324,17 +325,17 @@ impl SettingsModal {
                 let mut rows = self.connection_list_rows();
                 rows.extend([
                     Spacer,
-                    Header("Model"),
+                    Header(t.settings_header_model()),
                     Field(0), // max_tokens
                     Field(1), // reasoning
                     Spacer,
-                    Header("Permissions"),
+                    Header(t.settings_header_permissions()),
                     Field(7), // permission mode for new sessions
                     Spacer,
-                    Header("Transcript"),
+                    Header(t.settings_header_transcript()),
                     Field(2), // autofold
                     Spacer,
-                    Header("Web"),
+                    Header(t.settings_header_web()),
                     Field(3), // web backend
                     Field(4), // search engine
                     Field(5), // browser display

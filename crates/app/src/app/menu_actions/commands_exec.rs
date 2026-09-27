@@ -96,7 +96,7 @@ impl App {
                 }
                 Err(e) => {
                     log::error!("Failed to run background command '{}': {}", command.name, e);
-                    self.show_error_modal(format!("Failed to run command: {}", e));
+                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
                 }
             }
         } else {
@@ -124,7 +124,7 @@ impl App {
                         command.name,
                         e
                     );
-                    self.show_error_modal(format!("Failed to run command: {}", e));
+                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
                 }
             }
         }
@@ -178,7 +178,7 @@ impl App {
                 }
                 Err(e) => {
                     log::error!("Failed to run background command '{}': {}", command.name, e);
-                    self.show_error_modal(format!("Failed to run command: {}", e));
+                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
                 }
             }
         } else {
@@ -206,7 +206,7 @@ impl App {
                         command.name,
                         e
                     );
-                    self.show_error_modal(format!("Failed to run command: {}", e));
+                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
                 }
             }
         }
@@ -287,7 +287,7 @@ impl App {
             }
             Err(e) => {
                 log::error!("Failed to run report command '{}': {}", command.name, e);
-                self.show_error_modal(format!("Failed to run command: {}", e));
+                self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
             }
         }
 

@@ -901,7 +901,7 @@ impl AgentPanel {
             transcript,
             input: InputBar::new(vec![])
                 .with_multiline_field("")
-                .with_placeholder("Ask the agent…")
+                .with_placeholder(termide_i18n::t().agent_input_placeholder())
                 .with_border(String::new(), String::new()),
             history_pos: None,
             draft: String::new(),
@@ -1145,12 +1145,13 @@ impl AgentPanel {
             }
         }
         self.paste_seq += 1;
+        let t = termide_i18n::t();
         let label = if lines > 1 {
-            format!("{lines} lines")
+            t.agent_paste_lines_fmt(lines)
         } else {
-            format!("{} chars", text.chars().count())
+            t.agent_paste_chars_fmt(text.chars().count())
         };
-        let placeholder = format!("[#{} pasted {label}]", self.paste_seq);
+        let placeholder = t.agent_paste_placeholder_fmt(self.paste_seq, &label);
         self.input_area_mut().insert_str(&placeholder);
         self.pastes.push(Paste {
             placeholder,
@@ -3623,9 +3624,9 @@ impl AgentPanel {
             let description = if script.trusted {
                 script.description
             } else if script.description.is_empty() {
-                "project command".to_string()
+                termide_i18n::t().agent_project_command().to_string()
             } else {
-                format!("{} (project)", script.description)
+                termide_i18n::t().agent_project_command_fmt(&script.description)
             };
             items.push(
                 CompletionItem::new(script.name.clone())
@@ -3712,7 +3713,7 @@ impl AgentPanel {
             items.push(
                 CompletionItem::new(LOOP_COMMAND)
                     .with_label(format!("/{LOOP_COMMAND}"))
-                    .with_hint("[interval] <prompt>")
+                    .with_hint(termide_i18n::t().agent_hint_loop())
                     .with_description(termide_i18n::t().agent_cmd_desc_loop()),
             );
         }
@@ -3720,7 +3721,7 @@ impl AgentPanel {
             items.push(
                 CompletionItem::new(GOAL_COMMAND)
                     .with_label(format!("/{GOAL_COMMAND}"))
-                    .with_hint("<what to achieve>")
+                    .with_hint(termide_i18n::t().agent_hint_goal())
                     .with_description(termide_i18n::t().agent_cmd_desc_goal()),
             );
         }
@@ -4040,14 +4041,14 @@ impl AgentPanel {
             .as_ref()
             .and_then(Session::name)
             .map(str::to_string)
-            .unwrap_or_else(|| "untitled".to_string());
+            .unwrap_or_else(|| t.ai_session_untitled().to_string());
         let messages = self
             .transcript
             .items()
             .iter()
             .filter(|item| matches!(item, Item::User { .. } | Item::Assistant { .. }))
             .count();
-        let mut rows: Vec<(String, String)> = vec![("Session".into(), name)];
+        let mut rows: Vec<(String, String)> = vec![(t.agent_info_session().into(), name)];
         if let Some(session) = self.session.as_ref() {
             if let Some(id) = session
                 .path()
@@ -4055,30 +4056,39 @@ impl AgentPanel {
                 .and_then(|s| s.to_str())
                 .map(str::to_string)
             {
-                rows.push(("Log".into(), id));
+                rows.push((t.agent_info_log().into(), id));
             }
         }
-        rows.push(("Agent".into(), self.agent.clone()));
-        rows.push(("Provider".into(), self.provider_kind.clone()));
-        rows.push(("Model".into(), self.model.id.clone()));
-        rows.push(("Mode".into(), self.mode.get().label().to_string()));
-        rows.push(("Directory".into(), shorten_path(&self.cwd, usize::MAX)));
+        rows.push((t.agent_info_agent().into(), self.agent.clone()));
+        rows.push((t.agent_info_provider().into(), self.provider_kind.clone()));
+        rows.push((t.agent_info_model().into(), self.model.id.clone()));
+        rows.push((
+            t.agent_info_mode().into(),
+            self.mode.get().label().to_string(),
+        ));
+        rows.push((
+            t.agent_info_directory().into(),
+            shorten_path(&self.cwd, usize::MAX),
+        ));
         if let Some(session) = self.session.as_ref() {
-            rows.push(("Created".into(), civil_date(session.header().created)));
+            rows.push((
+                t.agent_info_created().into(),
+                civil_date(session.header().created),
+            ));
             if let Some(last) = session.entries().last().map(|e| e.timestamp) {
-                rows.push(("Last active".into(), civil_date(last)));
+                rows.push((t.agent_info_last_active().into(), civil_date(last)));
             }
             let compactions = session
                 .entries()
                 .iter()
                 .filter(|e| matches!(e.kind, EntryKind::Compaction { .. }))
                 .count();
-            rows.push(("Compactions".into(), compactions.to_string()));
+            rows.push((t.agent_info_compactions().into(), compactions.to_string()));
         }
-        rows.push(("Messages".into(), messages.to_string()));
-        rows.push(("Tokens".into(), self.token_totals()));
+        rows.push((t.agent_info_messages().into(), messages.to_string()));
+        rows.push((t.agent_info_tokens().into(), self.token_totals()));
         rows.push((
-            "Context".into(),
+            t.agent_info_context().into(),
             format!(
                 "{} / {}",
                 format_tokens(self.context_tokens),
@@ -4091,7 +4101,7 @@ impl AgentPanel {
             let saved = self.clean_raw_bytes.saturating_sub(self.clean_out_bytes);
             let percent = saved * 100 / self.clean_raw_bytes;
             rows.push((
-                "Output cleaned".into(),
+                t.agent_info_output_cleaned().into(),
                 format!(
                     "{} → {} (−{percent}%)",
                     format_bytes(self.clean_raw_bytes),
@@ -4135,15 +4145,16 @@ impl AgentPanel {
                     .iter()
                     .map(|p| p.strip_prefix(&self.cwd).unwrap_or(p).display().to_string())
                     .collect();
+                let t = termide_i18n::t();
                 let changed = if names.len() == 1 {
                     names[0].clone()
                 } else {
-                    format!("{} files: {}", names.len(), names.join(", "))
+                    t.agent_rollback_files_fmt(names.len(), &names.join(", "))
                 };
                 let step = if i == 0 {
-                    "last request".to_string()
+                    t.agent_rollback_last_request().to_string()
                 } else {
-                    format!("{} requests back", i + 1)
+                    t.agent_rollback_steps_fmt(i + 1)
                 };
                 truncate_title(&format!("{step} — {changed}"))
             })
@@ -4299,7 +4310,7 @@ impl AgentPanel {
         });
         self.command_run = Some(rx);
         self.pending_events.push(PanelEvent::SetStatusMessage {
-            message: format!("running /{}…", name),
+            message: termide_i18n::t().agent_running_command_fmt(&name),
             is_error: false,
         });
     }
@@ -4449,7 +4460,10 @@ impl AgentPanel {
         // by clicking, the status action that click triggers.
         let info: Vec<(Line<'static>, Option<&'static str>)> = vec![
             (Line::styled("termide", accent), None),
-            (Line::styled("coding agent", dim), None),
+            (
+                Line::styled(termide_i18n::t().agent_banner_subtitle(), dim),
+                None,
+            ),
             (Line::from(""), None),
             (
                 field(
@@ -5189,8 +5203,7 @@ fn spawn_runtime(
             Ok(runtime) => {
                 if !messages.is_empty() {
                     transcript.push(Item::Notice {
-                        text: "earlier messages are shown but not known to the external agent"
-                            .into(),
+                        text: termide_i18n::t().agent_notice_external_history().into(),
                         kind: NoticeKind::Info,
                     });
                 }
@@ -5204,7 +5217,7 @@ fn spawn_runtime(
                 };
             }
             Err(error) => transcript.push(Item::Notice {
-                text: format!("cannot start the external agent: {error}; using the built-in one"),
+                text: termide_i18n::t().agent_notice_external_failed_fmt(&error.to_string()),
                 kind: NoticeKind::Error,
             }),
         }
@@ -6249,7 +6262,9 @@ impl Panel for AgentPanel {
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.model_fetch = None;
-                events.push(self.model_picker(Err("the request was dropped".to_string())));
+                events.push(self.model_picker(Err(
+                    termide_i18n::t().agent_model_request_dropped().to_string(),
+                )));
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
@@ -6476,10 +6491,11 @@ impl Panel for AgentPanel {
         // segments as given. The knobs sit on the left, the figures flush
         // right; a narrow bar cuts the knobs, never the figures. The live
         // phase is not repeated here: each chat block carries its own byline.
+        let t = termide_i18n::t();
         let sep = || StatusSegment::new(" │ ", SegmentKind::Label);
         let mut segments = vec![
             StatusSegment::new(" ", SegmentKind::Label),
-            StatusSegment::clickable("Agent: ", SegmentKind::Label, AGENT_ACTION),
+            StatusSegment::clickable(t.agent_chip_agent(), SegmentKind::Label, AGENT_ACTION),
             StatusSegment::clickable(self.agent.clone(), SegmentKind::Active, AGENT_ACTION),
         ];
         if self.external {
@@ -6489,7 +6505,7 @@ impl Panel for AgentPanel {
             if self.runtime.follows_mode() {
                 segments.extend([
                     sep(),
-                    StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
+                    StatusSegment::clickable(t.agent_chip_mode(), SegmentKind::Label, MODE_ACTION),
                     StatusSegment::clickable(
                         self.mode.get().label(),
                         SegmentKind::Active,
@@ -6501,7 +6517,11 @@ impl Panel for AgentPanel {
             if self.connections.is_some() {
                 segments.extend([
                     sep(),
-                    StatusSegment::clickable("Connection: ", SegmentKind::Label, CONNECTION_ACTION),
+                    StatusSegment::clickable(
+                        t.agent_chip_connection(),
+                        SegmentKind::Label,
+                        CONNECTION_ACTION,
+                    ),
                     StatusSegment::clickable(
                         self.connection_display(),
                         SegmentKind::Active,
@@ -6512,17 +6532,25 @@ impl Panel for AgentPanel {
         } else {
             segments.extend([
                 sep(),
-                StatusSegment::clickable("Mode: ", SegmentKind::Label, MODE_ACTION),
+                StatusSegment::clickable(t.agent_chip_mode(), SegmentKind::Label, MODE_ACTION),
                 StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
                 sep(),
-                StatusSegment::clickable("Reasoning: ", SegmentKind::Label, REASONING_ACTION),
                 StatusSegment::clickable(
-                    if self.model.reasoning { "on" } else { "off" },
+                    t.agent_chip_reasoning(),
+                    SegmentKind::Label,
+                    REASONING_ACTION,
+                ),
+                StatusSegment::clickable(
+                    if self.model.reasoning {
+                        t.agent_chip_on()
+                    } else {
+                        t.agent_chip_off()
+                    },
                     SegmentKind::Active,
                     REASONING_ACTION,
                 ),
                 sep(),
-                StatusSegment::clickable("Tools: ", SegmentKind::Label, TOOLSET_ACTION),
+                StatusSegment::clickable(t.agent_chip_tools(), SegmentKind::Label, TOOLSET_ACTION),
                 StatusSegment::clickable(
                     {
                         let (on, all) = self.toolset_counts();
@@ -6532,7 +6560,11 @@ impl Panel for AgentPanel {
                     TOOLSET_ACTION,
                 ),
                 sep(),
-                StatusSegment::clickable("Connection: ", SegmentKind::Label, CONNECTION_ACTION),
+                StatusSegment::clickable(
+                    t.agent_chip_connection(),
+                    SegmentKind::Label,
+                    CONNECTION_ACTION,
+                ),
                 StatusSegment::clickable(
                     self.connection_display(),
                     SegmentKind::Active,
@@ -6545,7 +6577,7 @@ impl Panel for AgentPanel {
         if !self.external || self.acp_has_models {
             segments.extend([
                 sep(),
-                StatusSegment::clickable("Model: ", SegmentKind::Label, MODEL_ACTION),
+                StatusSegment::clickable(t.agent_chip_model(), SegmentKind::Label, MODEL_ACTION),
                 StatusSegment::clickable(self.model_display(), SegmentKind::Active, MODEL_ACTION),
             ]);
         }
@@ -6553,7 +6585,7 @@ impl Panel for AgentPanel {
         let queued = self.queued.0 + self.queued.1;
         if queued > 0 {
             segments.push(StatusSegment::new(
-                format!("{queued} queued "),
+                format!("{} ", t.agent_queued_fmt(queued)),
                 SegmentKind::Inactive,
             ));
         }

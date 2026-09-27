@@ -122,7 +122,10 @@ impl App {
                         }
                     }
                     if lines.is_empty() {
-                        lines.push((String::new(), "(no output)".to_string()));
+                        lines.push((
+                            String::new(),
+                            termide_i18n::t().command_report_no_output().to_string(),
+                        ));
                     }
 
                     last_result_modal = Some((title, lines));

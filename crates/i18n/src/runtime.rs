@@ -135,6 +135,65 @@ impl Translation for RuntimeTranslation {
 
     // Generate 395 trivial `fn name(&self) -> &str` wrappers over get_string("name").
     i18n_get_string_methods! {
+        agent_input_placeholder,
+        agent_info_session,
+        agent_info_log,
+        agent_info_agent,
+        agent_info_provider,
+        agent_info_model,
+        agent_info_mode,
+        agent_info_directory,
+        agent_info_created,
+        agent_info_last_active,
+        agent_info_compactions,
+        agent_info_messages,
+        agent_info_tokens,
+        agent_info_context,
+        agent_info_output_cleaned,
+        agent_chip_agent,
+        agent_chip_mode,
+        agent_chip_reasoning,
+        agent_chip_tools,
+        agent_chip_connection,
+        agent_chip_model,
+        agent_chip_on,
+        agent_chip_off,
+        agent_banner_subtitle,
+        agent_rollback_last_request,
+        agent_project_command,
+        agent_hint_loop,
+        agent_hint_goal,
+        agent_notice_external_history,
+        agent_model_request_dropped,
+        settings_header_appearance,
+        settings_header_input,
+        settings_header_layout,
+        settings_header_notifications,
+        settings_header_performance,
+        settings_header_session,
+        settings_header_typing,
+        settings_header_display,
+        settings_header_search,
+        settings_header_general,
+        settings_header_timing,
+        settings_header_servers,
+        settings_header_model,
+        settings_header_permissions,
+        settings_header_transcript,
+        settings_header_web,
+        settings_header_connections,
+        settings_header_connection,
+        settings_value_auto,
+        settings_value_none,
+        settings_value_unset,
+        settings_value_no_limit,
+        palette_category_panels,
+        palette_category_git,
+        palette_category_navigation,
+        palette_category_panel_management,
+        palette_category_application,
+        palette_category_commands,
+        command_report_no_output,
         git_operation_cancelled,
         modal_yes,
         modal_ok,
@@ -1290,6 +1349,64 @@ impl Translation for RuntimeTranslation {
 
     fn agent_state_queued_more(&self, count: usize) -> String {
         self.format("agent_state_queued_more", &[("count", &count.to_string())])
+    }
+
+    fn agent_paste_placeholder_fmt(&self, n: usize, what: &str) -> String {
+        self.format(
+            "agent_paste_placeholder_fmt",
+            &[("n", &n.to_string()), ("what", what)],
+        )
+    }
+
+    fn agent_paste_lines_fmt(&self, count: usize) -> String {
+        self.format("agent_paste_lines_fmt", &[("count", &count.to_string())])
+    }
+
+    fn agent_paste_chars_fmt(&self, count: usize) -> String {
+        self.format("agent_paste_chars_fmt", &[("count", &count.to_string())])
+    }
+
+    fn agent_project_command_fmt(&self, description: &str) -> String {
+        self.format("agent_project_command_fmt", &[("description", description)])
+    }
+
+    fn agent_rollback_steps_fmt(&self, count: usize) -> String {
+        self.format("agent_rollback_steps_fmt", &[("count", &count.to_string())])
+    }
+
+    fn agent_rollback_files_fmt(&self, count: usize, names: &str) -> String {
+        self.format(
+            "agent_rollback_files_fmt",
+            &[("count", &count.to_string()), ("names", names)],
+        )
+    }
+
+    fn agent_running_command_fmt(&self, name: &str) -> String {
+        self.format("agent_running_command_fmt", &[("name", name)])
+    }
+
+    fn agent_notice_external_failed_fmt(&self, error: &str) -> String {
+        self.format("agent_notice_external_failed_fmt", &[("error", error)])
+    }
+
+    fn agent_queued_fmt(&self, count: usize) -> String {
+        self.format("agent_queued_fmt", &[("count", &count.to_string())])
+    }
+
+    fn settings_value_default_fmt(&self, value: &str) -> String {
+        self.format("settings_value_default_fmt", &[("value", value)])
+    }
+
+    fn projects_delete_failed_fmt(&self, error: &str) -> String {
+        self.format("projects_delete_failed_fmt", &[("error", error)])
+    }
+
+    fn command_edit_title_fmt(&self, name: &str) -> String {
+        self.format("command_edit_title_fmt", &[("name", name)])
+    }
+
+    fn command_run_failed_fmt(&self, error: &str) -> String {
+        self.format("command_run_failed_fmt", &[("error", error)])
     }
 
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {

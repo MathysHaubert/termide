@@ -307,7 +307,7 @@ impl App {
                     );
                     let groups: Vec<String> =
                         registry.groups.iter().map(|g| g.name.clone()).collect();
-                    let title = format!("Edit command: {}", command.name);
+                    let title = termide_i18n::t().command_edit_title_fmt(&command.name);
                     let modal = termide_modal::CommandConfigModal::new_edit(
                         title,
                         command.name.clone(),
@@ -356,7 +356,7 @@ impl App {
                     Some((&command.name, command.is_project)),
                 );
                 let groups: Vec<String> = registry.groups.iter().map(|g| g.name.clone()).collect();
-                let title = format!("Edit command: {}", command.name);
+                let title = termide_i18n::t().command_edit_title_fmt(&command.name);
                 let modal = termide_modal::CommandConfigModal::new_edit(
                     title,
                     command.name.clone(),

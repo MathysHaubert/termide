@@ -273,7 +273,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
                 .terminal
                 .default_shell
                 .clone()
-                .unwrap_or_else(|| "(auto)".to_string()),
+                .unwrap_or_else(|| i18n::t().settings_value_auto().to_string()),
             _ => String::new(),
         },
         SettingsTab::Lsp => match index {
@@ -288,7 +288,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
                 .logging
                 .file_path
                 .clone()
-                .unwrap_or_else(|| "(none)".to_string()),
+                .unwrap_or_else(|| i18n::t().settings_value_none().to_string()),
             1 => config.logging.min_level.clone(),
             _ => String::new(),
         },
@@ -297,10 +297,10 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             _ => String::new(),
         },
         SettingsTab::Ai => match index {
-            0 => config
-                .ai
-                .output_limit()
-                .map_or_else(|| "(no limit)".to_string(), |n| n.to_string()),
+            0 => config.ai.output_limit().map_or_else(
+                || i18n::t().settings_value_no_limit().to_string(),
+                |n| n.to_string(),
+            ),
             1 => bool_str(config.ai.prefer_reasoning),
             2 => fold_blocks_label(config.ai.fold_blocks),
             3 => config.ai.web.backend.clone(),
@@ -308,7 +308,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
             5 => config.ai.web.display.clone(),
             6 => {
                 if config.ai.web.chrome_path.is_empty() {
-                    "(auto)".to_string()
+                    i18n::t().settings_value_auto().to_string()
                 } else {
                     config.ai.web.chrome_path.clone()
                 }
@@ -325,7 +325,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
 /// A string field's value, or the `(unset)` placeholder when it is empty.
 pub(super) fn empty_or(value: &str) -> String {
     if value.is_empty() {
-        "(unset)".to_string()
+        i18n::t().settings_value_unset().to_string()
     } else {
         value.to_string()
     }
