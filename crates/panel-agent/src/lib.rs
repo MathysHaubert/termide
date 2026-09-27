@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use termide_agent_core::{
     civil_date, now_millis, permission_channel, question_channel, Agent, AgentEvent, Backend,
@@ -688,6 +688,9 @@ pub struct AgentPanel {
     /// A `/pause` was asked for and the run has not reached a step boundary
     /// yet; shown in the state strip.
     pause_requested: bool,
+    /// A stop was asked for and the run has not ended yet; the stop control
+    /// is red until it does.
+    stop_requested: bool,
     /// When the current pause began, while the run is paused: its closing
     /// line ticks the pause's length until `/continue`.
     pause_start: Option<Instant>,
@@ -923,6 +926,7 @@ impl AgentPanel {
             attention: false,
             run_paused: false,
             pause_requested: false,
+            stop_requested: false,
             pause_start: None,
             resuming: false,
             permission_wait: None,
@@ -1069,6 +1073,7 @@ impl AgentPanel {
         self.queued = (0, 0);
         self.queued_texts.clear();
         self.pause_requested = false;
+        self.stop_requested = false;
         self.context_tokens = 0;
         true
     }
@@ -1733,8 +1738,10 @@ impl AgentPanel {
         // Stopping also ends any running loop or goal.
         self.loop_task = None;
         self.goal_task = None;
-        if self.is_busy() {
+        // A stop already under way needs no second request or notice.
+        if self.is_busy() && !self.stop_requested {
             self.runtime.abort();
+            self.stop_requested = true;
             self.notice(termide_i18n::t().agent_notice_stopping(), NoticeKind::Warn);
         }
     }
@@ -2000,6 +2007,7 @@ impl AgentPanel {
                     );
                 }
                 self.pause_requested = false;
+                self.stop_requested = false;
                 self.set_queued(self.runtime.queue_lens());
                 if let Some(store) = &self.checkpoints {
                     store.lock().unwrap().end_run();
@@ -4528,10 +4536,13 @@ impl AgentPanel {
 
     /// The run controls the current state offers: pause and stop while the
     /// agent works, continue in place of pause once a pause is asked for or
-    /// has taken effect, none while idle.
+    /// has taken effect, stop alone while a stop is under way, none while
+    /// idle.
     fn run_buttons(&self) -> Vec<RunButton> {
         let paused = self.paused && !self.is_busy();
-        if paused || (self.is_busy() && self.pause_requested) {
+        if self.is_busy() && self.stop_requested {
+            vec![RunButton::Stop]
+        } else if paused || (self.is_busy() && self.pause_requested) {
             vec![RunButton::Continue, RunButton::Stop]
         } else if self.is_busy() && self.runtime.can_pause() {
             vec![RunButton::Pause, RunButton::Stop]
@@ -4543,6 +4554,18 @@ impl AgentPanel {
         }
     }
 
+    /// A run control's color: neutral at rest, so a control does not look
+    /// engaged just because a run is on; continue is green and stop red
+    /// only while the pause or stop they stand for is under way.
+    fn run_button_color(&self, button: RunButton) -> Color {
+        match button {
+            RunButton::Pause => self.colors.fg,
+            RunButton::Continue => self.colors.success,
+            RunButton::Stop if self.stop_requested => self.colors.error,
+            RunButton::Stop => self.colors.fg,
+        }
+    }
+
     fn render_input(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         let colors = self.colors;
         // The run controls sit at the right end of the top border, always in
@@ -4551,13 +4574,16 @@ impl AgentPanel {
         let buttons = self
             .run_buttons
             .iter()
-            .map(|button| {
-                let (label, color) = match button {
-                    RunButton::Pause => ("[‖]", colors.info),
-                    RunButton::Continue => ("[▶]", colors.success),
-                    RunButton::Stop => ("[■]", colors.error),
+            .map(|&button| {
+                let label = match button {
+                    RunButton::Pause => "[‖]",
+                    RunButton::Continue => "[▶]",
+                    RunButton::Stop => "[■]",
                 };
-                (label.to_string(), Style::default().fg(color))
+                (
+                    label.to_string(),
+                    Style::default().fg(self.run_button_color(button)),
+                )
             })
             .collect();
         self.input.set_border_buttons(buttons);
@@ -7011,6 +7037,28 @@ mod tests {
         assert!(panel.pause_start.is_none());
         assert!(!border(&mut panel).contains('['));
         assert!(!panel.transcript.is_live_pause_line(line));
+    }
+
+    #[test]
+    fn the_stop_control_is_red_only_while_a_stop_is_under_way() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        panel.apply(AgentEvent::AgentStart);
+        let colors = panel.colors;
+        assert_eq!(panel.run_button_color(RunButton::Pause), colors.fg);
+        assert_eq!(panel.run_button_color(RunButton::Stop), colors.fg);
+        panel.request_pause();
+        panel.abort();
+        // A stop under way leaves stop alone, red, and a second press adds
+        // no second notice.
+        assert_eq!(panel.run_buttons(), vec![RunButton::Stop]);
+        assert_eq!(panel.run_button_color(RunButton::Stop), colors.error);
+        let lines = panel.transcript.line_count();
+        panel.abort();
+        assert_eq!(panel.transcript.line_count(), lines);
+        panel.apply(AgentEvent::AgentEnd);
+        panel.apply(AgentEvent::AgentStart);
+        assert_eq!(panel.run_buttons(), vec![RunButton::Pause, RunButton::Stop]);
+        assert_eq!(panel.run_button_color(RunButton::Stop), colors.fg);
     }
 
     fn type_text(panel: &mut AgentPanel, text: &str) {
