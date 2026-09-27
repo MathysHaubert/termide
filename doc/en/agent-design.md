@@ -814,7 +814,7 @@ without the panel, the way the subagent runner is. Streaming: text deltas to
 stdout so the answer pipes cleanly, tool activity and errors to stderr, one
 tool line per call. Permissions: no one to prompt, so `AutoDenyPrompter` as in
 a subagent — the run does only what the rules and mode already allow, and
-`mode = "auto"` or `allow` rules opt into more; plan mode collapses to ask,
+`mode = "all"` or `allow` rules opt into more; plan mode collapses to ask,
 and an ACP agent is refused (no headless permission surface, as for
 subagents). `-` reads the prompt from stdin. Exit code: 0, 1 on a failed
 message, 130 on abort. `--output json` prints one object instead of streaming

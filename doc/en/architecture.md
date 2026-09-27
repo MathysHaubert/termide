@@ -611,13 +611,16 @@ leaves the actor free to serve other panels' metadata requests.
 
 ### 8. Session Management
 
-**Location:** `crates/session/src/lib.rs`
+**Location:** `crates/project/src/lib.rs`
 
 Session persistence allows saving and restoring panel layouts:
 
 **Storage Location:**
-- Linux: `~/.local/share/termide/sessions/<project_path>/session.toml`
-- macOS: `~/Library/Application Support/termide/sessions/<project_path>/session.toml`
+- Linux: `~/.local/share/termide/projects/<project_path>/session.toml`
+- macOS: `~/Library/Application Support/termide/projects/<project_path>/session.toml`
+
+A data directory from before the rename, `sessions/`, is moved to `projects/`
+once, on the first start.
 
 **Features:**
 - Automatic session save on exit

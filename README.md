@@ -31,8 +31,8 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 | File Manager | ✓ | plugin | ✗ | ✗ |
 | Background File Operations | ✓ | plugin | ✗ | ✗ |
 | Git Integration | ✓ | plugin | ✗ | ✗ |
-| Sessions | ✓ | plugin | ✗ | ✗ |
-| Detachable Sessions | ✓ | ✗ | ✗ | ✗ |
+| Project Layouts | ✓ | plugin | ✗ | ✗ |
+| Detachable Instances | ✓ | ✗ | ✗ | ✗ |
 | Multi-panel Layout | ✓ | plugin | ✗ | ✗ |
 | Bookmarks | ✓ | plugin | ✗ | ✗ |
 | Resource Monitor | ✓ | ✗ | ✗ | ✗ |
@@ -48,7 +48,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **Remote Filesystems** - Browse and edit files on remote servers from the file manager over SFTP / FTP / FTPS, copying between local and remote panels — pure Rust (russh + rustls), no native libraries, works on static musl (`smb://` / `nfs://` via the OS mount)
 - **Background File Operations** - Copy, move, upload, download, delete and batch transfers run in the background with a per-operation progress bar, byte/elapsed readout, and pause / resume / cancel (Operations panel)
 - **Integrated Terminal** - Full PTY support, VT100 escape sequences, mouse tracking
-- **Git Integration** - Status panel, commit log with a coloured Unicode commit graph (ASCII fallback), staging/unstaging, branch switching, stash management, inline blame
+- **Git Integration** - Status panel, commit log with a coloured Unicode commit graph (ASCII fallback), staging/unstaging, branches with their worktrees, branch switching, stash management, inline blame
 - **Database Viewer** - Read-only browser for SQLite / PostgreSQL / MySQL opened from a bookmark URL: table grid with a 2D cell cursor, server-side single-column sort and type-aware per-column filtering, sliding-window pagination, and a row-detail dialog that copies as TSV / JSON / INSERT
 - **Multi-panel Layout** - Vertically split panel groups with adjustable per-panel heights and a one-key fullscreen toggle (`Alt+F11`); smart auto-stacking when the terminal narrows; new panels open after the currently active one
 - **Image Viewer** - Native graphics in Kitty, WezTerm, iTerm2, Ghostty, foot terminals
@@ -60,18 +60,19 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **Custom Themes** - Create your own themes in TOML format
 - **15 UI Languages** - Bengali, Chinese, English, French, German, Hindi, Indonesian, Japanese, Korean, Portuguese, Russian, Spanish, Thai, Turkish, Vietnamese (missing keys transparently fall back to English)
 - **Project Management** - Auto-save and restore panel layouts per project
-- **Detached Sessions** - `termide --detached` keeps the whole session — editors, shells, LSP servers, running jobs — alive after the terminal closes; `termide --attach` picks it up again from any terminal, at any size (Unix only)
+- **Detached Instances** - `termide --detached` keeps the whole instance — editors, shells, LSP servers, running jobs — alive after the terminal closes; `termide --attach` picks it up again from any terminal, at any size (Unix only)
 - **System Monitor** - Real-time CPU, RAM, network I/O in menu bar and disk usage in status bar; click any indicator to open a detail modal (top processes by CPU/RAM, top processes by network connections with listening ports); repeated click on the same indicator closes the modal (toggle)
 - **Search & Replace** - Live preview, match counter, regex support
-- **Custom Scripts** - Run user-defined scripts from the Scripts menu (supports `.bg.` for background, `.report.` for scrollable modal output with success/failure indicator)
+- **Custom Commands** - Shell commands from `commands.toml`, global and per project, in the Commands menu: hotkeys, groups, parameter forms, and terminal / background / report modes
 - **Settings Modal** - Full-screen configuration (`Alt+P`) with sidebar layout, grouped fields (Appearance / Input / Layout / Performance / …), and in-place keybinding capture for all 9 keybinding scopes
 - **Cross-platform** - Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), Windows (native via ConPTY, WSL)
 - **Full Mouse Support** - Click navigation, scroll, double-click actions
 - **Keyboard Layouts** - Cyrillic support with automatic hotkey translation
 - **Vim Mode** - Optional Vim-style editing with Cyrillic keyboard support
-- **Directory Switcher** - Quick directory switching with Ctrl+/
+- **Directory Switcher** - Quick directory switching with `Ctrl+\`
 - **Bookmarks** - Save and organize frequently used locations
-- **Command Palette** - Quick access to all commands (Ctrl+P)
+- **Command Palette** - Quick access to all commands with fuzzy matching (Ctrl+P)
+- **Open Prompt** - Open a file, directory or URL with path suggestions (Ctrl+G)
 
 ## Installation
 
@@ -514,37 +515,26 @@ You can create custom themes by placing TOML files in the themes directory:
 
 User themes take priority over built-in themes with the same name. See `crates/theme/themes/` directory in the repository for theme file format examples.
 
-### Custom Scripts
+### Custom Commands
 
-You can add custom scripts to the Scripts menu by placing executable files in:
-- Linux: `~/.local/share/termide/scripts/`
-- macOS: `~/Library/Application Support/termide/scripts/`
-- Windows: `%APPDATA%\termide\scripts\`
+Shell commands you run often go into `commands.toml` — the global one in the
+configuration directory, or `<project>/.termide/commands.toml` for a project —
+and appear in the **Commands** menu:
 
-**Features:**
-- Scripts appear in the Scripts menu (menu bar)
-- Subdirectories create nested submenus (clicking a group toggles expand/collapse)
-- Add `.bg.` to filename for background execution (e.g., `deploy.bg.sh`)
-- Add `.report.` to filename for background with modal output (e.g., `check.report.sh`). Report modal is scrollable (Up/Down, PageUp/PageDown, Home/End, mouse wheel) and shows ✓/✗ in the title
-- Display name is the part before the first dot
+```toml
+[test]
+name = "Run tests"
+command = "cargo nextest run"
+group = "cargo"
+key = "Ctrl+Shift+T"
 
-**Example:**
-```bash
-# Create scripts directory
-mkdir -p ~/.local/share/termide/scripts
-
-# Add a simple script
-cat > ~/.local/share/termide/scripts/hello.sh << 'EOF'
-#!/bin/bash
-echo "Hello from TermIDE!"
-read -p "Press Enter to close..."
-EOF
-
-# Make it executable (required on Unix)
-chmod +x ~/.local/share/termide/scripts/hello.sh
+[clippy]
+command = "cargo clippy --workspace -- -D warnings"
+mode = "report"  # terminal (default), background, or report
 ```
 
-**Note:** On Unix systems, scripts must have the executable permission (`chmod +x`). Use `Options → Manage scripts` to open the scripts folder.
+`Commands → Add command...` creates one through a form. See
+[Custom Commands](doc/en/actions.md) for modes, parameters and hotkeys.
 
 ## Development
 

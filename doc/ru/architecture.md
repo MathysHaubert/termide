@@ -609,13 +609,16 @@ crates/i18n/
 
 ### 8. Управление сессиями
 
-**Расположение:** `crates/session/src/lib.rs`
+**Расположение:** `crates/project/src/lib.rs`
 
 Сохранение сессий позволяет сохранять и восстанавливать компоновку панелей:
 
 **Расположение хранилища:**
-- Linux: `~/.local/share/termide/sessions/<путь_проекта>/session.toml`
-- macOS: `~/Library/Application Support/termide/sessions/<путь_проекта>/session.toml`
+- Linux: `~/.local/share/termide/projects/<путь_проекта>/session.toml`
+- macOS: `~/Library/Application Support/termide/projects/<путь_проекта>/session.toml`
+
+Каталог данных, оставшийся от версий до переименования, `sessions/`, один раз
+переносится в `projects/` при первом запуске.
 
 **Возможности:**
 - Автоматическое сохранение сессии при выходе

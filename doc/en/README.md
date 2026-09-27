@@ -20,9 +20,10 @@ Welcome to the TermIDE documentation! This guide covers installation, usage, and
 - [HTML Preview](html.md) - Rendered `.html` preview and embedded HTML in Markdown
 - [Coding Agent](agent.md) - Built-in AI agent: tools, permissions, project instructions
 - [Themes](themes.md) - Customizing appearance with themes
-- [Custom Scripts](actions.md) - Running user-defined scripts from the Scripts menu
+- [Custom Commands](actions.md) - Shell commands from `commands.toml` in the Commands menu
 
 ### Developer Documentation
 
 - [Developer Guide](developer-guide.md) - Contributing to TermIDE development
 - [Architecture](architecture.md) - Technical architecture and design decisions
+- [Agent Design Notes](agent-design.md) - Why the coding agent works the way it does, argued from a comparison of existing agents

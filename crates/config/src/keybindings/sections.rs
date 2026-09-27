@@ -41,7 +41,7 @@ pub struct GlobalKeybindings {
     pub move_last: Option<KeyBinding>,
     pub resize_smaller: Option<KeyBinding>,
     pub resize_larger: Option<KeyBinding>,
-    /// Toggle accordion / split layout for the active panel group.
+    /// Maximize the focused panel within its group, or restore the heights.
     pub toggle_fullscreen_panel: Option<KeyBinding>,
     /// Grow the focused panel's height in split mode.
     pub panel_grow_vertical: Option<KeyBinding>,

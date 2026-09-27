@@ -63,34 +63,35 @@ The active section highlight in the sidebar is cleared when focus leaves it — 
 ## Menu Bar
 
 The menu bar is located at the top of the window and includes: menu items on the left, system resource indicators (network speed, CPU, RAM and — when a battery is present — its charge), and a clock in HH:MM format on the right.
-Menu activation/deactivation and each item can be accessed by mouse click or [keyboard shortcuts](#Keyboard-Navigation-and-Panel-Management).
+Menu activation/deactivation and each item can be accessed by mouse click or [keyboard shortcuts](#keyboard-navigation-and-panel-management).
 
 **Menu items:**
+- `Bookmarks` — saved locations (directories, files, SSH, SFTP, web links). Opening one routes by type: directories and remote paths in the file manager, HTML/Markdown/Mermaid/image files and `http(s)` links in the built-in viewer (see [HTML preview](html.md); honours `[viewer] open_links`), other text files in the editor, SSH in a terminal, databases in the DB viewer. Clicking a group header toggles its submenu, as in Commands.
+- `Commands` — user-defined commands, project ones (bold) first, with group submenus; `Add command...` at the top creates one. Clicking a group header expands the submenu; clicking the same header again collapses it (toggle). See [Custom Commands](actions.md).
 - `Projects` — project management submenu:
   - New project — start a project in another directory
   - Switch project — open the project switcher modal
   - Change root path — move the current project to another directory
   - Below a separator, the known projects as a tree of directory submenus. Directories that only lead to one place are folded into one row (`github.com/termide`) and the prefix shared by all projects is left out. A directory that is itself a project and holds further projects lists itself first. The current project and the directories leading to it are shown in bold. `→`/`Enter` open a directory, `←`/`Esc` close it, `Enter` or a click on a project switches to it. `Delete`/`F8` deletes the saved session of the selected project, or of every project in the selected directory, after a confirmation; the current project is never deleted, and the sessions of projects nested inside a deleted one are kept
+- `AI` — the coding agent's agents, sessions, skills and prompts, and a switch for the agents' browser window; see [The AI menu](agent.md#the-ai-menu)
 - `Windows` — panel creation submenu:
-  - Files — file manager panel
+  - Open… — open a file, directory or URL through a prompt with suggestions (`Ctrl+G`)
   - Terminal — terminal panel (has submenu for choosing a shell: lists all available shells on the system, the default shell is marked with ●)
+  - Files — file manager panel
   - Editor — text editor panel
   - Git Status — git status panel
   - Git Log — commit history panel
-  - Git Stash — git stash management panel
   - Journal — application log panel
   - Diagnostics — LSP diagnostics panel
   - [Operations](operations.md) — background operations panel
   - Outline — structural code navigation panel
-- `Scripts` — user-defined scripts (with group submenus). Clicking a group header expands the submenu; clicking the same header again collapses it (toggle).
-- `Bookmarks` — saved locations (directories, files, SSH, SFTP, web links). Opening one routes by type: directories and remote paths in the file manager, HTML/Markdown/Mermaid/image files and `http(s)` links in the built-in viewer (see [HTML preview](html.md); honours `[viewer] open_links`), other text files in the editor, SSH in a terminal, databases in the DB viewer. Group behaviour is the same toggle as in Scripts.
+  - [Agent](agent.md) — coding agent panel
 - `Options` — settings submenu:
   - Themes — theme selection with live preview
   - Language — UI language with live preview
-  - Manage scripts — open scripts folder
-  - Manage bookmarks — open bookmarks file
-  - Edit preferences — open config.toml in editor
+  - Settings — open the settings modal
   - Help — open help panel
+  - Detach instance — leave this instance running in the background (shown only when it can detach; see [Detached Instances](detached-instances.md))
   - Quit — exit application
 
 **System Resource Indicators** (clickable indicators open a details modal):
@@ -106,6 +107,13 @@ Menu activation/deactivation and each item can be accessed by mouse click or [ke
 Clicking the same indicator again closes the window it opened (toggle); the same behaviour applies to the disk indicator in the status bar.
 
 Color coding (CPU / RAM): green < 50%, yellow 50–75%, red > 75%. Battery uses the same scale inverted (green when charging or above 50%, red below 25%). The battery reading is cached for 5 seconds so the per-frame render path never touches `/sys`.
+
+**Network activity modal** shows:
+- **Application** — process name
+- **Ports** — listening TCP ports (e.g. `80, 443`)
+- **Conn** — number of active (ESTABLISHED) connections
+
+Processes are sorted by connection count, highest first.
 
 ## Panels Area
 
@@ -191,7 +199,7 @@ toggle_hex = "Ctrl+L"
 
 **Features of closeable panels:**
 - Have `[≡]` action button in panel title (click to open context menu with Close / Split / Merge / Move)
-- Can be closed with Escape, Alt+X, or F10
+- Can be closed with Escape, Alt+W, Alt+X, or F10
 - Column width adjustable with `Alt+=` / `Alt+-`
 - Per-panel height adjustable inside a stacked column with `Alt+Shift+=` / `Alt+Shift+-` (1-row step), by dragging the panel's bottom border with the mouse, or by dragging the panel header up/down within the column
 - `Alt+F11` toggles the "fullscreen current panel" preset (one panel fills the column, others collapse to one row); pressing it again restores the previous heights
@@ -269,7 +277,7 @@ The disk window lists one row per storage pool, with the filesystem type as a se
 
 | Shortcut          | Action                                     |
 |-------------------|--------------------------------------------|
-| `Alt+M`           | Activate / deactivate menu                 |
+| `Alt+M` / `F9`    | Activate / deactivate menu                 |
 | `Alt+F`           | Open file manager panel                    |
 | `Alt+T`           | Open terminal panel                        |
 | `Alt+E`           | Open new file editor panel                 |
@@ -280,11 +288,11 @@ The disk window lists one row per storage pool, with the filesystem type as a se
 | `Alt+C`           | Open git log panel                         |
 | `Alt+L`           | Open journal panel                             |
 | `Alt+P`           | Open Settings (preferences)                    |
-| `Alt+H`           | Open help window                           |
+| `Alt+H` / `F1`    | Open help window                           |
 | `Alt+Q`           | Close application                          |
+| `Alt+D`           | Detach the instance (when it can detach)   |
 | `Escape`          | Close panel / Close modal                  |
-| `Alt+W` / `Alt+X` | Close panel                                |
-| `Alt+Delete`      | Close panel                                |
+| `Alt+W` / `Alt+X` / `F10` | Close panel                        |
 | `Alt+Left`        | Go to previous panel group (horizontal)    |
 | `Alt+Right`       | Go to next panel group (horizontal)        |
 | `Alt+Up`          | Go to previous panel in group (vertical)   |
@@ -298,7 +306,7 @@ The disk window lists one row per storage pool, with the filesystem type as a se
 | `Alt+Shift+=`     | Grow focused panel height (1 row)          |
 | `Alt+Shift+-`     | Shrink focused panel height (1 row)        |
 | `Alt+F11`         | Toggle fullscreen for the focused panel    |
-| `Alt+Backspace`   | Toggle panel stacking (merge/unstack)      |
+| `Alt+Backspace` / `F11` | Toggle panel stacking (merge/unstack) |
 | `Alt+K`           | Open panel action menu (`[≡]` dropdown)    |
 | `Shift+F10`       | Open panel action menu (alternative)       |
 | `Alt+\`           | Open projects menu                         |

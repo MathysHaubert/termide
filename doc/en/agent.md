@@ -404,7 +404,7 @@ configured `context_window_fallback` is only a **fallback**, used when the endpo
 reports no window; left unset it shows `(auto)` in the settings modal and the
 built-in default stands in until (or unless) the provider is known.
 
-**Mode** offers the three permission modes described below. `Shift+Tab` cycles
+**Mode** offers the five permission modes described below. `Shift+Tab` cycles
 through them without the picker. A change applies at the agent's next tool
 call, so you can loosen the mode while a long task is running instead of
 answering the same prompt again and again. Neither switch touches the
@@ -855,7 +855,16 @@ or how it is introduced.
 
 `/compact` is built in and sits in the `/` list beside your templates; it
 waits for a running task like every other switch. Automatic compaction, when
-the session approaches the context window, uses the same files.
+the session approaches the context window, uses the same files. When it
+starts and how much it keeps is set in `config.toml`; a key left out keeps its
+default:
+
+```toml
+[ai.compaction]
+enabled = true              # compact automatically near the window
+reserve_tokens = 16384      # start when the context passes the window minus this
+keep_recent_tokens = 4096   # recent messages kept verbatim (at most a quarter of the window)
+```
 
 [Plan mode](#plan-mode) uses `plan.md`: its body is appended to the system
 prompt while the mode is on, and `request:` in its front matter is the

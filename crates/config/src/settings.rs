@@ -304,7 +304,7 @@ impl AiSettings {
     }
 
     /// The permission mode new sessions start in, as configuration spells it
-    /// (`ask`, `accept-edits`, `auto`, `plan`).
+    /// (`ask`, `plan`, `edit`, `configured`, `all`).
     #[must_use]
     pub fn permission_mode(&self) -> &'static str {
         self.permissions.mode.label()

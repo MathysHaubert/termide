@@ -89,10 +89,10 @@ ordinary TermIDE inside it. Your shells, LSP servers, watchers and background
 jobs are children of that TermIDE, so they are untouched by a client coming and
 going. Attaching connects a terminal to the host; detaching disconnects it.
 
-This is a different thing from the instance layout in
-`~/.local/share/termide/instances/`, which records which panels were open so a
+This is a different thing from the saved project layout in
+`~/.local/share/termide/projects/`, which records which panels were open so a
 *new* TermIDE can reopen them. That still works as before, and still applies
-when you start a instance for the first time.
+when you start an instance for the first time.
 
 ## Reattaching from a different terminal
 
