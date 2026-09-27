@@ -1,6 +1,6 @@
-# 可分离会话
+# 可分离实例
 
-可分离会话在启动它的终端消失后仍继续运行。关闭 SSH 连接，几小时后回来，再次
+可分离实例在启动它的终端消失后仍继续运行。关闭 SSH 连接，几小时后回来，再次
 接入——编辑器、shell、LSP 服务器和长时间运行的任务都还在您离开时的状态。
 
 这与 `tmux` 和 `screen` 提供的保证相同，但您与 TermIDE 之间不再有第二层复用器：
@@ -12,20 +12,20 @@
 ## 快速开始
 
 ```bash
-termide --detached            # 启动会话，打印其 ID
-termide --list-instances       # 查看正在运行的会话
-termide --attach              # 接入最近的会话
-termide --attach my-project   # 接入指定的会话
+termide --detached            # 启动实例，打印其 ID
+termide --list-instances       # 查看正在运行的实例
+termide --attach              # 接入最近的实例
+termide --attach my-project   # 接入指定的实例
 ```
 
-`Alt+D` 可再次分离，让一切继续运行——菜单中的**选项 → 分离会话**亦然。该菜单项
-只在可分离会话中显示；在普通会话中没有可分离的对象，因此直接不显示，而不是显示
+`Alt+D` 可再次分离，让一切继续运行——菜单中的**选项 → 分离实例**亦然。该菜单项
+只在可分离实例中显示；在普通实例中没有可分离的对象，因此直接不显示，而不是显示
 出来再拒绝。
 
-会话以启动它的项目目录命名，因此在 `~/src/my-project` 中启动会得到 `my-project`。
-在同一目录中再启动一个会话，它就成为 `my-project-2`。
+实例以启动它的项目目录命名，因此在 `~/src/my-project` 中启动会得到 `my-project`。
+在同一目录中再启动一个实例，它就成为 `my-project-2`。
 
-## 让每个会话都可分离
+## 让每个实例都可分离
 
 唯一的难点是要在启动时记得加 `--detached`：以普通方式启动的 termide 之后无法再
 分离。运行中的进程绑定在其终端的 PTY 上——文件描述符已打开，子进程已继承它们，
@@ -44,7 +44,7 @@ always_detachable = true
 
 启用前值得了解：
 
-- **关闭终端不再意味着"停止 termide"。** 会话会存活下来，它的 LSP 服务器、监视器
+- **关闭终端不再意味着"停止 termide"。** 实例会存活下来，它的 LSP 服务器、监视器
   和 shell 也一样。通过 SSH 时这正是目的，在本机则可能令人意外——请不时查看
   `--list-instances`。
 - **作为 `$EDITOR` 启动时不受影响。** 带文件参数时（`EDITOR=termide git commit`）
@@ -69,20 +69,20 @@ ssh server
 termide --attach my-project
 ```
 
-不分离直接关闭 SSH 连接是安全的。会话会察觉客户端已离开并继续运行；下一次
+不分离直接关闭 SSH 连接是安全的。实例会察觉客户端已离开并继续运行；下一次
 `--attach` 会重新接上它。
 
 ## 什么会保留，以及为什么
 
-一切都会保留。会话不是被保存再恢复——它从未停止过。
+一切都会保留。实例不是被保存再恢复——它从未停止过。
 
 `termide --detached` 会启动一个小型宿主进程，它拥有一个 PTY，并在其中运行一个
 普通的 TermIDE。您的 shell、LSP 服务器、监视器和后台任务都是该 TermIDE 的子进程，
 因此客户端的来去对它们没有影响。接入就是把一个终端连接到宿主；分离就是断开它。
 
-这与 `~/.local/share/termide/sessions/` 中的会话布局不同——后者记录哪些面板曾经
+这与 `~/.local/share/termide/projects/` 中已保存的项目布局不同——后者记录哪些面板曾经
 打开，以便一个*新的* TermIDE 重新打开它们。它仍像以前一样工作，在您第一次启动
-会话时也仍然适用。
+实例时也仍然适用。
 
 ## 从另一个终端重新接入
 
@@ -90,19 +90,19 @@ termide --attach my-project
 `TERM`。接入时，TermIDE 会与当前正在查看它的终端重新协商备用屏幕、鼠标上报、
 括号粘贴和键盘协议，根据客户端的 `TERM` 重新检测颜色支持，并完整重绘。
 
-接入状态下调整终端大小的行为与平常相同；布局会像本地会话一样重新分配。
+接入状态下调整终端大小的行为与平常相同；布局会像本地实例一样重新分配。
 
 ## 命令
 
 | 命令 | 作用 |
 |---------|--------------|
-| `termide --detached` | 启动可分离会话并打印其 ID |
+| `termide --detached` | 启动可分离实例并打印其 ID |
 | `termide --detached file.rs` | 同上，并照常打开文件 |
-| `termide --attach` | 接入最近的会话 |
-| `termide --attach <ID>` | 接入指定名称的会话 |
-| `termide --list-instances` | 列出会话：ID、pid、运行时长、状态、项目 |
+| `termide --attach` | 接入最近的实例 |
+| `termide --attach <ID>` | 接入指定名称的实例 |
+| `termide --list-instances` | 列出实例：ID、pid、运行时长、状态、项目 |
 
-`--list-instances` 还会清理宿主进程已消失的会话，因此崩溃永远不会留下幽灵条目。
+`--list-instances` 还会清理宿主进程已消失的实例，因此崩溃永远不会留下幽灵条目。
 
 加载 shell 补全后（`termide --completions <shell>`，参见
 [安装](installation.md#shell-补全)），在 `--attach` 之后按 Tab 会给出此表中的 ID。
@@ -111,24 +111,24 @@ termide --attach my-project
 
 | 方式 | 何时使用 |
 |-----|----------------|
-| `Alt+D` | 常规方式。可在 `[general.keybindings]` 节中以 `detach_session` 重新绑定。 |
-| 关闭终端 | 安全。会话会察觉并继续运行。 |
+| `Alt+D` | 常规方式。可在 `[general.keybindings]` 节中以 `detach_instance` 重新绑定。 |
+| 关闭终端 | 安全。实例会察觉并继续运行。 |
 | `Ctrl+Z` | **不**起作用，也不可能起作用：termide 以原始模式读取按键，因此该按键永远到不了 tty 行规程，无法变成 SIGTSTP。`Alt+D` 才是实现您本意的绑定。 |
 | 连按三次 `Ctrl+\` | 仅限紧急情况——TermIDE 自身已停止响应时使用。由客户端处理，因此即使应用无响应也有效。 |
 
-结束会话与结束任何 TermIDE 相同：在接入状态下退出它（`Alt+Q`）。这也会停止宿主
-进程，并移除该会话。
+结束实例与结束任何 TermIDE 相同：在接入状态下退出它（`Alt+Q`）。这也会停止宿主
+进程，并移除该实例。
 
 ## 同一时间只允许一个客户端
 
-当另一个客户端已接入时，对同一会话的第二次 `--attach` 会被拒绝，而不是把屏幕镜像
+当另一个客户端已接入时，对同一实例的第二次 `--attach` 会被拒绝，而不是把屏幕镜像
 给两者。分离第一个客户端（或关闭其终端）后，下一次接入会立即成功。
 
-## 会话状态存放在哪里
+## 实例状态存放在哪里
 
 套接字在 Linux 和 BSD 上位于 `$XDG_RUNTIME_DIR/termide/`，在 macOS 上位于
 `~/Library/Application Support/termide/run/`——macOS 没有 `XDG_RUNTIME_DIR`。该目录
-仅所有者可访问（`0700`），因此本机上的其他账户无法接入您的会话。
+仅所有者可访问（`0700`），因此本机上的其他账户无法接入您的实例。
 
 那里没有任何需要手动清理的东西：套接字在宿主消失后最多存活到下一次
 `--list-instances` 或 `--detached`，它们会将其清除。

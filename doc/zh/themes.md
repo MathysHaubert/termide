@@ -254,4 +254,4 @@ error = "Red"
 
 ## 主题截图
 
-请参阅 [README](../../README.md#theme-examples) 查看主题截图和视觉示例。
+请参阅 [README](../../README.zh.md#可用主题) 查看内置主题列表。

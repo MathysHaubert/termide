@@ -26,7 +26,7 @@ TermIDE 内置了一个数据库浏览器，支持 **SQLite**、**PostgreSQL** �
 - **直接打开本地 SQLite 文件。** 在文件管理器中对 `.db` / `.sqlite` /
   `.sqlite3` / `.db3` 文件按 `Enter` 或 `F3`——它会在数据库查看器中打开，而不是
   十六进制查看器。
-- **Windows ▸ Open…**（或查看器中的 `Ctrl+G`）接受连接 URL（`sqlite://` /
+- **Windows ▸ Open…**（或 `Ctrl+G`）接受连接 URL（`sqlite://` /
   `postgres://` / `mysql://`），也接受文件路径、目录或 `http(s)://` 地址，并
   路由到匹配的查看器。
 

@@ -604,13 +604,15 @@ actor（见 `crates/vfs/src/sftp.rs`）。同步工作线程驱动分块循环�
 
 ### 8. 会话管理
 
-**位置：** `crates/session/src/lib.rs`
+**位置：** `crates/project/src/lib.rs`
 
 会话持久化允许保存和恢复面板布局：
 
 **存储位置：**
-- Linux: `~/.local/share/termide/sessions/<project_path>/session.toml`
-- macOS: `~/Library/Application Support/termide/sessions/<project_path>/session.toml`
+- Linux: `~/.local/share/termide/projects/<project_path>/session.toml`
+- macOS: `~/Library/Application Support/termide/projects/<project_path>/session.toml`
+
+重命名之前的数据目录 `sessions/` 会在首次启动时一次性迁移到 `projects/`。
 
 **功能特性：**
 - 退出时自动保存会话

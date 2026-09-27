@@ -47,8 +47,8 @@ Termide 在与绑定匹配前对每个按键事件进行规范化。规范化在
   `Alt+Shift+...` 绑定不能匹配。
 - `Super` / `Meta` / `Hyper` 修饰符。
 
-termide 自带的增强层默认值(`toggle_comment` 和 `switch_directory` 的
-`Ctrl+/`,`replace_all` 的 `Ctrl+Alt+R`)被保留,因为它们是编辑器
+termide 自带的增强层默认值(`toggle_comment` 的 `Ctrl+/`,
+`switch_directory` 的 `Ctrl+\`,`replace_all` 的 `Ctrl+Alt+R`)被保留,因为它们是编辑器
 中的事实标准。在不支持 Kitty 协议的终端上,termide 在启动时记录
 警告,列出受影响的绑定;用户可通过设置 → 键绑定重新绑定。
 
@@ -101,8 +101,8 @@ keybind 前缀(`global:`、`all:`、`unconsumed:`、`performable:`)和键表都�
 绑定限定在某个应用上。
 
 Termide 曾为这两个动作提供 `Alt+A` / `Alt+D` 作为备选,从而在不改动 Ghostty
-的情况下绕过该问题。它们后来被移除,让位于用 `Alt+D` 分离会话和用 `Alt+W`
-关闭面板——这是用户最先想到的字母——因此修复现在应放在 Ghostty 的配置中。
+的情况下绕过该问题。这两个字母后来让给了用户最先想到的动作——`Alt+D` 分离
+实例,`Alt+A` 打开编码代理面板——因此修复现在应放在 Ghostty 的配置中。
 
 要恢复 `Option+Left` / `Option+Right`,在 `~/.config/ghostty/config` 中清除这
 两个绑定:
@@ -178,7 +178,7 @@ Char('Ω') + SHIFT      ← no ALT bit at all
 会误伤输入希腊文的用户。
 
 因此 `Alt+Z` 绑定在 macOS 上永远不会匹配。请选择另一个字母——这正是
-`detach_session` 默认为 `Alt+D` 的原因。
+`detach_instance` 默认为 `Alt+D` 的原因。
 
 ### macOS 保留了部分功能键
 
@@ -192,7 +192,7 @@ F 键行发送的是媒体键,任何 `F<n>` 绑定都无法到达。对大多数
 
 | 动作 | 绑定 | 节 |
 |---|---|---|
-| 切换手风琴 / 拆分 | `Alt+F11` | `general` |
+| 在组内最大化面板 | `Alt+F11` | `general` |
 | 删除行 | `F8` | `editor` |
 | 查找下一个 | `F3` | `editor` |
 | 查找上一个 | `Shift+F3` | `editor` |
@@ -247,7 +247,7 @@ termide 在 macOS 上启动时会记录一条列出这些绑定的警告。请�
 [general.keybindings]
 panel_grow_vertical = "Alt+Shift+="
 panel_shrink_vertical = "Alt+Shift+-"
-open_sessions = "Alt+\\"
+open_projects = "Alt+\\"
 
 [editor.keybindings]
 trigger_completion = ["Ctrl+J", "Ctrl+Space"]

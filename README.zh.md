@@ -31,8 +31,8 @@
 | 文件管理器 | ✓ | 插件 | ✗ | ✗ |
 | 后台文件操作 | ✓ | 插件 | ✗ | ✗ |
 | Git 集成 | ✓ | 插件 | ✗ | ✗ |
-| 会话管理 | ✓ | 插件 | ✗ | ✗ |
-| 可分离会话 | ✓ | ✗ | ✗ | ✗ |
+| 项目布局 | ✓ | 插件 | ✗ | ✗ |
+| 可分离实例 | ✓ | ✗ | ✗ | ✗ |
 | 多面板布局 | ✓ | 插件 | ✗ | ✗ |
 | 书签 | ✓ | 插件 | ✗ | ✗ |
 | 资源监控 | ✓ | ✗ | ✗ | ✗ |
@@ -43,11 +43,12 @@
 
 - **基于终端的 IDE** - 支持 22 种语言的语法高亮、单词导航（Ctrl+Left/Right）、段落/符号导航（Ctrl+Up/Down）、自动缩进、自动关闭括号
 - **LSP 支持** - 代码补全、查找引用、重命名符号、跳转到定义，通过 rust-analyzer、pylsp、typescript-language-server 及其他 LSP 服务器实现
+- **编码代理** - 一个面板（`Alt+A`），语言模型通过任意 OpenAI 兼容端点（本地 llama.cpp / Ollama / vLLM / omlx 或托管服务）在你的项目中读取、编辑和运行命令，每次工具调用都会征求许可；技能、提示模板、MCP 服务器、命令钩子，以及通过 ACP 接入的外部代理（Claude Code、Codex、Gemini CLI）都在同一面板中
 - **智能文件管理器** - 可展开目录的树形视图、嵌套 Git 状态、批量操作、文件/内容搜索（glob/正则表达式）、树内增量搜索
 - **远程文件系统** - 在文件管理器中通过 SFTP / FTP / FTPS 浏览和编辑远程服务器上的文件，在本地与远程面板之间复制 —— 纯 Rust（russh + rustls），无需原生库，可在静态 musl 上运行（`smb://` / `nfs://` 走系统挂载）
 - **后台文件操作** - 复制、移动、上传、下载、删除及批量传输在后台运行，每个操作带进度条、字节/耗时读数，支持暂停 / 恢复 / 取消（操作面板）
 - **集成终端** - 完整的 PTY 支持、VT100 转义序列、鼠标跟踪
-- **Git 集成** - 状态面板、带彩色 Unicode 提交图（ASCII 回退）的提交日志、暂存/取消暂存、分支切换、暂存管理（stash）、内联 blame 注解
+- **Git 集成** - 状态面板、带彩色 Unicode 提交图（ASCII 回退）的提交日志、暂存/取消暂存、分支及其工作树（worktree）、分支切换、暂存管理（stash）、内联 blame 注解
 - **数据库查看器** - 通过书签 URL 打开的 SQLite / PostgreSQL / MySQL 只读浏览器：带二维单元格光标的表格、服务端单列排序与按列类型感知过滤、滑动窗口分页，以及可复制为 TSV / JSON / INSERT 的整行详情对话框
 - **多面板布局** - 垂直拆分的面板组，每个面板高度可调，一键全屏切换（`Alt+F11`）；终端变窄时智能自动堆叠
 - **图片查看器** - 在 Kitty、WezTerm、iTerm2、Ghostty、foot 终端中原生渲染图形
@@ -55,20 +56,21 @@
 - **Markdown 预览** - `.md` / `.markdown` 的只读渲染视图（标题、列表、表格、语法高亮代码块、可点击链接与图片图标），支持光标导航、选择与剪贴板复制；`Ctrl+E` 切换到可编辑源码；内嵌的 ```mermaid``` 代码块渲染为图表
 - **Mermaid 图表查看器** - 将 `.mmd` / `.mermaid` 文件渲染为文本伪图形 —— flowchart、sequence、state、class、ER、gantt、pie、journey、mindmap、timeline、gitGraph、quadrant；二维滚动、复制到剪贴板，`Ctrl+E` 编辑源码
 - **外部应用** - 使用系统默认应用程序打开文件（Shift+Enter）
-- **39 款内置主题** - 暗色、亮色、复古和电影主题（Dracula、Nord、Monokai、Solarized、Matrix、Pip-Boy、Norton Commander、Windows 95 等）
+- **38 款内置主题** - 暗色、亮色、复古和电影主题（Dracula、Nord、Monokai、Solarized、Matrix、Pip-Boy、Norton Commander、Windows 95 等）
 - **自定义主题** - 使用 TOML 格式创建自己的主题
 - **15 种界面语言** - 孟加拉语、中文、英语、法语、德语、印地语、印尼语、日语、韩语、葡萄牙语、俄语、西班牙语、泰语、土耳其语、越南语
-- **会话管理** - 自动保存和恢复面板布局
-- **可分离会话** - `termide --detached` 让整个会话（编辑器、shell、LSP 服务器、运行中的任务）在终端关闭后继续运行；`termide --attach` 可从任意终端、任意尺寸重新接入（仅限 Unix）
+- **项目管理** - 按项目自动保存和恢复面板布局
+- **可分离实例** - `termide --detached` 让整个实例（编辑器、shell、LSP 服务器、运行中的任务）在终端关闭后继续运行；`termide --attach` 可从任意终端、任意尺寸重新接入（仅限 Unix）
 - **系统监控** - 菜单栏实时显示 CPU、RAM、网络 I/O；状态栏显示磁盘使用情况；点击指标可打开详细模态窗口
 - **搜索和替换** - 实时预览、匹配计数、正则表达式支持
-- **自定义脚本** - 从脚本菜单运行用户定义的脚本（支持 `.bg.` 后台执行、`.report.` 模态输出）
+- **自定义命令** - 在命令菜单中运行 `commands.toml`（全局和项目级）中定义的 shell 命令：快捷键、分组、参数表单，以及终端 / 后台 / 报告模式
 - **跨平台** - Linux（x86_64、ARM64）、macOS（Intel、Apple Silicon）、Windows（原生 ConPTY、WSL）
 - **完整鼠标支持** - 点击导航、滚动、双击操作
 - **键盘布局** - 西里尔文支持，自动快捷键翻译
 - **Vim 模式** - 可选的 Vim 风格编辑，支持西里尔文键盘
-- **命令面板** - 使用 Ctrl+P 快速打开命令
-- **目录切换器** - 使用 Ctrl+/ 快速切换目录
+- **命令面板** - 使用 Ctrl+P 快速打开命令，支持模糊匹配
+- **打开提示** - 使用 Ctrl+G 打开文件、目录或 URL，带路径建议
+- **目录切换器** - 使用 `Ctrl+\` 快速切换目录
 - **书签** - 保存和管理常用位置
 
 ## 安装
@@ -390,10 +392,10 @@ TermIDE 遵循 [XDG Base Directory 规范](https://specifications.freedesktop.or
 - macOS: `~/Library/Application Support/termide/config.toml`
 - Windows: `%APPDATA%\termide\config.toml`
 
-**会话数据位置：**
-- Linux/BSD: `~/.local/share/termide/sessions/`（或 `$XDG_DATA_HOME/termide/sessions/`）
-- macOS: `~/Library/Application Support/termide/sessions/`
-- Windows: `%APPDATA%\termide\sessions\`
+**项目数据位置：**
+- Linux/BSD: `~/.local/share/termide/projects/`（或 `$XDG_DATA_HOME/termide/projects/`）
+- macOS: `~/Library/Application Support/termide/projects/`
+- Windows: `%APPDATA%\termide\projects\`
 
 **日志文件位置：**
 - Linux/BSD: `~/.cache/termide/termide.log`（或 `$XDG_CACHE_HOME/termide/termide.log`）
@@ -488,37 +490,25 @@ min_level = "info"
 
 用户主题优先于同名的内置主题。请参阅仓库中的 `themes/` 目录了解主题文件格式示例。
 
-### 自定义脚本
+### 自定义命令
 
-您可以将可执行文件放置在以下目录中，将自定义脚本添加到脚本菜单：
-- Linux: `~/.local/share/termide/scripts/`
-- macOS: `~/Library/Application Support/termide/scripts/`
-- Windows: `%APPDATA%\termide\scripts\`
+常用的 shell 命令写在 `commands.toml` 中——全局文件位于配置目录，项目文件位于
+`<项目>/.termide/commands.toml`——并显示在**命令**菜单中：
 
-**功能特性：**
-- 脚本显示在脚本菜单中（菜单栏）
-- 子目录创建嵌套子菜单
-- 在文件名中添加 `.bg.` 以实现后台执行（例如 `deploy.bg.sh`）
-- 在文件名中添加 `.report.` 以实现后台执行并显示模态输出（例如 `check.report.sh`）
-- 显示名称为第一个点号之前的部分
+```toml
+[test]
+name = "Run tests"
+command = "cargo nextest run"
+group = "cargo"
+key = "Ctrl+Shift+T"
 
-**示例：**
-```bash
-# 创建脚本目录
-mkdir -p ~/.local/share/termide/scripts
-
-# 添加一个简单脚本
-cat > ~/.local/share/termide/scripts/hello.sh << 'EOF'
-#!/bin/bash
-echo "Hello from TermIDE!"
-read -p "Press Enter to close..."
-EOF
-
-# 设置可执行权限（Unix 系统必需）
-chmod +x ~/.local/share/termide/scripts/hello.sh
+[clippy]
+command = "cargo clippy --workspace -- -D warnings"
+mode = "report"  # terminal（默认）、background 或 report
 ```
 
-**注意：** 在 Unix 系统上，脚本必须具有可执行权限（`chmod +x`）。使用 `选项 → 管理脚本` 打开脚本文件夹。
+`命令 → 添加命令...` 通过表单创建命令。模式、参数和快捷键见
+[自定义命令](doc/zh/actions.md)。
 
 ## 开发
 
