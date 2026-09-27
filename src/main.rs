@@ -119,8 +119,13 @@ fn run_diagnostics(custom_config: Option<&std::path::Path>) -> bool {
     let config_result = if let Some(path) = custom_config {
         termide_config::Config::load_from(path).map(|_| path.display().to_string())
     } else if let Some(root) = project_root.as_ref() {
-        termide_config::Config::load_layered(None, root)
-            .map(|_| "layered (defaults + global + project) parses OK".to_string())
+        termide_config::Config::load_layered(None, root).and_then(|loaded| {
+            if loaded.warnings.is_empty() {
+                Ok("layered (defaults + global + project) parses OK".to_string())
+            } else {
+                Err(anyhow::anyhow!(loaded.warnings.join("\n    ")))
+            }
+        })
     } else {
         Err(anyhow::anyhow!("cannot resolve current directory"))
     };
@@ -308,19 +313,25 @@ fn main() -> Result<()> {
     // effective config (historical semantics). The second tuple element is
     // the `defaults + global` snapshot used later as the diff baseline for
     // the per-project override file.
-    // Capture any config-load failure so we can re-emit it as
+    // Capture config-load problems so we can re-emit them as
     // `log::warn!` after the logger comes up below. eprintln before
     // raw mode prints to a soon-to-be-overwritten terminal scrollback;
     // the Journal panel is where the user will actually look.
-    let mut config_load_warning: Option<String> = None;
+    let mut config_load_warnings: Vec<String> = Vec::new();
     let (mut config, mut global_baseline) = if let Some(ref path) = cli.config {
         let cfg = Config::load_from(path)?;
         (cfg.clone(), cfg)
     } else {
-        Config::load_layered(None, &project_root).unwrap_or_else(|e| {
-            config_load_warning = Some(format!("Could not load config: {e}. Using defaults."));
-            (Config::default(), Config::default())
-        })
+        match Config::load_layered(None, &project_root) {
+            Ok(loaded) => {
+                config_load_warnings = loaded.warnings;
+                (loaded.effective, loaded.global_layer)
+            }
+            Err(e) => {
+                config_load_warnings.push(format!("Could not load config: {e}. Using defaults."));
+                (Config::default(), Config::default())
+            }
+        }
     };
 
     // Apply CLI overrides on top of the layered config. These are runtime-only
@@ -472,7 +483,7 @@ fn main() -> Result<()> {
         None => log::info!("Hosted session: VS16 width comes from the attach client"),
     }
     // — these end up in the Journal panel where users actually look.
-    if let Some(msg) = config_load_warning {
+    for msg in config_load_warnings {
         log::warn!("{}", msg);
     }
 

@@ -92,10 +92,54 @@ const LEGACY_AI_CONNECTION_KEYS: [&str; 5] = [
 /// The connection a file written before `[ai.connections]` describes.
 const LEGACY_AI_CONNECTION: &str = "default";
 
-/// Read an `[ai]` table written by an earlier version in today's shape.
-fn migrate_ai(value: &mut toml::Value) {
+/// Keys renamed since they were first written: the table they live in, the
+/// old name and the new one.
+///
+/// Serde aliases are not enough for these. A layered load merges the user's
+/// file into the serialised defaults, which already hold the new name, and a
+/// table with both a field and its alias is rejected as a duplicate — so the
+/// old spelling is renamed in the raw file before it is merged.
+const RENAMED_KEYS: [(&[&str], &str, &str); 4] = [
+    (
+        &["general"],
+        "session_retention_days",
+        "project_retention_days",
+    ),
+    (
+        &["general", "keybindings"],
+        "open_sessions",
+        "open_projects",
+    ),
+    (&["general", "keybindings"], "new_session", "new_project"),
+    (
+        &["general", "keybindings"],
+        "detach_session",
+        "detach_instance",
+    ),
+];
+
+/// Read a file written by an earlier version in today's shape.
+fn migrate_legacy(value: &mut toml::Value) {
+    migrate_renamed_keys(value);
     migrate_ai_connection(value);
     migrate_ai_autofold(value);
+}
+
+/// Rename the keys of [`RENAMED_KEYS`]. When a file has both spellings the
+/// new one wins and the old one is dropped.
+fn migrate_renamed_keys(value: &mut toml::Value) {
+    for (table_path, old, new) in RENAMED_KEYS {
+        let table = table_path
+            .iter()
+            .try_fold(&mut *value, |v, key| v.get_mut(*key))
+            .and_then(toml::Value::as_table_mut);
+        let Some(table) = table else {
+            continue;
+        };
+        if let Some(field) = table.remove(old) {
+            table.entry(new).or_insert(field);
+        }
+    }
 }
 
 /// `[ai] autofold = true/false` became `fold_blocks`: folded once a block
@@ -142,12 +186,142 @@ fn migrate_ai_connection(value: &mut toml::Value) {
         .or_insert_with(|| toml::Value::String(LEGACY_AI_CONNECTION.to_string()));
 }
 
+/// What [`Config::load_layered`] produced.
+#[derive(Debug, Clone)]
+pub struct LayeredConfig {
+    /// Defaults, overlaid with the global file and then the project file.
+    pub effective: Config,
+    /// Defaults overlaid with the global file only: the baseline the
+    /// project file is diffed against when it is saved.
+    pub global_layer: Config,
+    /// Settings that were left out, and why, one line per file.
+    pub warnings: Vec<String>,
+}
+
+/// Overlay the config file at `path`, if it exists, on `value`, keeping
+/// only what still parses. What was left out is reported in `warnings`,
+/// after the file is copied aside.
+fn overlay_file(value: &mut toml::Value, path: &Path, warnings: &mut Vec<String>) {
+    if !path.exists() {
+        return;
+    }
+    let parsed = std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).map_err(|e| e.to_string()));
+    let problem = match parsed {
+        Ok(mut overlay) => {
+            migrate_legacy(&mut overlay);
+            let rejected = overlay_valid(value, &overlay);
+            if rejected.is_empty() {
+                return;
+            }
+            format!("ignored invalid settings: {}", rejected.join("; "))
+        }
+        Err(e) => format!("not read, using the other layers only: {}", e.trim()),
+    };
+    let backup = back_up(path);
+    warnings.push(match backup {
+        Ok(backup) => format!(
+            "Config {}: {problem}. The file as it was is kept at {}",
+            path.display(),
+            backup.display()
+        ),
+        Err(e) => format!(
+            "Config {}: {problem}. Could not copy it aside ({e}); saving settings will drop what was ignored",
+            path.display()
+        ),
+    });
+}
+
+/// Whether `text` is a TOML document without any table: the flat format
+/// config files had before they were split into sections.
+fn is_flat(text: &str) -> bool {
+    toml::from_str::<toml::value::Table>(text)
+        .is_ok_and(|table| !table.values().any(toml::Value::is_table))
+}
+
+/// Copy `path` to `<path>.bak`, replacing an older copy.
+fn back_up(path: &Path) -> std::io::Result<PathBuf> {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".bak");
+    let backup = PathBuf::from(name);
+    std::fs::copy(path, &backup)?;
+    Ok(backup)
+}
+
+/// Merge `overlay` into `base` as [`merge_partial`] does, leaving out each
+/// setting that would make `base` fail to parse as a [`Config`]. Returns the
+/// dotted path of every setting left out, with the reason.
+fn overlay_valid(base: &mut toml::Value, overlay: &toml::Value) -> Vec<String> {
+    let mut candidate = base.clone();
+    merge_partial(&mut candidate, overlay);
+    if parse_error(&candidate).is_none() {
+        *base = candidate;
+        return Vec::new();
+    }
+    let mut rejected = Vec::new();
+    overlay_valid_at(base, &mut Vec::new(), overlay, &mut rejected);
+    rejected
+}
+
+/// Try each entry of the table `overlay`, found at `path`, on its own. An
+/// entry that fails is split further when both it and its counterpart in
+/// `base` are tables; otherwise it is left out whole — a table that `base`
+/// does not have yet (a new connection, a new LSP server) is only valid
+/// with all its fields together.
+fn overlay_valid_at(
+    base: &mut toml::Value,
+    path: &mut Vec<String>,
+    overlay: &toml::Value,
+    rejected: &mut Vec<String>,
+) {
+    let Some(entries) = overlay.as_table() else {
+        return;
+    };
+    for (key, entry) in entries {
+        path.push(key.clone());
+        let mut partial = entry.clone();
+        for segment in path.iter().rev() {
+            let mut table = toml::value::Table::new();
+            table.insert(segment.clone(), partial);
+            partial = toml::Value::Table(table);
+        }
+        let mut candidate = base.clone();
+        merge_partial(&mut candidate, &partial);
+        match parse_error(&candidate) {
+            None => *base = candidate,
+            Some(_)
+                if entry.is_table() && value_at(base, path).is_some_and(toml::Value::is_table) =>
+            {
+                overlay_valid_at(base, path, entry, rejected);
+            }
+            Some(e) => rejected.push(format!("{} ({})", path.join("."), e.trim())),
+        }
+        path.pop();
+    }
+}
+
+/// Why `value` does not parse as a [`Config`], if it does not.
+fn parse_error(value: &toml::Value) -> Option<String> {
+    value
+        .clone()
+        .try_into::<Config>()
+        .err()
+        .map(|e| e.message().to_string())
+}
+
+/// The value at the dotted `path` inside `value`.
+fn value_at<'a>(value: &'a toml::Value, path: &[String]) -> Option<&'a toml::Value> {
+    path.iter().try_fold(value, |v, key| v.get(key.as_str()))
+}
+
 impl Config {
     /// Load configuration from the global file.
     ///
     /// On first run, creates the file with `Config::default()`. Returns a
     /// fully `normalize()`-d `Config` (all `Option<KeyBinding>` slots
-    /// filled). Supports legacy-flat-format migration on read.
+    /// filled). A legacy flat file (no tables at all) is converted in
+    /// memory; the file keeps its shape until the next save.
     ///
     /// Does **not** layer in the per-project override file. For startup
     /// use [`Config::load_layered`].
@@ -159,19 +333,20 @@ impl Config {
 
             // Try parsing as new structured format first
             let parsed = toml::from_str::<toml::Value>(&original_content).and_then(|mut value| {
-                migrate_ai(&mut value);
+                migrate_legacy(&mut value);
                 value.try_into()
             });
             let mut config: Self = match parsed {
                 Ok(config) => config,
+                // Only a file without any table is the legacy flat format.
+                // Anything else that fails is a structured file with a bad
+                // value, and `LegacyConfig` — which accepts every document —
+                // would quietly turn it into defaults.
+                Err(e) if !is_flat(&original_content) => return Err(e.into()),
                 Err(_) => {
-                    // Legacy flat format → migrate. Save the converted result so the
-                    // user's file moves to the new shape; the file shrinks to
-                    // diff-against-defaults form on the first post-migration save.
                     let legacy: LegacyConfig = toml::from_str(&original_content)?;
                     let mut config: Config = legacy.into();
                     config.normalize();
-                    config.save_global()?;
                     return Ok(config);
                 }
             };
@@ -194,94 +369,75 @@ impl Config {
 
     /// Load configuration with the layered global → project overlay.
     ///
-    /// Returns `(effective, global_layer)` where:
-    /// - `effective` is `Config::default()` overlaid with the global file
+    /// The result holds:
+    /// - `effective`: `Config::default()` overlaid with the global file
     ///   (if any) and then with `<project_root>/.termide/config.toml`
     ///   (if any). This is what the running app sees.
-    /// - `global_layer` is the same minus the project overlay — the
-    ///   baseline used when computing diffs for the project file.
+    /// - `global_layer`: the same minus the project overlay — the baseline
+    ///   used when computing diffs for the project file.
+    /// - `warnings`: what had to be left out, for the caller to log once the
+    ///   logger is up.
     ///
     /// When `custom_global` is `Some`, layering is bypassed: the file is
     /// loaded as the entire effective config, and `global_layer` is a
     /// clone of it. This preserves the historical `--config` semantics
     /// where the user-supplied file is the single source of truth.
-    pub fn load_layered(custom_global: Option<&Path>, project_root: &Path) -> Result<(Self, Self)> {
+    pub fn load_layered(
+        custom_global: Option<&Path>,
+        project_root: &Path,
+    ) -> Result<LayeredConfig> {
         if let Some(path) = custom_global {
             let cfg = Self::load_from(path)?;
-            return Ok((cfg.clone(), cfg));
+            return Ok(LayeredConfig {
+                effective: cfg.clone(),
+                global_layer: cfg,
+                warnings: Vec::new(),
+            });
         }
 
-        // Start with built-in defaults.
-        let mut value = toml::Value::try_from(Self::default())?;
-
-        // Overlay the global file if it exists. Failure to parse is logged
-        // and ignored — we'd rather start with defaults than refuse to launch.
         let global_path = Self::config_file_path()?;
-        let mut global_existed = false;
-        if global_path.exists() {
-            global_existed = true;
-            match std::fs::read_to_string(&global_path)
-                .ok()
-                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-            {
-                Some(mut global_value) => {
-                    migrate_ai(&mut global_value);
-                    merge_partial(&mut value, &global_value);
-                }
-                None => log::warn!(
-                    "Failed to parse global config at {} — starting from defaults",
-                    global_path.display()
-                ),
-            }
-        }
-
-        // Snapshot the global layer (defaults + global) before applying the
-        // project overlay. This is the baseline for diff-saving the project
-        // file later.
-        let global_layer_value = value.clone();
-
-        // Overlay the project file if it exists.
-        let project_path = project_config_path(project_root);
-        if project_path.exists() {
-            match std::fs::read_to_string(&project_path)
-                .ok()
-                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-            {
-                Some(mut project_value) => {
-                    migrate_ai(&mut project_value);
-                    merge_partial(&mut value, &project_value);
-                }
-                None => log::warn!(
-                    "Failed to parse project config at {} — using global only",
-                    project_path.display()
-                ),
-            }
-        }
-
-        // A single invalid field in the merged config must not discard every
-        // other user setting. Degrade layer-by-layer instead of refusing the
-        // whole document: full merge → global layer (defaults + global) →
-        // built-in defaults, keeping the largest valid subset.
-        let mut effective: Self = value.try_into().unwrap_or_else(|e| {
-            log::warn!("Merged config is invalid ({e}); falling back to the global layer");
-            global_layer_value.clone().try_into().unwrap_or_else(|e2| {
-                log::warn!("Global config layer is also invalid ({e2}); using defaults");
-                Self::default()
-            })
-        });
-        effective.normalize();
-        let mut global_layer: Self = global_layer_value.try_into().unwrap_or_else(|e| {
-            log::warn!("Global config layer is invalid ({e}); using defaults as baseline");
-            Self::default()
-        });
-        global_layer.normalize();
+        let global_existed = global_path.exists();
+        let loaded = Self::load_layers(Some(&global_path), &project_config_path(project_root))?;
 
         // Make sure the themes directory exists on first run.
         if !global_existed {
             Self::ensure_themes_dir()?;
         }
+        Ok(loaded)
+    }
 
-        Ok((effective, global_layer))
+    /// Overlay the files at `global_path` and `project_path`, where they
+    /// exist, on the built-in defaults.
+    ///
+    /// A file that cannot be read keeps only what is valid in it: settings
+    /// with a wrong type or value are left out one by one rather than
+    /// dropping the whole file, and a file that is not TOML at all is left
+    /// out entirely. Either way the file is copied to `<name>.bak` first,
+    /// because the next save writes the running config over it and would
+    /// otherwise lose what was left out.
+    fn load_layers(global_path: Option<&Path>, project_path: &Path) -> Result<LayeredConfig> {
+        let mut value = toml::Value::try_from(Self::default())?;
+        let mut warnings = Vec::new();
+
+        if let Some(path) = global_path {
+            overlay_file(&mut value, path, &mut warnings);
+        }
+        // The global layer (defaults + global) is the baseline for
+        // diff-saving the project file later.
+        let global_layer_value = value.clone();
+        overlay_file(&mut value, project_path, &mut warnings);
+
+        // Every overlaid key was checked, so both layers parse.
+        let mut effective: Self = value.try_into()?;
+        effective.normalize();
+        let mut global_layer: Self = global_layer_value.try_into()?;
+        global_layer.normalize();
+
+        Ok(LayeredConfig {
+            effective,
+            global_layer,
+            warnings,
+        })
     }
 
     /// Load configuration from a specific file path.
@@ -291,7 +447,7 @@ impl Config {
     pub fn load_from(path: &std::path::Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let mut value: toml::Value = toml::from_str(&content)?;
-        migrate_ai(&mut value);
+        migrate_legacy(&mut value);
         let mut config: Self = value.try_into()?;
         config.normalize();
         Ok(config)
@@ -545,5 +701,135 @@ mod ai_connection_migration_tests {
         );
         assert_eq!(config.ai.default_connection(), Some("cloud"));
         assert_eq!(config.ai.connections["default"].model, "kept");
+    }
+}
+
+#[cfg(test)]
+mod layered_load_tests {
+    use super::*;
+
+    /// Load `global` (and `project`, when given) through the layered path
+    /// the app starts with.
+    fn layered(global: &str, project: Option<&str>) -> (LayeredConfig, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let global_path = dir.path().join("config.toml");
+        std::fs::write(&global_path, global).unwrap();
+        let project_path = dir.path().join("project.toml");
+        if let Some(project) = project {
+            std::fs::write(&project_path, project).unwrap();
+        }
+        let loaded = Config::load_layers(Some(&global_path), &project_path).unwrap();
+        (loaded, dir)
+    }
+
+    fn binding(text: &str) -> Option<KeyBinding> {
+        Some(KeyBinding::Single(text.to_string()))
+    }
+
+    /// The defaults already hold `project_retention_days`; merging the old
+    /// spelling next to it used to be a duplicate field that reset the whole
+    /// config to defaults.
+    #[test]
+    fn the_old_retention_key_is_read_on_the_layered_path() {
+        let (loaded, _dir) = layered(
+            "[general]\ntheme = \"nord\"\nsession_retention_days = 7\n",
+            None,
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.effective.general.project_retention_days, 7);
+        assert_eq!(loaded.effective.general.theme, "nord");
+    }
+
+    #[test]
+    fn old_keybinding_names_are_read_on_the_layered_path() {
+        let (loaded, _dir) = layered(
+            "[general.keybindings]\nopen_sessions = \"Alt+1\"\nnew_session = \"Alt+2\"\ndetach_session = \"Alt+3\"\n",
+            Some("[general.keybindings]\nopen_projects = \"Alt+4\"\n"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let keys = &loaded.effective.general.keybindings;
+        assert_eq!(keys.open_projects, binding("Alt+4"));
+        assert_eq!(keys.new_project, binding("Alt+2"));
+        assert_eq!(keys.detach_instance, binding("Alt+3"));
+        assert_eq!(
+            loaded.global_layer.general.keybindings.open_projects,
+            binding("Alt+1")
+        );
+    }
+
+    #[test]
+    fn with_both_spellings_the_new_one_wins() {
+        let (loaded, _dir) = layered(
+            "[general]\nsession_retention_days = 7\nproject_retention_days = 9\n",
+            None,
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.effective.general.project_retention_days, 9);
+    }
+
+    #[test]
+    fn an_invalid_value_leaves_out_only_itself() {
+        let text = "[general]\ntheme = \"nord\"\nproject_retention_days = \"many\"\n[editor]\ntab_size = 8\n";
+        let (loaded, dir) = layered(text, None);
+        let config = &loaded.effective;
+        assert_eq!(config.general.theme, "nord");
+        assert_eq!(config.editor.tab_size, 8);
+        assert_eq!(
+            config.general.project_retention_days,
+            defaults::PROJECT_RETENTION_DAYS
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(
+            loaded.warnings[0].contains("general.project_retention_days"),
+            "{:?}",
+            loaded.warnings
+        );
+        // Saving writes the running config over the file, so the original
+        // is copied aside first.
+        let backup = dir.path().join("config.toml.bak");
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), text);
+    }
+
+    #[test]
+    fn a_file_that_is_not_toml_is_left_out_and_kept() {
+        let (loaded, dir) = layered("[general\ntheme = ", Some("[editor]\ntab_size = 2\n"));
+        assert_eq!(loaded.effective.editor.tab_size, 2);
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(dir.path().join("config.toml.bak").exists());
+    }
+
+    #[test]
+    fn an_invalid_project_value_keeps_the_global_layer() {
+        let (loaded, dir) = layered(
+            "[editor]\ntab_size = 8\n",
+            Some("[editor]\ntab_size = -1\nword_wrap = false\n"),
+        );
+        assert_eq!(loaded.effective.editor.tab_size, 8);
+        assert!(!loaded.effective.editor.word_wrap);
+        assert!(loaded.effective.editor.show_git_diff);
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].contains("editor.tab_size"));
+        assert!(!dir.path().join("config.toml.bak").exists());
+        assert!(dir.path().join("project.toml.bak").exists());
+    }
+
+    #[test]
+    fn a_partial_compaction_table_keeps_the_other_defaults() {
+        let (loaded, _dir) = layered("[ai.compaction]\nenabled = false\n", None);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let compaction = loaded.effective.ai.compaction;
+        assert!(!compaction.enabled);
+        assert_eq!(
+            compaction.reserve_tokens,
+            termide_agent_core::CompactionPolicy::default().reserve_tokens
+        );
+    }
+
+    #[test]
+    fn only_a_file_without_tables_is_the_flat_format() {
+        assert!(is_flat("theme = \"nord\"\ntab_size = 2\n"));
+        assert!(is_flat(""));
+        assert!(!is_flat("[general]\ntheme = 1\n"));
+        assert!(!is_flat("not toml ["));
     }
 }

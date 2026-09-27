@@ -391,6 +391,13 @@ TermIDE следует [спецификации XDG Base Directory](https://spe
 - macOS: `~/Library/Application Support/termide/config.toml`
 - Windows: `%APPDATA%\termide\config.toml`
 
+Проект может переопределить любую настройку в `<проект>/.termide/config.toml`.
+Настройка с неверным типом или значением игнорируется по отдельности, и об этом
+пишется в Журнал; остальной файл продолжает действовать. Следующее сохранение из
+настроек перезапишет файл уже без проигнорированной настройки, поэтому перед этим
+исходный файл копируется рядом в `config.toml.bak`. `termide --diagnostics` показывает
+те же проблемы.
+
 **Расположение данных сессий:**
 - Linux/BSD: `~/.local/share/termide/sessions/` (или `$XDG_DATA_HOME/termide/sessions/`)
 - macOS: `~/Library/Application Support/termide/sessions/`
@@ -412,7 +419,7 @@ TermIDE следует [спецификации XDG Base Directory](https://spe
 theme = "windows-xp"
 language = "auto"  # auto, bn, de, en, es, fr, hi, id, ja, ko, pt, ru, th, tr, vi, zh
 vim_mode = false
-session_retention_days = 30
+project_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
 always_detachable = false  # сессия переживает закрытие терминала (Unix)

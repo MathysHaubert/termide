@@ -395,6 +395,12 @@ TermIDE follows the [XDG Base Directory Specification](https://specifications.fr
 - macOS: `~/Library/Application Support/termide/config.toml`
 - Windows: `%APPDATA%\termide\config.toml`
 
+A project can override any of it in `<project>/.termide/config.toml`. A setting
+with a wrong type or value is ignored on its own and reported in the Journal;
+the rest of the file still applies. Since the next save from Settings rewrites
+the file without the ignored setting, the file as it was is first copied to
+`config.toml.bak` next to it. `termide --diagnostics` lists the same problems.
+
 **Project data location:**
 - Linux/BSD: `~/.local/share/termide/projects/` (or `$XDG_DATA_HOME/termide/projects/`)
 - macOS: `~/Library/Application Support/termide/projects/`
@@ -416,7 +422,7 @@ TermIDE follows the [XDG Base Directory Specification](https://specifications.fr
 theme = "windows-xp"
 language = "auto"  # auto, bn, de, en, es, fr, hi, id, ja, ko, pt, ru, th, tr, vi, zh
 vim_mode = false
-session_retention_days = 30
+project_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
 always_detachable = false  # keep sessions alive across terminal closes (Unix)

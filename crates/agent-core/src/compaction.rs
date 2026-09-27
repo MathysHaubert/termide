@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::message::{AssistantContent, Message, ToolResultContent, UserContent, UserMessage};
 
+/// A field left out of `[ai.compaction]` keeps its default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CompactionPolicy {
     pub enabled: bool,
     /// Compact when the context exceeds `context_window - reserve_tokens`.

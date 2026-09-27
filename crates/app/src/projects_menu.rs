@@ -380,6 +380,15 @@ impl AppState {
 mod tests {
     use super::*;
 
+    /// State on the built-in defaults: `AppState::new` would read the
+    /// developer's own config file.
+    fn test_state() -> AppState {
+        let mut config = termide_config::Config::default();
+        config.normalize();
+        let theme = termide_theme::Theme::get_by_name(&config.general.theme);
+        AppState::with_config_and_theme(config.clone(), config, theme)
+    }
+
     fn paths(list: &[&str]) -> Vec<PathBuf> {
         list.iter().map(PathBuf::from).collect()
     }
@@ -476,7 +485,7 @@ mod tests {
     #[test]
     fn nested_levels_open_beside_their_row() {
         let home = PathBuf::from("/home/u");
-        let mut state = AppState::new();
+        let mut state = test_state();
         state.cache.projects = build_project_tree(
             &paths(&["/home/u/g/a/one", "/home/u/g/a/two", "/home/u/g/b"]),
             Some(&home),
@@ -505,7 +514,7 @@ mod tests {
     #[test]
     fn restored_selection_falls_back_within_the_new_tree() {
         let home = PathBuf::from("/home/u");
-        let mut state = AppState::new();
+        let mut state = test_state();
         let screen = Rect::new(0, 0, 120, 40);
         let first_tree_row = PROJECTS_SUBMENU_ITEM_COUNT + 1;
 
