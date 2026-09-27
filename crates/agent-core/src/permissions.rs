@@ -90,8 +90,9 @@ pub const PLAN_MODE_REASON: &str =
 #[must_use]
 pub fn is_read_only_call(call: &ToolCall) -> bool {
     match call.name.as_str() {
-        // The web tools read the web; nothing on this machine changes.
-        "read" | "skill" | "fetch" | "web_search" => true,
+        // The web tools read the web; nothing on this machine changes. A
+        // question to the user changes nothing either.
+        "read" | "skill" | "fetch" | "web_search" | "question" => true,
         "bash" => {
             let parsed = split_shell(call.arguments["command"].as_str().unwrap_or(""));
             !parsed.has_substitution
@@ -509,8 +510,9 @@ impl PermissionHooks {
         match (mode, call.name.as_str()) {
             (Mode::All, _) => Decision::Allow,
             (_, "read") if inside => Decision::Allow,
-            // Loads a skill's own text, which may live outside the project.
-            (_, "skill") => Decision::Allow,
+            // Loads a skill's own text, which may live outside the project;
+            // a question is already put to the user, so is never asked about.
+            (_, "skill" | "question") => Decision::Allow,
             (Mode::Plan | Mode::Edit, "fetch" | "web_search") => Decision::Allow,
             (Mode::Edit, "edit" | "write") if inside => Decision::Allow,
             // Plan mode asks before reading outside the project and refuses
@@ -1781,6 +1783,26 @@ mod tests {
             hooks.decide(&call("skill", json!({ "name": "deploy" })), &ctx()),
             Decision::Allow
         );
+    }
+    #[test]
+    fn a_question_to_the_user_never_asks_and_passes_plan_mode() {
+        let rules = PermissionRules {
+            mode: Mode::Plan,
+            ..PermissionRules::default()
+        };
+        let hooks = PermissionHooks::new(
+            rules,
+            Box::new(Scripted {
+                answers: vec![],
+                asked: Arc::new(Mutex::new(Vec::new())),
+            }),
+        );
+        let question = call(
+            "question",
+            json!({ "questions": [{ "question": "Which?" }] }),
+        );
+        assert_eq!(hooks.decide(&question, &ctx()), Decision::Allow);
+        assert!(is_read_only_call(&question));
     }
     #[test]
     fn plan_mode_refuses_every_change_and_lets_reads_through() {

@@ -216,8 +216,8 @@ you have named or sent even one message to is always kept.
 The conversation is a stack of blocks, each opened by an accent-coloured mark:
 `› ` for your message and for the agent's answer, `@ ` for its reasoning, `$ `
 for a shell call, `< ` for a file read, `> ` for a write, `± ` for an edit,
-`/ ` for a skill, `& ` for a subagent, `* ` for an MCP tool, `# ` for the
-system prompt. The answer is shown in full;
+`/ ` for a skill, `& ` for a subagent, `* ` for an MCP tool, `¿ ` for a
+question to you, `# ` for the system prompt. The answer is shown in full;
 a user message or the system prompt longer than five lines is
 folded to a preview that keeps the first line and the last few, with a
 `… N more lines` note between them. A block of five lines or fewer has nothing
@@ -446,6 +446,24 @@ Searching the project is done through `bash` with the tools you already have
 
 A seventh tool, **skill**, appears when skills are defined; see
 [Skills](#skills).
+
+**question** lets the agent ask you when a decision is yours to make: which
+approach to take, what an ambiguous requirement means. It puts up to four
+questions, asked one after another as a card in the panel above the input.
+The title says the agent asks, with the question's topic and, when there are
+several, its number (`Agent asks: Approach (1/2)`); the question itself sits
+dim under it, then the choices, each with a dim note on what it means. A
+question offers one choice to pick, or several: then each choice has a
+checkbox that `Space`, `Enter` or its digit toggles, and **Submit** sends them.
+**Type your own answer** always follows the choices — a line you type instead,
+or, where several can be picked, alongside them. `↑`/`↓`, digits and clicks
+work as on a permission card; **Decline and stop the run**, or `Esc`, tells the
+agent you declined and stops the run, so you can say what you want in your own
+message. Waiting for an answer counts as the call's pause (`‖`), as a
+permission question does. Asking never needs a permission, in plan mode too.
+Only the panel's own agent has this tool: a subagent and a `termide --prompt`
+run have no one to ask and decide on their own. An agent whose `tools` list leaves out
+`question` does not ask either.
 
 ### Web
 

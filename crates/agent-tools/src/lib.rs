@@ -2,8 +2,9 @@
 //!
 //! Four tools cover what a coding agent needs on a local checkout: `read`,
 //! `edit`, `write` and `bash`; `skill` joins them when the project or the
-//! user defines skills. Search is left to the shell (`rg`, `find`), which
-//! every model already knows. Contracts follow the cross-agent
+//! user defines skills, `question` when someone watches the run to answer.
+//! Search is left to the shell (`rg`, `find`), which every model already
+//! knows. Contracts follow the cross-agent
 //! comparison in `doc/en/agent-design.md`: numbered lines on read,
 //! search/replace with a unique anchor and tolerant whitespace matching on
 //! edit, head-and-tail truncation of shell output with the full log saved to
@@ -13,6 +14,7 @@ mod args;
 mod bash;
 mod clean;
 mod edit;
+mod question;
 mod read;
 mod skill;
 mod task;
@@ -27,6 +29,7 @@ use termide_agent_core::ToolRegistry;
 pub use bash::BashTool;
 pub use clean::{clean_output, Cleaned};
 pub use edit::EditTool;
+pub use question::QuestionTool;
 pub use read::ReadTool;
 pub use skill::SkillTool;
 pub use task::{SubagentRun, TaskTool};

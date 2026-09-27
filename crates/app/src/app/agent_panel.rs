@@ -18,7 +18,7 @@ use termide_agent_core::{subject_of, Mode, ToolContext};
 use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
 use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
-use termide_agent_tools::{builtin_tools, SkillTool, SubagentRun, TaskTool};
+use termide_agent_tools::{builtin_tools, QuestionTool, SkillTool, SubagentRun, TaskTool};
 use termide_agent_web::{web_tools, Web, WebConfig};
 use termide_config::{AiSettings, Connection, WebSettings};
 use termide_panel_agent::{
@@ -201,6 +201,11 @@ impl AgentCatalog for FsCatalog {
         } else {
             base_tools(&self.dirs, self.web.as_ref())
         };
+        // Someone watches the panel's agent to answer its questions; a
+        // subagent and headless mode build their tools without it.
+        if backend.is_none() {
+            tools.insert(Arc::new(QuestionTool));
+        }
         restrict_tools(&mut tools, &definition.spec.tools, name);
         // Skills are instructions, not a capability, so an agent's `tools`
         // list does not govern them: the tool comes with the skills.
@@ -1476,7 +1481,11 @@ mod tests {
         assert_eq!(review.mode, Some(termide_agent_core::Mode::All));
 
         let default = catalog.resolve(DEFAULT_AGENT).unwrap();
-        assert_eq!(default.tools.len(), 4);
+        // The built-in four and `question`, which the panel's agent asks with.
+        assert_eq!(
+            default.tools.names(),
+            ["read", "edit", "write", "bash", "question"]
+        );
         assert!(default
             .system_prompt
             .starts_with("Root template.\n\n- read:"));

@@ -1169,8 +1169,9 @@ fn tool_headline(
     // A tool opens with its type glyph like every block — `<` read and `>`
     // write, as a shell redirects, `±` for an edit's diff, `↓` for a page
     // fetched, `?` for a search, `/` for a skill as it is typed by hand, `&`
-    // for a subagent, as a shell backgrounds a job, `*` for an MCP tool —
-    // then its localized action in the same accent and its subject.
+    // for a subagent, as a shell backgrounds a job, `*` for an MCP tool, `¿`
+    // for a question to the user — then its localized action in the same
+    // accent and its subject.
     let accent = Style::default().fg(colors.info);
     let action = |glyph: &str, verb: &str, subject: String| {
         let mut spans = vec![
@@ -1207,6 +1208,22 @@ fn tool_headline(
                 t.agent_tool_task(),
                 format!("{}: {}", arg("agent"), first.trim()),
             )
+        }
+        "question" => {
+            // The first question, and how many more follow it.
+            let questions = call.arguments["questions"].as_array();
+            let first = questions
+                .and_then(|list| list.first())
+                .and_then(|q| q["question"].as_str())
+                .unwrap_or("")
+                .replace('\n', " ");
+            let more = questions.map_or(0, |list| list.len().saturating_sub(1));
+            let subject = if more > 0 {
+                format!("{} (+{more})", first.trim())
+            } else {
+                first.trim().to_string()
+            };
+            action("¿", t.agent_tool_question(), subject)
         }
         name if mcp_parts(name).is_some() => {
             let (server, tool) = mcp_parts(name).unwrap_or_default();
@@ -1884,6 +1901,13 @@ mod tests {
         assert_eq!(
             headline("skill", json!({ "name": "deploy" })),
             "/ Using skill deploy"
+        );
+        assert_eq!(
+            headline(
+                "question",
+                json!({ "questions": [{ "question": "Which approach?" }, { "question": "Name?" }] })
+            ),
+            "¿ Asking Which approach? (+1)"
         );
         assert_eq!(
             headline(

@@ -482,6 +482,16 @@ pub trait Translation: Send + Sync {
     /// Permission card: cancel and stop the run
     fn agent_perm_stop(&self) -> &str;
 
+    // Agent panel — the model's question card
+    /// Question card title: the agent asks the user something
+    fn agent_question_title(&self) -> &str;
+    /// Question card: the row for an answer typed by the user
+    fn agent_question_own_answer(&self) -> &str;
+    /// Question card: decline to answer and stop the run
+    fn agent_question_decline(&self) -> &str;
+    /// Question card: confirm the choices of a multi-select question
+    fn agent_question_submit(&self) -> &str;
+
     // Agent panel — delete-session confirmation
     /// The delete-session card's question (`{label}` is the session)
     fn agent_delete_confirm_fmt(&self, label: &str) -> String;
@@ -697,6 +707,8 @@ pub trait Translation: Send + Sync {
     fn agent_tool_task(&self) -> &str;
     /// Agent transcript: the action words for an MCP server's tool call.
     fn agent_tool_mcp(&self) -> &str;
+    /// Agent transcript: the action words for a `question` call.
+    fn agent_tool_question(&self) -> &str;
     /// Agent notices: what defines a `/name` — a built-in command, a prompt
     /// template, a command script, a skill — as the object of "runs" and
     /// "hides".

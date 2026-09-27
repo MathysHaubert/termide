@@ -23,14 +23,15 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use termide_agent_core::{
-    civil_date, now_millis, permission_channel, Agent, AgentEvent, Backend, BackendModel,
-    BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore, CommandScript,
-    CompactionPolicy, CompactionPrompts, Decision, EntryKind, GoalPrompt, HandoffPrompt, Hooks,
-    HostTools, LateTools, LoggedMessage, Message, Mode, ModeHandle, ModelInfo, ModelSpec,
-    PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule,
-    PersistScope, PlanGuard, PlanPrompt, PromptTemplate, Provider, Session, SessionSummary,
-    SkillInfo, StopReason, StreamEvent, Timing, Tool, ToolCall, ToolContext, ToolDecision,
-    ToolRegistry, ToolResultMessage, ToolUpdate, UserMessage, DEFAULT_AGENT,
+    civil_date, now_millis, permission_channel, question_channel, Agent, AgentEvent, Backend,
+    BackendModel, BackendSetup, CancelToken, ChainedHooks, CheckpointHooks, CheckpointStore,
+    CommandScript, CompactionPolicy, CompactionPrompts, Decision, EntryKind, GoalPrompt,
+    HandoffPrompt, Hooks, HostTools, LateTools, LoggedMessage, Message, Mode, ModeHandle,
+    ModelInfo, ModelSpec, PermissionAnswer, PermissionEnvelope, PermissionHooks, PermissionRules,
+    PersistRule, PersistScope, PlanGuard, PlanPrompt, PromptTemplate, Provider, QuestionAnswer,
+    QuestionEnvelope, QuestionReply, Session, SessionSummary, SkillInfo, StopReason, StreamEvent,
+    Timing, Tool, ToolCall, ToolContext, ToolDecision, ToolRegistry, ToolResultMessage, ToolUpdate,
+    UserMessage, DEFAULT_AGENT,
 };
 use termide_agent_core::{AgentRuntime, PromptError};
 use termide_config::Config;
@@ -141,14 +142,22 @@ const SLASH_CONFLICTS_ACTION: &str = "agent_slash_conflicts";
 /// Context-menu action that undoes the last request.
 const UNDO_ACTION: &str = "agent_undo";
 
-/// What a card in the panel is asking: the agent's permission request, or
-/// whether a command script that came with the project may run.
+/// What a card in the panel is asking: the agent's permission request, the
+/// model's questions to the user, or whether a command script that came with
+/// the project may run.
 enum Pending {
     Permission {
         envelope: PermissionEnvelope,
         form: ChoiceForm,
         /// What each of the form's rows answers, in their order.
         answers: Vec<PermissionAnswer>,
+    },
+    /// The model's questions, asked one card at a time; `answers` holds those
+    /// already given, and `form` asks the next.
+    Question {
+        envelope: QuestionEnvelope,
+        answers: Vec<QuestionAnswer>,
+        form: ChoiceForm,
     },
     Command {
         script: CommandScript,
@@ -174,6 +183,7 @@ impl Pending {
     fn form(&self) -> &ChoiceForm {
         match self {
             Pending::Permission { form, .. }
+            | Pending::Question { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
             | Pending::Plan { form }
@@ -184,6 +194,7 @@ impl Pending {
     fn form_mut(&mut self) -> &mut ChoiceForm {
         match self {
             Pending::Permission { form, .. }
+            | Pending::Question { form, .. }
             | Pending::Command { form, .. }
             | Pending::Undo { form }
             | Pending::Plan { form }
@@ -508,6 +519,8 @@ pub struct AgentPanel {
     /// The runtime is an external agent: model and mode are not ours to set.
     external: bool,
     permission_rx: Receiver<PermissionEnvelope>,
+    /// The model's questions to the user, from the `question` tool.
+    question_rx: Receiver<QuestionEnvelope>,
     /// The question a card in the panel is asking, if any.
     pending: Option<Pending>,
     /// Command scripts the user let run for this session, by name.
@@ -681,7 +694,8 @@ pub struct AgentPanel {
     /// A `/continue` resumed the paused run, so the next `AgentStart` keeps
     /// the run's start and its clock goes on from the request.
     resuming: bool,
-    /// When the current permission question went up, and how long the
+    /// When the current permission question (or the model's question to the
+    /// user) went up, and how long the
     /// running call had already waited before it: the wait is a pause of
     /// its own, shown on the call and kept out of its duration.
     permission_wait: Option<(Instant, u32)>,
@@ -789,6 +803,7 @@ impl AgentPanel {
         let Spawned {
             runtime,
             permission_rx,
+            question_rx,
             transcript,
             mode,
             external,
@@ -827,6 +842,7 @@ impl AgentPanel {
             runtime,
             external,
             permission_rx,
+            question_rx,
             pending: None,
             allowed_commands: HashSet::new(),
             command_run: None,
@@ -997,6 +1013,7 @@ impl AgentPanel {
         let Spawned {
             runtime,
             permission_rx,
+            question_rx,
             transcript,
             mode,
             external,
@@ -1024,6 +1041,7 @@ impl AgentPanel {
         self.runtime = runtime;
         self.external = external;
         self.permission_rx = permission_rx;
+        self.question_rx = question_rx;
         self.pending = None;
         self.transcript = transcript;
         // Leaving the current session: if it was never used, delete it so an
@@ -2168,6 +2186,11 @@ impl AgentPanel {
                 // A wait on a permission answer is the call's pause, not its
                 // run time.
                 self.end_permission_wait();
+                // A question's call ends only once it is answered or its run
+                // stopped; a card still up then has no one waiting for it.
+                if matches!(self.pending, Some(Pending::Question { .. })) {
+                    self.pending = None;
+                }
                 let waited = self.transcript.tool_wait(&id).unwrap_or(0);
                 let elapsed = self
                     .tool_starts
@@ -2360,6 +2383,60 @@ impl AgentPanel {
                 _ => None,
             })
             .unwrap_or(0)
+    }
+
+    /// Show the model's questions as they arrive, one card at a time. Like a
+    /// permission prompt, they pause the running call until answered.
+    fn poll_questions(&mut self) -> Vec<PanelEvent> {
+        let mut events = Vec::new();
+        while let Ok(envelope) = self.question_rx.try_recv() {
+            if self.pending.is_some() || envelope.questions.is_empty() {
+                // Calls run one at a time, so a second set cannot arrive
+                // while one is shown; decline it defensively.
+                let _ = envelope.reply.send(QuestionReply::Declined);
+                continue;
+            }
+            let form = question_form(&envelope, 0);
+            events.push(PanelEvent::SetStatusMessage {
+                message: envelope.questions[0].question.clone(),
+                is_error: false,
+            });
+            self.pending = Some(Pending::Question {
+                envelope,
+                answers: Vec::new(),
+                form,
+            });
+            self.attention = true;
+            let before = self.running_tool_wait();
+            self.permission_wait = Some((Instant::now(), before));
+            self.transcript.set_tool_wait(before, true);
+        }
+        events
+    }
+
+    /// Record the answer to the question on the card, then ask the next one,
+    /// or send them all back once the last is answered.
+    fn answer_question(&mut self, answer: QuestionAnswer) {
+        let Some(Pending::Question {
+            envelope,
+            mut answers,
+            ..
+        }) = self.pending.take()
+        else {
+            return;
+        };
+        answers.push(answer);
+        if answers.len() < envelope.questions.len() {
+            let form = question_form(&envelope, answers.len());
+            self.pending = Some(Pending::Question {
+                envelope,
+                answers,
+                form,
+            });
+            return;
+        }
+        self.end_permission_wait();
+        let _ = envelope.reply.send(QuestionReply::Answered(answers));
     }
 
     /// The permission question is gone (answered, or dropped by a stop):
@@ -3734,7 +3811,8 @@ impl AgentPanel {
 
     /// Turn what the card reported into an answer. For a permission,
     /// `Cancelled` denies and stops the run: the user wants out, not just a
-    /// "no" to this one call. For a command script, the rows are run once,
+    /// "no" to this one call; for the model's question it declines and stops
+    /// the run alike. For a command script, the rows are run once,
     /// run for the session, run always (a rule is written) and don't run.
     /// `false` for `NotHandled`.
     fn apply_form_action(&mut self, action: ChoiceAction) -> bool {
@@ -3755,6 +3833,38 @@ impl AgentPanel {
                 self.answer_permission(PermissionAnswer::Deny);
                 self.abort();
             }
+            (Some(Pending::Question { form, .. }), ChoiceAction::Chosen(index)) => {
+                let chosen = form.options().get(index).cloned().into_iter().collect();
+                self.answer_question(QuestionAnswer {
+                    chosen,
+                    custom: None,
+                });
+            }
+            (Some(Pending::Question { .. }), ChoiceAction::Custom(text)) => {
+                self.answer_question(QuestionAnswer {
+                    chosen: Vec::new(),
+                    custom: Some(text),
+                });
+            }
+            (Some(Pending::Question { form, .. }), ChoiceAction::Submitted { chosen, custom }) => {
+                let options = form.options();
+                let chosen = chosen
+                    .iter()
+                    .filter_map(|&index| options.get(index).cloned())
+                    .collect();
+                self.answer_question(QuestionAnswer { chosen, custom });
+            }
+            // Declining stops the run, as it does for a permission: the user
+            // takes over and says what they want in their own message.
+            (Some(Pending::Question { .. }), ChoiceAction::Cancelled) => {
+                if let Some(Pending::Question { envelope, .. }) = self.pending.take() {
+                    self.end_permission_wait();
+                    let _ = envelope.reply.send(QuestionReply::Declined);
+                }
+                self.abort();
+            }
+            // Only a question's card lets several rows be picked.
+            (_, ChoiceAction::Submitted { .. }) => {}
             (Some(Pending::Command { .. }), ChoiceAction::Chosen(index)) => {
                 let Some(Pending::Command { script, args, .. }) = self.pending.take() else {
                     return true;
@@ -3818,8 +3928,6 @@ impl AgentPanel {
             (Some(Pending::Handoff { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
-            // No card here lets several rows be picked.
-            (_, ChoiceAction::Submitted { .. }) => {}
             (None, _) => {}
         }
         true
@@ -4938,6 +5046,7 @@ fn session_model(configured: &ModelSpec, session: Option<&Session>) -> ModelSpec
 struct Spawned {
     runtime: Box<dyn Backend>,
     permission_rx: Receiver<PermissionEnvelope>,
+    question_rx: Receiver<QuestionEnvelope>,
     transcript: Transcript,
     mode: ModeHandle,
     external: bool,
@@ -4971,6 +5080,9 @@ fn spawn_runtime(
 ) -> Spawned {
     let cancel = CancelToken::new();
     let (prompter, permission_rx) = permission_channel(cancel.clone());
+    // The `question` tool asks through this; an external agent asks its own
+    // way, so its asker is dropped and nothing ever arrives.
+    let (asker, question_rx) = question_channel(cancel.clone());
     let system_prompt = if rules.mode == Mode::Plan {
         plan_prompt.apply(system_prompt)
     } else {
@@ -5059,6 +5171,7 @@ fn spawn_runtime(
                 return Spawned {
                     runtime,
                     permission_rx: external_rx,
+                    question_rx,
                     transcript,
                     mode,
                     external: true,
@@ -5082,7 +5195,8 @@ fn spawn_runtime(
     .with_compaction_prompts(compaction_prompts.clone())
     .with_goal_prompt(goal_prompt.clone())
     .with_handoff_prompt(handoff_prompt.clone())
-    .with_messages(messages);
+    .with_messages(messages)
+    .with_asker(asker);
     let mut chain = guards(checkpoints);
     chain.push(Box::new(hooks));
     let hooks: Box<dyn Hooks> = Box::new(ChainedHooks::new(chain));
@@ -5090,10 +5204,41 @@ fn spawn_runtime(
     Spawned {
         runtime: Box::new(runtime),
         permission_rx,
+        question_rx,
         transcript,
         mode,
         external: false,
     }
+}
+
+/// The card for question `index` of `envelope`: who asks and the topic in the
+/// title, with the position among several; the question itself as the
+/// detail; the choices with their descriptions, checkboxes when several can
+/// be picked; a row for an answer of the user's own, and one that declines.
+fn question_form(envelope: &QuestionEnvelope, index: usize) -> ChoiceForm {
+    let t = termide_i18n::t();
+    let question = &envelope.questions[index];
+    let mut title = t.agent_question_title().to_string();
+    if !question.header.is_empty() {
+        title.push_str(&format!(": {}", question.header));
+    }
+    if envelope.questions.len() > 1 {
+        title.push_str(&format!(" ({}/{})", index + 1, envelope.questions.len()));
+    }
+    let (labels, descriptions) = question
+        .options
+        .iter()
+        .map(|option| (option.label.clone(), option.description.clone()))
+        .unzip();
+    let mut form = ChoiceForm::new(title, labels)
+        .with_detail(&question.question)
+        .with_descriptions(descriptions)
+        .with_custom(t.agent_question_own_answer())
+        .with_cancel(t.agent_question_decline());
+    if question.multi_select {
+        form = form.with_multi(t.agent_question_submit());
+    }
+    form
 }
 
 /// A permission card's detail: what the agent wants to do and, for a
@@ -6049,7 +6194,10 @@ impl Panel for AgentPanel {
             changed = true;
         }
         if let Some((start, before)) = self.permission_wait {
-            if matches!(self.pending, Some(Pending::Permission { .. })) {
+            if matches!(
+                self.pending,
+                Some(Pending::Permission { .. } | Pending::Question { .. })
+            ) {
                 changed |= self
                     .transcript
                     .set_tool_wait(before.saturating_add(millis(start.elapsed())), true);
@@ -6063,6 +6211,7 @@ impl Panel for AgentPanel {
             changed = true;
         }
         let mut events = self.poll_permissions();
+        events.append(&mut self.poll_questions());
         events.append(&mut self.pending_events);
         changed |= self.poll_late_tools();
         changed |= self.poll_command();
@@ -8484,6 +8633,103 @@ mod tests {
             )),
             "clicking the agent field opens the agent picker, got {events:?}"
         );
+    }
+
+    fn ask_in_worker(
+        panel: &mut AgentPanel,
+        questions: Vec<termide_agent_core::Question>,
+    ) -> std::thread::JoinHandle<QuestionReply> {
+        let (asker, rx) = question_channel(CancelToken::new());
+        panel.question_rx = rx;
+        let worker = std::thread::spawn(move || asker.ask(questions));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while panel.pending.is_none() {
+            panel.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        worker
+    }
+
+    fn question(text: &str, labels: &[&str], multi_select: bool) -> termide_agent_core::Question {
+        termide_agent_core::Question {
+            header: String::new(),
+            question: text.into(),
+            options: labels
+                .iter()
+                .map(|label| termide_agent_core::QuestionOption {
+                    label: (*label).into(),
+                    description: format!("about {label}"),
+                })
+                .collect(),
+            multi_select,
+        }
+    }
+
+    #[test]
+    fn the_models_questions_are_answered_one_card_at_a_time() {
+        let mut panel = panel(vec![]);
+        let mut first = question("Which approach?", &["Channel", "Slot"], false);
+        first.header = "Approach".into();
+        let worker = ask_in_worker(
+            &mut panel,
+            vec![
+                first,
+                question("Which crates?", &["core", "ui", "app"], true),
+            ],
+        );
+        {
+            let form = panel.pending.as_ref().unwrap().form();
+            assert_eq!(form.title(), "Agent asks: Approach (1/2)");
+            assert_eq!(form.detail(), Some("Which approach?"));
+            assert_eq!(form.options(), ["Channel", "Slot"]);
+        }
+        let rows = render_text(&mut panel, 60, 16);
+        assert!(
+            rows.iter().any(|r| r.contains("1. Channel  about Channel")),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|r| r.contains("3. Type your own answer")));
+        // A single choice answers the question and brings up the next.
+        panel.handle_key(chord(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(
+            panel.pending.as_ref().unwrap().form().title(),
+            "Agent asks (2/2)"
+        );
+        // Several picks, and an answer of the user's own among them.
+        panel.handle_key(chord(KeyCode::Char('1'), KeyModifiers::NONE));
+        panel.handle_key(chord(KeyCode::Char('3'), KeyModifiers::NONE));
+        panel.handle_key(chord(KeyCode::Char('4'), KeyModifiers::NONE));
+        type_text(&mut panel, "docs");
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        let rows = render_text(&mut panel, 60, 16);
+        assert!(rows.iter().any(|r| r.contains("[✓] core")), "{rows:?}");
+        assert!(rows.iter().any(|r| r.contains("[ ] ui")), "{rows:?}");
+        panel.handle_key(chord(KeyCode::Char('5'), KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        assert_eq!(
+            worker.join().unwrap(),
+            QuestionReply::Answered(vec![
+                QuestionAnswer {
+                    chosen: vec!["Slot".into()],
+                    custom: None,
+                },
+                QuestionAnswer {
+                    chosen: vec!["core".into(), "app".into()],
+                    custom: Some("docs".into()),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn escape_declines_the_models_question() {
+        let mut panel = panel(vec![]);
+        let worker = ask_in_worker(&mut panel, vec![question("Name?", &[], false)]);
+        assert!(panel.captures_escape());
+        panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(panel.pending.is_none());
+        assert_eq!(worker.join().unwrap(), QuestionReply::Declined);
     }
 
     #[test]
