@@ -6,6 +6,11 @@
 //! typed by the user (`with_custom`), and one that cancels the whole thing
 //! (`with_cancel`), which is also what `Esc` does.
 //!
+//! With `with_multi` several options can be picked: each shows a checkbox that
+//! `Space`, `Enter` or its digit toggles, a typed answer counts as one more
+//! pick, and a confirmation row submits them all. Options can carry a dim
+//! description after their label (`with_descriptions`).
+//!
 //! For questions a panel raises on its own — an agent asking whether it may
 //! run a command — this beats an app-wide modal: with several panels open a
 //! modal does not say who is asking, a card sits in the panel that is.
@@ -33,6 +38,12 @@ pub enum ChoiceAction {
     Chosen(usize),
     /// The user typed an answer of their own and confirmed it.
     Custom(String),
+    /// A multi-select form was confirmed: the options checked, in their
+    /// order, and the answer typed, if any.
+    Submitted {
+        chosen: Vec<usize>,
+        custom: Option<String>,
+    },
     /// `Esc`, or the cancel row: the question is declined and whatever asked
     /// it should stop.
     Cancelled,
@@ -44,6 +55,7 @@ pub enum ChoiceAction {
 enum Row {
     Option(usize),
     Custom,
+    Submit,
     Cancel,
 }
 
@@ -54,6 +66,14 @@ pub struct ChoiceForm {
     detail: Option<String>,
     detail_expanded: bool,
     options: Vec<String>,
+    /// A dim note after each option's label; empty for none.
+    descriptions: Vec<String>,
+    /// Label of the confirmation row, when several options can be picked.
+    submit: Option<String>,
+    /// Which options are checked, in a multi-select form.
+    checked: Vec<bool>,
+    /// The answer typed in a multi-select form, kept as one more pick.
+    custom_answer: Option<String>,
     /// Label of the row that takes a typed answer, when offered.
     custom: Option<String>,
     /// Label of the row that cancels, when offered.
@@ -75,7 +95,11 @@ impl ChoiceForm {
             title: title.into(),
             detail: None,
             detail_expanded: false,
+            checked: vec![false; options.len()],
             options,
+            descriptions: Vec::new(),
+            submit: None,
+            custom_answer: None,
             custom: None,
             cancel: None,
             selected: 0,
@@ -92,6 +116,22 @@ impl ChoiceForm {
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         let detail = detail.into();
         self.detail = (!detail.trim().is_empty()).then_some(detail);
+        self
+    }
+
+    /// A dim note after each option's label, in the options' order; a blank
+    /// one shows nothing.
+    #[must_use]
+    pub fn with_descriptions(mut self, descriptions: Vec<String>) -> Self {
+        self.descriptions = descriptions;
+        self
+    }
+
+    /// Let several options be picked: each gets a checkbox, and a row named
+    /// `submit` confirms the picks.
+    #[must_use]
+    pub fn with_multi(mut self, submit: impl Into<String>) -> Self {
+        self.submit = Some(submit.into());
         self
     }
 
@@ -129,6 +169,12 @@ impl ChoiceForm {
         self.selected
     }
 
+    /// Whether option `index` is checked in a multi-select form.
+    #[must_use]
+    pub fn is_checked(&self, index: usize) -> bool {
+        self.checked.get(index).copied().unwrap_or(false)
+    }
+
     /// The answer being typed, while the custom row is active.
     #[must_use]
     pub fn typed(&self) -> Option<&str> {
@@ -140,6 +186,9 @@ impl ChoiceForm {
         if self.custom.is_some() {
             rows.push(Row::Custom);
         }
+        if self.submit.is_some() {
+            rows.push(Row::Submit);
+        }
         if self.cancel.is_some() {
             rows.push(Row::Cancel);
         }
@@ -147,7 +196,14 @@ impl ChoiceForm {
     }
 
     fn row_count(&self) -> usize {
-        self.options.len() + usize::from(self.custom.is_some()) + usize::from(self.cancel.is_some())
+        self.options.len()
+            + usize::from(self.custom.is_some())
+            + usize::from(self.submit.is_some())
+            + usize::from(self.cancel.is_some())
+    }
+
+    fn is_multi(&self) -> bool {
+        self.submit.is_some()
     }
 
     /// The detail wrapped to `inner` columns, folded to
@@ -191,8 +247,9 @@ impl ChoiceForm {
         self.activate(index)
     }
 
-    /// Act on the row at `index`: a fixed option is chosen, the custom row
-    /// starts typing, the cancel row cancels.
+    /// Act on the row at `index`: a fixed option is chosen (toggled in a
+    /// multi-select form), the custom row starts typing, the confirmation row
+    /// submits the picks, the cancel row cancels.
     fn activate(&mut self, index: usize) -> ChoiceAction {
         let rows = self.rows();
         let Some(row) = rows.get(index) else {
@@ -200,10 +257,32 @@ impl ChoiceForm {
         };
         self.selected = index;
         match row {
+            Row::Option(option) if self.is_multi() => {
+                self.checked[*option] = !self.checked[*option];
+                ChoiceAction::Handled
+            }
             Row::Option(option) => ChoiceAction::Chosen(*option),
             Row::Custom => {
-                self.typing = Some(TextInput::new());
+                // Editing a kept answer starts from its text.
+                let mut input = TextInput::new();
+                for c in self.custom_answer.as_deref().unwrap_or("").chars() {
+                    input.insert(c);
+                }
+                self.typing = Some(input);
                 ChoiceAction::Handled
+            }
+            Row::Submit => {
+                let chosen: Vec<usize> = (0..self.options.len())
+                    .filter(|&option| self.checked[option])
+                    .collect();
+                if chosen.is_empty() && self.custom_answer.is_none() {
+                    // Nothing picked yet: nothing to submit.
+                    return ChoiceAction::Handled;
+                }
+                ChoiceAction::Submitted {
+                    chosen,
+                    custom: self.custom_answer.clone(),
+                }
             }
             Row::Cancel => ChoiceAction::Cancelled,
         }
@@ -216,7 +295,13 @@ impl ChoiceForm {
             return match key.code {
                 KeyCode::Enter => {
                     let text = input.text().trim().to_string();
-                    if text.is_empty() {
+                    if self.submit.is_some() {
+                        // A multi-select form keeps the answer as one more
+                        // pick; an emptied one is dropped.
+                        self.typing = None;
+                        self.custom_answer = (!text.is_empty()).then_some(text);
+                        ChoiceAction::Handled
+                    } else if text.is_empty() {
                         ChoiceAction::Handled
                     } else {
                         self.typing = None;
@@ -272,6 +357,10 @@ impl ChoiceForm {
                 ChoiceAction::Handled
             }
             KeyCode::Enter if self.row_count() > 0 => self.activate(self.selected),
+            KeyCode::Char(' ') if self.is_multi() => match self.rows().get(self.selected) {
+                Some(Row::Option(_) | Row::Custom) => self.activate(self.selected),
+                _ => ChoiceAction::Handled,
+            },
             KeyCode::Char(digit @ '1'..='9') => {
                 let index = digit as usize - '1' as usize;
                 if index < self.row_count() {
@@ -391,13 +480,45 @@ impl ChoiceForm {
             let label = match row {
                 Row::Option(option) => self.options[*option].as_str(),
                 Row::Custom => self.custom.as_deref().unwrap_or(""),
+                Row::Submit => self.submit.as_deref().unwrap_or(""),
                 Row::Cancel => self.cancel.as_deref().unwrap_or(""),
             };
-            let line = match (row, &self.typing) {
-                (Row::Custom, Some(input)) => format!(" {}. {label}: {}▏", index + 1, input.text()),
-                _ => format!(" {}. {label}", index + 1),
+            // A multi-select form's picks show their checkbox before the label.
+            let checkbox = |on: bool| if on { "[✓] " } else { "[ ] " };
+            let mark = match row {
+                Row::Option(option) if self.is_multi() => checkbox(self.checked[*option]),
+                Row::Custom if self.is_multi() => checkbox(self.custom_answer.is_some()),
+                _ => "",
             };
-            buf.set_stringn(area.x + 1, y, line, inner, style);
+            let line = match (row, &self.typing, &self.custom_answer) {
+                (Row::Custom, Some(input), _) => {
+                    format!(" {}. {mark}{label}: {}▏", index + 1, input.text())
+                }
+                (Row::Custom, None, Some(kept)) => format!(" {}. {mark}{label}: {kept}", index + 1),
+                _ => format!(" {}. {mark}{label}", index + 1),
+            };
+            let used = width_of(&line).min(inner);
+            buf.set_stringn(area.x + 1, y, &line, inner, style);
+            // An option's description follows its label, dim unless the row
+            // is highlighted, cut to what is left of the line.
+            let description = match row {
+                Row::Option(option) => self.descriptions.get(*option).map(|d| d.trim()),
+                _ => None,
+            };
+            if let Some(description) = description.filter(|d| !d.is_empty()) {
+                let room = inner.saturating_sub(used + 2);
+                if room > 0 {
+                    let note = if selected && focused { style } else { dim };
+                    buf.set_stringn(area.x + 1 + used as u16, y, "  ", 2, note);
+                    buf.set_stringn(
+                        area.x + 1 + (used + 2) as u16,
+                        y,
+                        description.replace('\n', " "),
+                        room,
+                        note,
+                    );
+                }
+            }
             y += 1;
         }
         self.drawn = Some(area);
@@ -627,6 +748,90 @@ mod tests {
         form.render(area, &mut buf, &ThemeColors::default(), true);
         assert!(form.click_select(5, 4));
         assert_eq!(form.height(50), 9);
+    }
+
+    fn multi() -> ChoiceForm {
+        ChoiceForm::new(
+            "Which crates?",
+            vec!["core".into(), "ui".into(), "app".into()],
+        )
+        .with_custom("Type your own")
+        .with_multi("Done")
+    }
+
+    #[test]
+    fn a_multi_select_form_toggles_and_submits_the_picks() {
+        let mut form = multi();
+        // Nothing picked: the confirmation row does nothing.
+        assert_eq!(
+            form.handle_key(KeyEvent::from(KeyCode::Char('5'))),
+            ChoiceAction::Handled
+        );
+        // A digit, Space and Enter toggle an option instead of choosing it.
+        assert_eq!(
+            form.handle_key(KeyEvent::from(KeyCode::Char('3'))),
+            ChoiceAction::Handled
+        );
+        assert!(form.is_checked(2));
+        form.select(0);
+        form.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        form.handle_key(KeyEvent::from(KeyCode::Down));
+        form.handle_key(KeyEvent::from(KeyCode::Enter));
+        form.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(form.is_checked(0) && !form.is_checked(1) && form.is_checked(2));
+        assert_eq!(
+            form.handle_key(KeyEvent::from(KeyCode::Char('5'))),
+            ChoiceAction::Submitted {
+                chosen: vec![0, 2],
+                custom: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_multi_select_form_keeps_a_typed_answer_as_a_pick() {
+        let mut form = multi();
+        form.handle_key(KeyEvent::from(KeyCode::Char('4')));
+        for c in "docs".chars() {
+            form.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        // Enter keeps the answer rather than submitting it.
+        assert_eq!(
+            form.handle_key(KeyEvent::from(KeyCode::Enter)),
+            ChoiceAction::Handled
+        );
+        let area = Rect::new(0, 0, 40, form.height(40));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 8));
+        form.render(area, &mut buf, &ThemeColors::default(), true);
+        let row =
+            |y: u16| -> String { (0..40).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        assert!(row(1).contains("1. [ ] core"), "{}", row(1));
+        assert!(row(4).contains("4. [✓] Type your own: docs"), "{}", row(4));
+        assert!(row(5).contains("5. Done"), "{}", row(5));
+        assert_eq!(
+            form.handle_key(KeyEvent::from(KeyCode::Char('5'))),
+            ChoiceAction::Submitted {
+                chosen: vec![],
+                custom: Some("docs".into())
+            }
+        );
+    }
+
+    #[test]
+    fn a_description_follows_its_label() {
+        let mut form = ChoiceForm::new("Approach?", vec!["Channel".into(), "Slot".into()])
+            .with_descriptions(vec!["like permissions".into(), String::new()]);
+        let area = Rect::new(0, 0, 40, form.height(40));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 4));
+        form.render(area, &mut buf, &ThemeColors::default(), true);
+        let row =
+            |y: u16| -> String { (0..40).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        assert!(
+            row(1).contains("1. Channel  like permissions"),
+            "{}",
+            row(1)
+        );
+        assert!(row(2).contains("2. Slot "), "{}", row(2));
     }
 
     #[test]

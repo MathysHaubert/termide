@@ -3818,6 +3818,8 @@ impl AgentPanel {
             (Some(Pending::Handoff { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
                 self.pending = None;
             }
+            // No card here lets several rows be picked.
+            (_, ChoiceAction::Submitted { .. }) => {}
             (None, _) => {}
         }
         true
