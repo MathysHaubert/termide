@@ -354,6 +354,7 @@ progress_resume = "Tiếp tục"
 progress_scanning = "Đang quét..."
 progress_suspend = "Tạm ngưng"
 status_config_saved = "Cấu hình đã lưu và áp dụng"
+status_file_reloaded = "Đã tải lại tệp từ đĩa"
 tools_diagnostics = "Chẩn đoán"
 tools_operations = "Thao tác"
 tools_outline = "Dàn bài"
@@ -572,7 +573,6 @@ status_error_open_file = "Lỗi mở '{name}': {error}"
 status_error_reload = "Lỗi tải lại: {error}"
 status_error_save = "Lỗi lưu: {error}"
 status_file_created = "Đã tạo tệp '{name}'"
-status_file_reloaded = "Đã tải lại tệp từ đĩa"
 status_file_saved = "Đã lưu tệp '{name}'"
 status_diagram_copied = "Đã sao chép sơ đồ vào bảng tạm ({lines} dòng)"
 status_opening_external = "Đang mở '{name}' bằng trình xem hệ thống..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "mục", other = "mục" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

@@ -6,11 +6,47 @@ use std::collections::HashMap;
 /// For non-English languages, also loads the English dictionary as a fallback
 /// so that missing keys degrade to English rather than rendering as empty.
 pub struct RuntimeTranslation {
+    plural_category: fn(usize) -> PluralCategory,
     strings: HashMap<String, String>,
     formats: HashMap<String, String>,
     plurals: HashMap<String, loader::PluralRules>,
     fallback_strings: HashMap<String, String>,
     fallback_formats: HashMap<String, String>,
+}
+
+/// The form of a counted word, as CLDR names them; only the ones the
+/// dictionaries spell out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluralCategory {
+    One,
+    Few,
+    Other,
+}
+
+/// How `lang` picks the form of a counted word.
+fn plural_category_for(lang: &str) -> fn(usize) -> PluralCategory {
+    match lang {
+        "ru" => east_slavic_plural,
+        _ => one_other_plural,
+    }
+}
+
+/// 1 → one, anything else → other: English and most languages here.
+fn one_other_plural(count: usize) -> PluralCategory {
+    if count == 1 {
+        PluralCategory::One
+    } else {
+        PluralCategory::Other
+    }
+}
+
+/// Russian: 1, 21, 31… → one; 2–4, 22–24… → few; 5–20, 25–30… → other.
+fn east_slavic_plural(count: usize) -> PluralCategory {
+    match (count % 10, count % 100) {
+        (1, n) if n != 11 => PluralCategory::One,
+        (2..=4, n) if !(12..=14).contains(&n) => PluralCategory::Few,
+        _ => PluralCategory::Other,
+    }
 }
 
 impl RuntimeTranslation {
@@ -23,6 +59,7 @@ impl RuntimeTranslation {
             (en.strings, en.formats)
         };
         Ok(Self {
+            plural_category: plural_category_for(lang),
             strings: data.strings,
             formats: data.formats,
             plurals: data.plurals,
@@ -84,10 +121,10 @@ macro_rules! i18n_get_string_methods {
 impl Translation for RuntimeTranslation {
     fn pluralize(&self, count: usize, key: &str) -> &str {
         if let Some(rules) = self.plurals.get(key) {
-            match count {
-                1 => &rules.one,
-                2..=4 if rules.few.is_some() => rules.few.as_deref().unwrap_or(&rules.other),
-                _ => &rules.other,
+            match (self.plural_category)(count) {
+                PluralCategory::One => &rules.one,
+                PluralCategory::Few => rules.few.as_deref().unwrap_or(&rules.other),
+                PluralCategory::Other => &rules.other,
             }
         } else if count == 1 {
             ""
@@ -1112,7 +1149,7 @@ impl Translation for RuntimeTranslation {
     }
 
     fn editor_deletion_marker(&self, count: usize) -> String {
-        let plural = self.pluralize(count, "file");
+        let plural = self.pluralize(count, "line");
         self.format(
             "editor_deletion_marker",
             &[("count", &count.to_string()), ("plural", plural)],
@@ -1236,7 +1273,7 @@ impl Translation for RuntimeTranslation {
     }
 
     fn git_init_success(&self, path: &str) -> String {
-        self.get_string("git_init_success").replace("{path}", path)
+        self.format("git_init_success", &[("path", path)])
     }
     fn agent_thought_chars(&self, count: usize) -> String {
         self.format("agent_thought_chars", &[("count", &count.to_string())])
@@ -1255,10 +1292,14 @@ impl Translation for RuntimeTranslation {
     }
 
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {
-        self.get_string("git_commit_title")
-            .replace("{count}", &count.to_string())
-            .replace("{repo}", repo)
-            .replace("{branch}", branch)
+        self.format(
+            "git_commit_title",
+            &[
+                ("count", &count.to_string()),
+                ("repo", repo),
+                ("branch", branch),
+            ],
+        )
     }
 
     fn git_status_added(&self) -> String {
@@ -1617,6 +1658,119 @@ impl Translation for RuntimeTranslation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The keys this file reads through `get_string` and `format`, taken
+    /// from its own source (the part above the tests).
+    fn keys_read_by_source() -> (Vec<String>, Vec<String>) {
+        let source = include_str!("runtime.rs");
+        let source = &source[..source.find("#[cfg(test)]").unwrap()];
+        let literals_after = |call: &str| -> Vec<String> {
+            source
+                .match_indices(call)
+                .filter_map(|(at, _)| {
+                    let rest = source[at + call.len()..].trim_start().strip_prefix('"')?;
+                    Some(rest[..rest.find('"')?].to_string())
+                })
+                .collect()
+        };
+        let mut strings = literals_after("self.get_string(");
+        let generated = source
+            .split_once("i18n_get_string_methods! {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .unwrap()
+            .0;
+        strings.extend(
+            generated
+                .lines()
+                .map(|line| line.split("//").next().unwrap())
+                .flat_map(|line| line.split(','))
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+        );
+        (strings, literals_after("self.format("))
+    }
+
+    /// A key read with `get_string` but kept in `[formats]` (or the other
+    /// way round) comes out empty in every language.
+    #[test]
+    fn every_key_read_is_in_the_section_it_is_read_from() {
+        let en = loader::load_language("en").unwrap();
+        let (strings, formats) = keys_read_by_source();
+        assert!(strings.len() > 300 && formats.len() > 100);
+        let misplaced: Vec<_> = strings
+            .iter()
+            .filter(|key| !en.strings.contains_key(*key))
+            .chain(formats.iter().filter(|key| !en.formats.contains_key(*key)))
+            .collect();
+        assert!(misplaced.is_empty(), "not in their section: {misplaced:?}");
+    }
+
+    /// The `{name}`s of a template.
+    fn placeholders(template: &str) -> std::collections::BTreeSet<&str> {
+        template
+            .split('{')
+            .skip(1)
+            .filter_map(|part| part.split_once('}').map(|(name, _)| name))
+            .collect()
+    }
+
+    /// A translation may leave out a placeholder (`{plural}` in a language
+    /// without inflection) but not name one the code never fills.
+    #[test]
+    fn translations_use_only_the_placeholders_english_has() {
+        let en = loader::load_language("en").unwrap();
+        for (lang, _) in crate::SUPPORTED_LANGUAGES {
+            let data = loader::load_language(lang).unwrap();
+            for (key, template) in data.formats.iter().chain(&data.strings) {
+                let Some(english) = en.formats.get(key).or_else(|| en.strings.get(key)) else {
+                    panic!("{lang}: {key} is not in en.toml");
+                };
+                let extra: Vec<_> = placeholders(template)
+                    .difference(&placeholders(english))
+                    .copied()
+                    .collect();
+                assert!(extra.is_empty(), "{lang}: {key} has {extra:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_language_has_the_same_plural_words() {
+        let en = loader::load_language("en").unwrap();
+        let mut words: Vec<_> = en.plurals.keys().collect();
+        words.sort();
+        for (lang, _) in crate::SUPPORTED_LANGUAGES {
+            let data = loader::load_language(lang).unwrap();
+            let mut theirs: Vec<_> = data.plurals.keys().collect();
+            theirs.sort();
+            assert_eq!(theirs, words, "{lang}");
+        }
+    }
+
+    #[test]
+    fn russian_counts_take_the_form_their_last_digits_ask_for() {
+        let t = RuntimeTranslation::new("ru").unwrap();
+        let file = |n| format!("{n} файл{}", t.pluralize(n, "file"));
+        assert_eq!(file(1), "1 файл");
+        assert_eq!(file(3), "3 файла");
+        assert_eq!(file(5), "5 файлов");
+        assert_eq!(file(11), "11 файлов");
+        assert_eq!(file(13), "13 файлов");
+        assert_eq!(file(21), "21 файл");
+        assert_eq!(file(22), "22 файла");
+        assert_eq!(file(111), "111 файлов");
+        assert_eq!(file(0), "0 файлов");
+    }
+
+    #[test]
+    fn deleted_lines_are_counted_as_lines() {
+        let de = RuntimeTranslation::new("de").unwrap();
+        assert_eq!(de.editor_deletion_marker(1), "1 Zeile gelöscht");
+        assert_eq!(de.editor_deletion_marker(3), "3 Zeilen gelöscht");
+        let en = RuntimeTranslation::new("en").unwrap();
+        assert_eq!(en.editor_deletion_marker(2), "2 lines deleted");
+    }
 
     /// Format keys must live in the TOML `[formats]` section (not `[strings]`),
     /// otherwise `format()` can't find them and returns an empty string. Guard

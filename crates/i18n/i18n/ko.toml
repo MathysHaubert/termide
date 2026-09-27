@@ -353,6 +353,7 @@ progress_resume = "재개"
 progress_scanning = "스캔 중..."
 progress_suspend = "중지"
 status_config_saved = "설정이 저장되고 적용되었습니다"
+status_file_reloaded = "디스크에서 파일 다시 불러옴"
 tools_diagnostics = "진단"
 tools_operations = "작업"
 tools_outline = "개요"
@@ -572,7 +573,6 @@ status_error_open_file = "'{name}' 열기 오류: {error}"
 status_error_reload = "다시 불러오기 오류: {error}"
 status_error_save = "저장 오류: {error}"
 status_file_created = "파일 '{name}' 생성됨"
-status_file_reloaded = "디스크에서 파일 다시 불러옴"
 status_file_saved = "파일 '{name}' 저장됨"
 status_diagram_copied = "다이어그램을 클립보드에 복사했습니다 ({lines}줄)"
 status_opening_external = "시스템 뷰어로 '{name}' 여는 중..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "항목", other = "항목" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

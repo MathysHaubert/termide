@@ -589,6 +589,7 @@ conflict_overwrite_all = "Overwrite All"
 conflict_skip_all = "Skip All"
 conflict_rename_all = "Rename All"
 status_config_saved = "Config saved and applied"
+status_file_reloaded = "File reloaded from disk"
 modal_confirm_title = "Confirm"
 modal_error_title = "Error"
 op_type_copy_upload = "Copy (upload)"
@@ -793,7 +794,6 @@ status_error_open_file = "Error opening '{name}': {error}"
 status_error_reload = "Reload error: {error}"
 status_error_save = "Save error: {error}"
 status_file_created = "File '{name}' created"
-status_file_reloaded = "File reloaded from disk"
 status_file_saved = "File '{name}' saved"
 status_diagram_copied = "Copied diagram to clipboard ({lines} lines)"
 status_opening_external = "Opening '{name}' with system viewer..."
@@ -895,6 +895,7 @@ day = { one = "", other = "s" }
 element = { one = "element", other = "elements" }
 file = { one = "", other = "s" }
 hour = { one = "", other = "s" }
+line = { one = "", other = "s" }
 minute = { one = "", other = "s" }
 month = { one = "", other = "s" }
 week = { one = "", other = "s" }

@@ -589,6 +589,7 @@ conflict_overwrite_all = "Заменить все"
 conflict_skip_all = "Пропустить все"
 conflict_rename_all = "Переименовать все"
 status_config_saved = "Настройки сохранены и применены"
+status_file_reloaded = "Файл перезагружен с диска"
 modal_confirm_title = "Подтверждение"
 modal_error_title = "Ошибка"
 op_type_copy_upload = "Копирование (выгрузка)"
@@ -759,7 +760,7 @@ replace_confirm_fmt = "Заменить {count} вхождений в {files} ф
 replace_selection_fmt = "{selected}/{total} файлов · {matches} замен"
 batch_result_errors_fmt = "ошибок: {count}"
 batch_result_skipped_fmt = "пропущено: {count}"
-editor_deletion_marker = "{count} строк{plural} удалено"
+editor_deletion_marker = "удалено строк: {count}"
 editor_file_opened = "Файл '{filename}' открыт"
 editor_search_match_info = "Совпадение {current}/{total}"
 git_commit_title = "Коммит {count} файлов в {repo} ({branch})"
@@ -793,7 +794,6 @@ status_error_open_file = "Ошибка открытия '{name}': {error}"
 status_error_reload = "Ошибка перезагрузки: {error}"
 status_error_save = "Ошибка сохранения: {error}"
 status_file_created = "Файл '{name}' создан"
-status_file_reloaded = "Файл перезагружен с диска"
 status_file_saved = "Файл '{name}' сохранён"
 status_diagram_copied = "Диаграмма скопирована в буфер ({lines} строк)"
 status_opening_external = "Открытие '{name}' системным просмотрщиком..."
@@ -868,7 +868,7 @@ agent_notice_retry_fmt = "повтор {attempt}/{max} через {delay_ms} м�
 agent_notice_compacted_fmt = "сжато {tokens} токенов, оставлено последних сообщений: {kept}"
 agent_notice_handoff_written_fmt = "бриф передачи записан в {path}"
 agent_notice_no_command_fmt = "нет команды с именем {name}; доступны: {available}"
-agent_notice_slash_shadowed_fmt = "/{name} запускает {runs} и скрывает одноимённый {hidden}"
+agent_notice_slash_shadowed_fmt = "/{name} запускает {runs} и скрывает {hidden} с тем же именем"
 agent_notice_slash_skill_hint_fmt = "скилл вызывается как /skill:{name}"
 agent_notice_loop_stopped_max_fmt = "цикл остановлен после {count} итераций"
 agent_notice_goal_stopped_max_fmt = "цель остановлена после {count} ходов"
@@ -876,8 +876,8 @@ agent_notice_goal_working_fmt = "работаю к цели — /goal stop дл�
 agent_notice_looping_every_fmt = "цикл каждые {interval} — /loop stop для завершения"
 agent_notice_goal_reached_reason_fmt = "цель достигнута: {reason}"
 agent_notice_command_denied_fmt = "/{name} запрещена правилами разрешений"
-agent_notice_rolled_back_fmt = "откат: восстановлено файл{plural}: {count}, разговор отмотан"
-agent_notice_undid_fmt = "последний запрос отменён: восстановлено файл{plural}: {count}, разговор отмотан"
+agent_notice_rolled_back_fmt = "откат: восстановлено файлов: {count}, разговор отмотан"
+agent_notice_undid_fmt = "последний запрос отменён: восстановлено файлов: {count}, разговор отмотан"
 db_status_connecting_fmt = "{label}: подключение…"
 db_status_failed_fmt = "{label}: {error}"
 db_rows_range_fmt = "строки {start}–{end}"
@@ -899,6 +899,8 @@ element = { one = "элемент", few = "элемента", other = "элем�
 file = { one = "", few = "а", other = "ов" }
 # 1 час, 2-4 часа, 5+ часов
 hour = { one = "час", few = "часа", other = "часов" }
+# 1 строка, 2-4 строки, 5+ строк
+line = { one = "а", few = "и", other = "" }
 # 1 минута, 2-4 минуты, 5+ минут
 minute = { one = "минуту", few = "минуты", other = "минут" }
 # 1 месяц, 2-4 месяца, 5+ месяцев

@@ -354,6 +354,7 @@ progress_resume = "Devam Et"
 progress_scanning = "Taranıyor..."
 progress_suspend = "Askıya Al"
 status_config_saved = "Yapılandırma kaydedildi ve uygulandı"
+status_file_reloaded = "Dosya diskten yeniden yüklendi"
 tools_diagnostics = "Tanılama"
 tools_operations = "İşlemler"
 tools_outline = "Taslak"
@@ -572,7 +573,6 @@ status_error_open_file = "'{name}' açma hatası: {error}"
 status_error_reload = "Yeniden yükleme hatası: {error}"
 status_error_save = "Kaydetme hatası: {error}"
 status_file_created = "Dosya '{name}' oluşturuldu"
-status_file_reloaded = "Dosya diskten yeniden yüklendi"
 status_file_saved = "Dosya '{name}' kaydedildi"
 status_diagram_copied = "Diyagram panoya kopyalandı ({lines} satır)"
 status_opening_external = "Sistem görüntüleyicisiyle '{name}' açılıyor..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "öğe", other = "öğe" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

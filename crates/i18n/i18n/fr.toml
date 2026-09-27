@@ -353,6 +353,7 @@ progress_resume = "Reprendre"
 progress_scanning = "Analyse..."
 progress_suspend = "Suspendre"
 status_config_saved = "Configuration sauvegardée et appliquée"
+status_file_reloaded = "Fichier rechargé depuis le disque"
 tools_diagnostics = "Diagnostics"
 tools_operations = "Opérations"
 tools_outline = "Plan"
@@ -574,7 +575,6 @@ status_error_open_file = "Erreur d'ouverture de '{name}': {error}"
 status_error_reload = "Erreur de rechargement: {error}"
 status_error_save = "Erreur d'enregistrement: {error}"
 status_file_created = "Fichier '{name}' créé"
-status_file_reloaded = "Fichier rechargé depuis le disque"
 status_file_saved = "Fichier '{name}' enregistré"
 status_diagram_copied = "Diagramme copié dans le presse-papiers ({lines} lignes)"
 status_opening_external = "Ouverture de '{name}' avec le visualiseur système..."
@@ -631,6 +631,7 @@ day = { one = "", other = "s" }
 element = { one = "élément", other = "éléments" }
 file = { one = "", other = "s" }
 hour = { one = "", other = "s" }
+line = { one = "", other = "s" }
 minute = { one = "", other = "s" }
 month = { one = "", other = "" }
 week = { one = "", other = "s" }

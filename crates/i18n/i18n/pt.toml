@@ -354,6 +354,7 @@ progress_resume = "Retomar"
 progress_scanning = "Escaneando..."
 progress_suspend = "Suspender"
 status_config_saved = "Configuração salva e aplicada"
+status_file_reloaded = "Arquivo recarregado do disco"
 tools_diagnostics = "Diagnósticos"
 tools_operations = "Operações"
 tools_outline = "Contorno"
@@ -574,7 +575,6 @@ status_error_open_file = "Erro ao abrir '{name}': {error}"
 status_error_reload = "Erro ao recarregar: {error}"
 status_error_save = "Erro ao salvar: {error}"
 status_file_created = "Arquivo '{name}' criado"
-status_file_reloaded = "Arquivo recarregado do disco"
 status_file_saved = "Arquivo '{name}' salvo"
 status_diagram_copied = "Diagrama copiado para a área de transferência ({lines} linhas)"
 status_opening_external = "Abrindo '{name}' com visualizador do sistema..."
@@ -631,6 +631,7 @@ day = { one = "", other = "s" }
 element = { one = "item", other = "itens" }
 file = { one = "", other = "s" }
 hour = { one = "", other = "s" }
+line = { one = "", other = "s" }
 minute = { one = "", other = "s" }
 month = { one = "mês", other = "meses" }
 week = { one = "", other = "s" }

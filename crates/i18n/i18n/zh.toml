@@ -365,6 +365,7 @@ progress_resume = "继续"
 progress_scanning = "扫描中..."
 progress_suspend = "挂起"
 status_config_saved = "配置已保存并应用"
+status_file_reloaded = "文件已从磁盘重新加载"
 tools_diagnostics = "诊断"
 tools_operations = "操作"
 tools_outline = "大纲"
@@ -756,7 +757,6 @@ status_error_open_file = "打开 '{name}' 错误：{error}"
 status_error_reload = "重新加载错误：{error}"
 status_error_save = "保存错误：{error}"
 status_file_created = "文件 '{name}' 已创建"
-status_file_reloaded = "文件已从磁盘重新加载"
 status_file_saved = "文件 '{name}' 已保存"
 status_diagram_copied = "已复制图表到剪贴板（{lines} 行）"
 status_opening_external = "正在使用系统查看器打开 '{name}'..."
@@ -857,6 +857,7 @@ day = { one = "", other = "" }
 element = { one = "项目", other = "项目" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

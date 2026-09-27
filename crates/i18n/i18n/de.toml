@@ -354,6 +354,7 @@ progress_resume = "Fortsetzen"
 progress_scanning = "Scannen..."
 progress_suspend = "Anhalten"
 status_config_saved = "Konfiguration gespeichert und angewendet"
+status_file_reloaded = "Datei von Festplatte neu geladen"
 tools_diagnostics = "Diagnose"
 tools_operations = "Operationen"
 tools_outline = "Gliederung"
@@ -575,7 +576,6 @@ status_error_open_file = "Fehler beim Öffnen von '{name}': {error}"
 status_error_reload = "Fehler beim Neuladen: {error}"
 status_error_save = "Fehler beim Speichern: {error}"
 status_file_created = "Datei '{name}' erstellt"
-status_file_reloaded = "Datei von Festplatte neu geladen"
 status_file_saved = "Datei '{name}' gespeichert"
 status_diagram_copied = "Diagramm in die Zwischenablage kopiert ({lines} Zeilen)"
 status_opening_external = "'{name}' mit Systembetrachter öffnen..."
@@ -632,6 +632,7 @@ day = { one = "", other = "en" }
 element = { one = "Element", other = "Elemente" }
 file = { one = "", other = "en" }
 hour = { one = "", other = "n" }
+line = { one = "", other = "n" }
 minute = { one = "", other = "n" }
 month = { one = "", other = "en" }
 week = { one = "", other = "n" }

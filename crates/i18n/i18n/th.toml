@@ -354,6 +354,7 @@ progress_resume = "ดำเนินการต่อ"
 progress_scanning = "กำลังสแกน..."
 progress_suspend = "ระงับ"
 status_config_saved = "บันทึกและใช้งานการตั้งค่าแล้ว"
+status_file_reloaded = "โหลดไฟล์จากดิสก์ใหม่แล้ว"
 tools_diagnostics = "การวินิจฉัย"
 tools_operations = "การดำเนินการ"
 tools_outline = "โครงร่าง"
@@ -574,7 +575,6 @@ status_error_open_file = "ข้อผิดพลาดในการเปิ
 status_error_reload = "ข้อผิดพลาดในการโหลดใหม่: {error}"
 status_error_save = "ข้อผิดพลาดในการบันทึก: {error}"
 status_file_created = "สร้างไฟล์ '{name}' แล้ว"
-status_file_reloaded = "โหลดไฟล์จากดิสก์ใหม่แล้ว"
 status_file_saved = "บันทึกไฟล์ '{name}' แล้ว"
 status_diagram_copied = "คัดลอกไดอะแกรมไปยังคลิปบอร์ดแล้ว ({lines} บรรทัด)"
 status_opening_external = "กำลังเปิด '{name}' ด้วยโปรแกรมดูของระบบ..."
@@ -632,6 +632,7 @@ day = { one = "", other = "" }
 element = { one = "รายการ", other = "รายการ" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

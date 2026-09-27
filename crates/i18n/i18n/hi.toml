@@ -354,6 +354,7 @@ progress_resume = "जारी रखें"
 progress_scanning = "स्कैन हो रहा है..."
 progress_suspend = "निलंबित करें"
 status_config_saved = "कॉन्फ़िग सहेजा और लागू किया गया"
+status_file_reloaded = "फ़ाइल डिस्क से पुनः लोड की गई"
 tools_diagnostics = "डायग्नोस्टिक्स"
 tools_operations = "संक्रियाएं"
 tools_outline = "रूपरेखा"
@@ -574,7 +575,6 @@ status_error_open_file = "'{name}' खोलने में त्रुटि:
 status_error_reload = "पुनः लोड करने में त्रुटि: {error}"
 status_error_save = "सहेजने में त्रुटि: {error}"
 status_file_created = "फ़ाइल '{name}' बनाई गई"
-status_file_reloaded = "फ़ाइल डिस्क से पुनः लोड की गई"
 status_file_saved = "फ़ाइल '{name}' सहेजी गई"
 status_diagram_copied = "आरेख क्लिपबोर्ड पर कॉपी किया गया ({lines} पंक्तियाँ)"
 status_opening_external = "'{name}' को सिस्टम व्यूअर से खोल रहा है..."
@@ -632,6 +632,7 @@ day = { one = "", other = "" }
 element = { one = "आइटम", other = "आइटम" }
 file = { one = "", other = "ें" }
 hour = { one = "", other = "" }
+line = { one = "", other = "याँ" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

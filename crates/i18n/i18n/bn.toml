@@ -354,6 +354,7 @@ progress_resume = "পুনরায় শুরু"
 progress_scanning = "স্ক্যান হচ্ছে..."
 progress_suspend = "স্থগিত"
 status_config_saved = "কনফিগ সংরক্ষিত ও প্রয়োগ করা হয়েছে"
+status_file_reloaded = "ফাইল ডিস্ক থেকে পুনরায় লোড হয়েছে"
 tools_diagnostics = "ডায়াগনস্টিকস"
 tools_operations = "কার্যক্রম"
 tools_outline = "আউটলাইন"
@@ -572,7 +573,6 @@ status_error_open_file = "'{name}' খুলতে ত্রুটি: {error}"
 status_error_reload = "পুনরায় লোড ত্রুটি: {error}"
 status_error_save = "সংরক্ষণ ত্রুটি: {error}"
 status_file_created = "ফাইল '{name}' তৈরি হয়েছে"
-status_file_reloaded = "ফাইল ডিস্ক থেকে পুনরায় লোড হয়েছে"
 status_file_saved = "ফাইল '{name}' সংরক্ষিত"
 status_diagram_copied = "ডায়াগ্রাম ক্লিপবোর্ডে কপি হয়েছে ({lines} লাইন)"
 status_opening_external = "সিস্টেম ভিউয়ার দিয়ে '{name}' খোলা হচ্ছে..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "আইটেম", other = "আইটেম" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

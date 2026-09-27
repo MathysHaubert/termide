@@ -354,6 +354,7 @@ progress_resume = "Lanjutkan"
 progress_scanning = "Memindai..."
 progress_suspend = "Tangguhkan"
 status_config_saved = "Konfigurasi disimpan dan diterapkan"
+status_file_reloaded = "File dimuat ulang dari disk"
 tools_diagnostics = "Diagnostik"
 tools_operations = "Operasi"
 tools_outline = "Outline"
@@ -572,7 +573,6 @@ status_error_open_file = "Kesalahan membuka '{name}': {error}"
 status_error_reload = "Kesalahan muat ulang: {error}"
 status_error_save = "Kesalahan simpan: {error}"
 status_file_created = "File '{name}' dibuat"
-status_file_reloaded = "File dimuat ulang dari disk"
 status_file_saved = "File '{name}' disimpan"
 status_diagram_copied = "Diagram disalin ke papan klip ({lines} baris)"
 status_opening_external = "Membuka '{name}' dengan penampil sistem..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "elemen", other = "elemen" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }

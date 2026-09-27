@@ -353,6 +353,7 @@ progress_resume = "再開"
 progress_scanning = "スキャン中..."
 progress_suspend = "中断"
 status_config_saved = "設定を保存して適用しました"
+status_file_reloaded = "ファイルをディスクから再読み込み"
 tools_diagnostics = "診断"
 tools_operations = "操作"
 tools_outline = "アウトライン"
@@ -572,7 +573,6 @@ status_error_open_file = "'{name}' を開くエラー: {error}"
 status_error_reload = "再読み込みエラー: {error}"
 status_error_save = "保存エラー: {error}"
 status_file_created = "ファイル '{name}' 作成"
-status_file_reloaded = "ファイルをディスクから再読み込み"
 status_file_saved = "ファイル '{name}' 保存"
 status_diagram_copied = "図をクリップボードにコピーしました（{lines} 行）"
 status_opening_external = "システムビューアで '{name}' を開いています..."
@@ -631,6 +631,7 @@ day = { one = "", other = "" }
 element = { one = "アイテム", other = "アイテム" }
 file = { one = "", other = "" }
 hour = { one = "", other = "" }
+line = { one = "", other = "" }
 minute = { one = "", other = "" }
 month = { one = "", other = "" }
 week = { one = "", other = "" }
