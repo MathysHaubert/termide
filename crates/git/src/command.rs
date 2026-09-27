@@ -9,7 +9,7 @@ use std::process::{Command, Output, Stdio};
 /// controlling terminal: git's interactive credential prompt is disabled and
 /// stdin is detached. Used for local, non-network git invocations (status, log,
 /// diff, blame, …).
-fn hardened_git(dir: &Path, args: &[&str]) -> Command {
+pub(crate) fn hardened_git(dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.args(args)
         .current_dir(dir)

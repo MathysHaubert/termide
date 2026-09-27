@@ -22,3 +22,6 @@ termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }
 termide-clipboard = { path = "../clipboard" }
 termide-ui-render = { path = "../ui-render" }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -77,12 +77,19 @@ impl GitLogPanel {
         self.scroll = 0;
     }
 
-    /// Go to last commit
+    /// Go to last commit; while history remains unread, keep reading and
+    /// keep the selection on the last row until it ends.
     pub(crate) fn go_to_end(&mut self) {
+        self.follow_end = self.has_more();
         if !self.commits.is_empty() {
             self.selected = self.commits.len() - 1;
             self.ensure_visible();
         }
+    }
+
+    /// Rows of commits the panel shows, below its selectors.
+    pub(crate) fn visible_rows(&self) -> usize {
+        (self.last_area.height.saturating_sub(2) as usize).max(1)
     }
 
     /// Ensure selected item is visible

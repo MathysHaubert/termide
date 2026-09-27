@@ -7,7 +7,7 @@ mod refresh;
 mod rendering;
 mod selection;
 
-use refresh::GitLogRefreshResult;
+use refresh::{GitLogRefreshResult, LogView, Reload};
 
 use std::any::Any;
 use std::collections::HashSet;
@@ -21,7 +21,7 @@ use termide_core::{
     CommandResult, HotkeyTable, Panel, PanelCommand, PanelEvent, PanelState, RenderContext,
     ThemeColors, WidthPreference,
 };
-use termide_git::{self as git, CommitInfo, RepoManager};
+use termide_git::{self as git, CommitInfo, LogStream, RepoManager};
 use termide_modal::ActiveModal;
 use termide_state::PendingAction;
 use termide_theme::Theme;
@@ -68,14 +68,33 @@ pub struct GitLogPanel {
     repo_selector_area: Option<Rect>,
     /// Cached area of the branch selector widget
     branch_selector_area: Option<Rect>,
-    /// Commit log entries
+    /// Commit log rows read so far: commits and a graph's connector rows
     commits: Vec<CommitInfo>,
     /// Currently selected commit index
     selected: usize,
     /// Scroll offset
     scroll: usize,
-    /// Number of commits to load
-    commit_count: usize,
+    /// The running `git log` the rows come from, read as far as the view needs
+    log: Option<LogStream>,
+    /// What `log` shows, so a refresh of the same view keeps its place
+    log_view: Option<LogView>,
+    /// A restart of the shown view waiting for its first rows
+    reload: Option<Reload>,
+    /// A request to `log` is in flight
+    log_waiting: bool,
+    /// `log` has no more history
+    log_done: bool,
+    /// Commits in the whole history, once counted
+    total_commits: Option<usize>,
+    /// Commits among `commits`
+    loaded_commits: usize,
+    /// Widest box-drawing graph among `commits`, which the text lines up after
+    graph_width: usize,
+    /// `End` was pressed while history remained: keep reading and keep the
+    /// selection on the last row
+    follow_end: bool,
+    /// A thumb drag went past the rows read: scroll there once they are in
+    scroll_target: Option<usize>,
     /// Cached theme colors
     cached_theme: ThemeColors,
     /// Last render area
@@ -153,7 +172,16 @@ impl GitLogPanel {
             commits: Vec::new(),
             selected: 0,
             scroll: 0,
-            commit_count: 100,
+            log: None,
+            log_view: None,
+            reload: None,
+            log_waiting: false,
+            log_done: false,
+            total_commits: None,
+            loaded_commits: 0,
+            graph_width: 0,
+            follow_end: false,
+            scroll_target: None,
             cached_theme: ThemeColors::default(),
             last_area: Rect::default(),
             status_message: None,
@@ -314,16 +342,23 @@ impl Panel for GitLogPanel {
             }
             PanelCommand::GetScrollBars => CommandResult::ScrollBars(self.scrollbars),
             PanelCommand::SetScrollOffset { offset, .. } => {
-                self.scroll = offset;
+                self.follow_end = false;
+                // The scrollbar spans history not read yet; dragged past the
+                // rows read, the view waits at their end until the rest is in.
+                let visible = self.scrollbars.vertical.map_or(1, |bar| bar.visible).max(1);
+                let reachable = self.commits.len().saturating_sub(visible);
+                self.scroll_target = (offset > reachable && self.has_more()).then_some(offset);
+                self.scroll = offset.min(reachable);
                 // The wheel moves the selection here and lets `ensure_visible`
                 // drag the window along; a thumb drag moves the window, so pull
                 // the selection into it — otherwise the highlight sits off
                 // screen and the next arrow key jumps back.
-                let visible = self.scrollbars.vertical.map_or(1, |bar| bar.visible).max(1);
+                let offset = self.scroll;
                 let last = self.commits.len().saturating_sub(1);
                 let low = offset.min(last);
                 let high = (offset + visible - 1).min(last);
                 self.selected = self.selected.clamp(low, high);
+                self.ensure_loaded();
                 CommandResult::NeedsRedraw(true)
             }
             PanelCommand::Copy => {
@@ -366,6 +401,9 @@ impl Panel for GitLogPanel {
         if self.poll_refresh() {
             events.push(PanelEvent::NeedsRedraw);
         }
+        if self.poll_log() {
+            events.push(PanelEvent::NeedsRedraw);
+        }
         events
     }
 
@@ -373,7 +411,48 @@ impl Panel for GitLogPanel {
         let key = chord.raw;
         // Clear status message on any key
         self.status_message = None;
+        // Any key but `End` itself stops reading to the end.
+        self.follow_end = false;
+        let events = self.handle_key_inner(key);
+        self.ensure_loaded();
+        events
+    }
 
+    fn handle_mouse(&mut self, event: MouseEvent, panel_area: Rect) -> Vec<PanelEvent> {
+        self.follow_end = false;
+        let events = self.handle_mouse_inner(event, panel_area);
+        self.ensure_loaded();
+        events
+    }
+
+    fn handle_scroll(&mut self, delta: i32, panel_area: Rect) -> Vec<PanelEvent> {
+        self.follow_end = false;
+        let events = self.handle_scroll_inner(delta, panel_area);
+        self.ensure_loaded();
+        events
+    }
+
+    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+        self.repo_manager.current().map(|repo| PanelState::GitLog {
+            repo_path: repo.to_path_buf(),
+        })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn get_working_directory(&self) -> Option<PathBuf> {
+        self.repo_manager.current().map(|p| p.to_path_buf())
+    }
+}
+
+impl GitLogPanel {
+    fn handle_key_inner(&mut self, key: crossterm::event::KeyEvent) -> Vec<PanelEvent> {
         let page_size = self.last_area.height.saturating_sub(4) as usize;
 
         // Escape closes any open dropdown
@@ -536,7 +615,7 @@ impl Panel for GitLogPanel {
         vec![]
     }
 
-    fn handle_mouse(&mut self, event: MouseEvent, _panel_area: Rect) -> Vec<PanelEvent> {
+    fn handle_mouse_inner(&mut self, event: MouseEvent, _panel_area: Rect) -> Vec<PanelEvent> {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let col = event.column;
@@ -666,7 +745,7 @@ impl Panel for GitLogPanel {
         vec![]
     }
 
-    fn handle_scroll(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
+    fn handle_scroll_inner(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
         let lines = delta.unsigned_abs() as usize;
         // While a selector dropdown is open, the wheel scrolls it, not commits.
         if self.repo_dropdown_open || self.branch_dropdown_open {
@@ -687,23 +766,5 @@ impl Panel for GitLogPanel {
         }
         self.ensure_visible();
         vec![]
-    }
-
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
-        self.repo_manager.current().map(|repo| PanelState::GitLog {
-            repo_path: repo.to_path_buf(),
-        })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn get_working_directory(&self) -> Option<PathBuf> {
-        self.repo_manager.current().map(|p| p.to_path_buf())
     }
 }

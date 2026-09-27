@@ -657,6 +657,7 @@ impl Translation for RuntimeTranslation {
         git_unstage_all_btn,
         git_revert_all_btn,
         git_log_btn,
+        git_log_loading,
         git_checkout_btn,
         git_revert_all_confirm,
         git_checkout_not_impl,

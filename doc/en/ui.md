@@ -154,6 +154,14 @@ instead, set it in `config.toml`:
 unicode_graph = false
 ```
 
+The log reads history as you scroll: the first commits show at once, and more
+are read while fewer than two screens remain below the view, with a *Loading
+commits…* row under the last one meanwhile. `End` reads to the end of the
+history, however long, and keeps the selection on the last commit as it goes.
+The scrollbar spans the whole history from the start. When the log reloads —
+after a commit, a checkout, a rebase — the selected commit stays selected, in
+the same place on screen.
+
 Opening a **binary file** (with `Enter` or `F3` in the file manager) shows a
 read-only **hex viewer** — `offset │ hex │ ASCII`, with the row width adapting to
 the panel in 16-byte sections — instead of handing it to the system viewer. A

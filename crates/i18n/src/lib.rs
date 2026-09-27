@@ -1064,6 +1064,8 @@ pub trait Translation: Send + Sync {
     fn git_unstage_all_btn(&self) -> &str;
     fn git_revert_all_btn(&self) -> &str;
     fn git_log_btn(&self) -> &str;
+    /// Git log: the row under the last commit read while more are loading
+    fn git_log_loading(&self) -> &str;
     fn git_checkout_btn(&self) -> &str;
     fn git_revert_all_confirm(&self) -> &str;
     fn git_checkout_not_impl(&self) -> &str;

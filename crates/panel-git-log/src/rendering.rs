@@ -113,7 +113,8 @@ impl GitLogPanel {
         let commits_start_y = content_area.y + y_offset;
 
         // Check if scrollbar is needed (will be rendered on border, so no width reservation)
-        let needs_scrollbar = ScrollBar::needs_scrollbar(commits_area_height, self.commits.len());
+        let content_rows = self.content_rows();
+        let needs_scrollbar = ScrollBar::needs_scrollbar(commits_area_height, content_rows);
         let commits_width = content_area.width;
 
         // Render commits
@@ -181,7 +182,14 @@ impl GitLogPanel {
                     };
                     buf.set_string(x_pos, y, graph, graph_style);
                 }
-                x_pos += graph.width() as u16;
+                // The box-drawing graph comes unpadded, so the text lines up
+                // after the widest graph read so far and a one-cell gutter;
+                // git's ASCII graph carries its own padding.
+                x_pos += if self.unicode_graph {
+                    self.graph_width as u16 + 1
+                } else {
+                    graph.width() as u16
+                };
             }
 
             if !commit.hash.is_empty() && x_pos < max_x {
@@ -244,6 +252,19 @@ impl GitLogPanel {
             }
         }
 
+        // Below the last row read, while history remains: the rest is coming.
+        let drawn = self.commits.len().saturating_sub(self.scroll);
+        if self.has_more() && drawn < commits_area_height {
+            let y = commits_start_y + drawn as u16;
+            buf.set_stringn(
+                content_area.x,
+                y,
+                termide_i18n::t().git_log_loading(),
+                commits_width as usize,
+                Style::default().fg(theme.disabled),
+            );
+        }
+
         // Render scrollbar on border
         self.scrollbars.vertical = None;
         if needs_scrollbar {
@@ -255,7 +276,7 @@ impl GitLogPanel {
                     commits_area_height as u16,
                     self.scroll,
                     commits_area_height,
-                    self.commits.len(),
+                    content_rows,
                     &theme,
                     is_focused,
                 );
