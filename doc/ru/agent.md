@@ -823,7 +823,7 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 заменяет глобальный:
 
 ```markdown
-You are a coding agent working inside termide, a terminal IDE. You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
+You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
 # Tools
 {{tools}}
