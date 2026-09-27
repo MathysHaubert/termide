@@ -10,7 +10,7 @@ The terminal panel provides a full-featured terminal emulator with pseudotermina
 - **Modern TUI Compatibility**: Responds to common terminal capability queries and supports negotiated keyboard/focus reporting used by applications such as `vim`, `neovim`, `yazi`, `htop`, and `lazygit`
 - **Process Management**: When closing a terminal panel with running processes, the application will request confirmation before terminating them
 - **Panel Title**: Shows `user@host/<directory> (<foreground command>)`. The directory is read from the running shell, so it follows a `cd` inside the panel; a panel started with a fixed command (for example an SSH session) is titled with that command instead
-- **Live Working Directory**: The directory the panel reports to the rest of the application also follows a `cd` inside the shell — the directory switcher, opening a new panel "here", and the repository list of the git panels all use the directory you are actually working in
+- **Live Working Directory**: The directory the panel reports to the rest of the application also follows a `cd` inside the shell — the directory switcher, opening a new panel "here", and the repository list of the git panels all use the directory you are actually working in. On Windows, see [Working directory on Windows](#working-directory-on-windows)
 - **Session Restore**: A restored terminal opens in the directory the shell was last working in, not the one the panel was originally created in. If that directory no longer exists, the nearest existing parent is used
 
 ## Interaction
@@ -80,6 +80,36 @@ You can also set the default shell in `config.toml`:
 [terminal]
 default_shell = "/usr/bin/fish"
 ```
+
+### Working directory on Windows
+
+Windows has no call that tells one program where another is working, so the
+terminal learns the shell's directory in one of two ways:
+
+- **From the shell process** — Command Prompt and Git Bash keep it up to date,
+  so a `cd` (including a drive change such as `D:` or `cd /d D:\work`) is
+  followed with no setup
+- **From the shell itself** — PowerShell's `Set-Location` does not update the
+  process, so PowerShell has to announce each directory with the
+  `OSC 9;9` or `OSC 7` escape sequence. Windows Terminal asks for the same
+  setup, so a profile prepared for it already works here. Otherwise add this
+  to your `$PROFILE`:
+
+```powershell
+function prompt {
+  $loc = $executionContext.SessionState.Path.CurrentLocation
+  $out = ""
+  if ($loc.Provider.Name -eq "FileSystem") {
+    $out += "$([char]27)]9;9;`"$($loc.ProviderPath)`"$([char]27)\"
+  }
+  $out += "PS $loc$('>' * ($nestedPromptLevel + 1)) "
+  return $out
+}
+```
+
+With oh-my-posh, set `"pwd": "osc99"` in its configuration instead.
+
+When the shell announces a directory, the announcement wins over the process.
 
 ## Mouse Support
 

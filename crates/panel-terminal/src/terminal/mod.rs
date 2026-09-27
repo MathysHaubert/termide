@@ -3,6 +3,7 @@
 //! This module provides a full-featured terminal emulator with PTY support.
 
 mod csi_handlers;
+mod osc_cwd;
 pub mod vt100_parser;
 
 use ratatui::style::Color;
@@ -277,6 +278,8 @@ pub struct TerminalScreen {
     /// Flag to force cache invalidation on next render
     /// Set by ED (clear screen) commands to ensure fresh content is shown
     pub force_cache_invalidation: bool,
+    /// Working directory the shell last reported in-band (OSC 7 / OSC 9;9).
+    pub reported_cwd: Option<std::path::PathBuf>,
 }
 
 impl TerminalScreen {
@@ -320,6 +323,7 @@ impl TerminalScreen {
             sync_output: false,
             sync_output_ended: false,
             force_cache_invalidation: false,
+            reported_cwd: None,
         }
     }
 

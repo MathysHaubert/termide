@@ -13,6 +13,8 @@ mod selection;
 pub mod shell_utils;
 mod terminal;
 mod terminal_info;
+#[cfg(windows)]
+mod windows_proc;
 
 pub use terminal_info::TerminalInfo;
 
@@ -696,8 +698,9 @@ impl Terminal {
             .unwrap_or_else(|| self.initial_cwd.clone())
     }
 
-    /// Read the shell's working directory from the live process, falling back
-    /// to the directory the panel was created in.
+    /// Read the shell's working directory from the live process (on Windows,
+    /// the shell's own report first), falling back to the directory the panel
+    /// was created in.
     fn read_shell_cwd_raw(&self) -> std::path::PathBuf {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(pid) = self.shell_pid {
@@ -711,6 +714,23 @@ impl Terminal {
             // macOS has no /proc; the same vnode comes from libproc.
             #[cfg(target_os = "macos")]
             if let Some(path) = macos_proc::shell_cwd(pid) {
+                return path;
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // The shell's own report first: PowerShell's `Set-Location` leaves
+            // the process directory untouched, so only the report follows it.
+            // On Unix the kernel's answer stays authoritative, and a report
+            // from a remote shell behind ssh cannot override it.
+            if let Some(path) = self.read_screen().reported_cwd.clone() {
+                if path.is_absolute() {
+                    return path;
+                }
+            }
+            // cmd and Git Bash keep the process directory current.
+            if let Some(path) = self.shell_pid.and_then(windows_proc::shell_cwd) {
                 return path;
             }
         }
