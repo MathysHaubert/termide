@@ -335,6 +335,85 @@ mod tests {
         assert_eq!(slice, "docs", "line={line:?} span={link:?}");
     }
 
+    fn table_rows(out: &[String]) -> Vec<&String> {
+        out.iter().filter(|l| l.starts_with('│')).collect()
+    }
+
+    #[test]
+    fn table_cell_wraps_instead_of_truncating() {
+        let prose = "the quick brown fox jumps over the lazy dog and keeps running far away";
+        let md = format!("| Key | Description |\n|---|---|\n| id | {prose} |");
+        let out: Vec<String> = render_markdown(&md, 40, &colors(), false)
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let joined = out.join("\n");
+        assert!(!joined.contains('…'), "{out:?}");
+        for word in prose.split(' ') {
+            assert!(joined.contains(word), "lost {word:?}: {out:?}");
+        }
+        // Every drawn line stays within the width and the grid stays aligned.
+        let top = out.iter().find(|l| !l.is_empty()).unwrap();
+        let width = top.width();
+        assert!(width <= 40, "{out:?}");
+        assert!(
+            out.iter().all(|l| l.is_empty() || l.width() == width),
+            "{out:?}"
+        );
+        // The short column keeps its content width; the prose wraps.
+        assert!(top.starts_with("┌─────┬"), "{out:?}");
+        assert!(table_rows(&out).len() > 2, "{out:?}");
+    }
+
+    #[test]
+    fn table_word_spanning_fragments_is_not_split() {
+        let md = "| A |\n|---|\n| **foo**bar baz |";
+        let out = render(md);
+        assert!(out.iter().any(|l| l.contains("foobar baz")), "{out:?}");
+    }
+
+    #[test]
+    fn table_overlong_word_breaks_mid_word() {
+        let md = "| A | B |\n|---|---|\n| abcdefghijklmnopqrstuvwxyz0123456789 | x |";
+        let out: Vec<String> = render_markdown(md, 20, &colors(), false)
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(out.iter().all(|l| l.width() <= 20), "{out:?}");
+        let text: String = table_rows(&out)
+            .iter()
+            .skip(1)
+            .map(|l| l.split('│').nth(1).unwrap().trim())
+            .collect();
+        assert_eq!(text, "abcdefghijklmnopqrstuvwxyz0123456789", "{out:?}");
+    }
+
+    #[test]
+    fn wrapped_table_link_hit_area_on_each_line() {
+        let md = "| Site | Y |\n|---|---|\n| [alpha beta gamma](https://ex.com) | z |";
+        let out = render_markdown(md, 16, &colors(), false);
+        assert!(out.links.len() > 1, "{:?}", out.links);
+        for link in &out.links {
+            assert_eq!(link.url, "https://ex.com");
+            let line: String = out.lines[link.line]
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            let slice: String = line
+                .chars()
+                .skip(link.start as usize)
+                .take((link.end - link.start) as usize)
+                .collect();
+            assert!(
+                !slice.trim().is_empty() && !slice.contains('│'),
+                "{slice:?}"
+            );
+        }
+    }
+
     #[test]
     fn embedded_mermaid_renders_diagram() {
         let md = "```mermaid\nsequenceDiagram\nA->>B: hi\n```";

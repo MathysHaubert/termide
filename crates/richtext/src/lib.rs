@@ -50,13 +50,26 @@ struct Table {
     cur_row: Vec<Cell>,
 }
 
-/// Output of laying out a single table cell: its styled spans, the display
+/// One character of a table cell with its style and optional link id.
+type Glyph = (char, Style, Option<usize>);
+
+/// One visual line of a laid-out table cell: its styled spans, the display
 /// width they occupy, and `[start, end)` column ranges (relative to the cell
 /// content) that link to `url_id`.
 struct RenderedCell {
     spans: Vec<Span<'static>>,
     used: usize,
     links: Vec<(usize, usize, usize)>,
+}
+
+impl RenderedCell {
+    fn empty() -> Self {
+        Self {
+            spans: Vec::new(),
+            used: 0,
+            links: Vec::new(),
+        }
+    }
 }
 
 /// A link span recorded during wrapping, before url ids are resolved.
@@ -553,7 +566,9 @@ impl<'c> Builder<'c> {
         }
     }
 
-    /// Draw the collected table with box-drawing borders.
+    /// Draw the collected table with box-drawing borders. Columns are sized
+    /// to their content (see [`column_widths`]) and cells word-wrap to the
+    /// column width, so a row grows taller instead of clipping its text.
     fn flush_table(&mut self) {
         let Some(t) = self.table.take() else { return };
         if t.rows.is_empty() {
@@ -565,24 +580,23 @@ impl<'c> Builder<'c> {
         if ncols == 0 {
             return;
         }
-        let mut widths = vec![0usize; ncols];
+        // Per column: the longest word (narrowest width that wraps without
+        // breaking words) and the whole unwrapped content.
+        let mut min = vec![1usize; ncols];
+        let mut max = vec![1usize; ncols];
         for row in &t.rows {
             for (c, cell) in row.iter().enumerate() {
-                widths[c] = widths[c].max(cell_width(cell));
+                let words = cell_words(cell, Modifier::empty());
+                let widths: Vec<usize> = words.iter().map(|w| glyphs_width(w)).collect();
+                let longest = widths.iter().copied().max().unwrap_or(0);
+                let full = widths.iter().sum::<usize>() + widths.len().saturating_sub(1);
+                min[c] = min[c].max(longest);
+                max[c] = max[c].max(full);
             }
-        }
-        for w in &mut widths {
-            *w = (*w).max(1);
         }
         let overhead = 3 * ncols + 1;
         let budget = self.width.saturating_sub(overhead).max(ncols);
-        let total: usize = widths.iter().sum();
-        if total > budget {
-            for w in &mut widths {
-                let scaled = (*w * budget) / total.max(1);
-                *w = scaled.max(1);
-            }
-        }
+        let widths = column_widths(&min, &max, budget);
 
         let dis = Style::default().fg(self.colors.disabled);
         let border = |left: &str, mid: &str, right: &str, fill: &str| -> Line<'static> {
@@ -598,33 +612,43 @@ impl<'c> Builder<'c> {
         let empty: Cell = Vec::new();
         for (ri, row) in t.rows.iter().enumerate() {
             let header = ri < t.header_rows;
-            let line_idx = self.lines.len();
-            let mut spans: Vec<Span<'static>> = vec![Span::styled("│", dis)];
-            // Column offset of the next span; the leading `│` occupies col 0.
-            let mut col = 1usize;
-            for (c, w) in widths.iter().enumerate() {
-                let cell = row.get(c).unwrap_or(&empty);
-                let rendered = self.render_cell(cell, *w, header);
-                spans.push(Span::raw(" "));
-                col += 1;
-                let cell_base = col;
-                spans.extend(rendered.spans);
-                col += rendered.used;
-                for (s, e, url_id) in rendered.links {
-                    self.pending_links.push(PendingLink {
-                        line: line_idx,
-                        start: (cell_base + s) as u16,
-                        end: (cell_base + e) as u16,
-                        url_id,
-                    });
-                }
-                let pad = w.saturating_sub(rendered.used);
-                spans.push(Span::raw(" ".repeat(pad + 1)));
-                col += pad + 1;
-                spans.push(Span::styled("│", dis));
-                col += 1;
+            let mut cells: Vec<Vec<RenderedCell>> = widths
+                .iter()
+                .enumerate()
+                .map(|(c, w)| self.wrap_cell(row.get(c).unwrap_or(&empty), *w, header))
+                .collect();
+            let height = cells.iter().map(Vec::len).max().unwrap_or(1);
+            for cell in &mut cells {
+                cell.reverse();
             }
-            self.lines.push(Line::from(spans));
+            for _ in 0..height {
+                let line_idx = self.lines.len();
+                let mut spans: Vec<Span<'static>> = vec![Span::styled("│", dis)];
+                // Column offset of the next span; the leading `│` occupies col 0.
+                let mut col = 1usize;
+                for (cell, w) in cells.iter_mut().zip(&widths) {
+                    let rendered = cell.pop().unwrap_or_else(RenderedCell::empty);
+                    spans.push(Span::raw(" "));
+                    col += 1;
+                    let cell_base = col;
+                    spans.extend(rendered.spans);
+                    col += rendered.used;
+                    for (s, e, url_id) in rendered.links {
+                        self.pending_links.push(PendingLink {
+                            line: line_idx,
+                            start: (cell_base + s) as u16,
+                            end: (cell_base + e) as u16,
+                            url_id,
+                        });
+                    }
+                    let pad = w.saturating_sub(rendered.used);
+                    spans.push(Span::raw(" ".repeat(pad + 1)));
+                    col += pad + 1;
+                    spans.push(Span::styled("│", dis));
+                    col += 1;
+                }
+                self.lines.push(Line::from(spans));
+            }
             if header && t.header_rows > 0 && ri + 1 == t.header_rows {
                 self.lines.push(border("├", "┼", "┤", "─"));
             }
@@ -632,42 +656,58 @@ impl<'c> Builder<'c> {
         self.lines.push(border("└", "┴", "┘", "─"));
     }
 
-    /// Render a table cell's styled fragments clipped to `width` columns,
-    /// bolding header cells and preserving per-fragment styles (inline code,
-    /// emphasis) and link hit-areas. Outer whitespace is trimmed; an ellipsis
-    /// marks truncation. Link ranges are `[start, end)` column offsets relative
-    /// to the start of the cell content, clamped to what actually rendered.
-    fn render_cell(&self, cell: &[Word], width: usize, header: bool) -> RenderedCell {
+    /// Word-wrap a table cell's styled fragments to `width` columns, one
+    /// [`RenderedCell`] per visual line (at least one). Header cells are
+    /// bolded; per-fragment styles and link hit-areas are preserved. Runs of
+    /// whitespace collapse to one space; a word wider than the column is
+    /// broken mid-word.
+    fn wrap_cell(&self, cell: &[Word], width: usize, header: bool) -> Vec<RenderedCell> {
         let extra = if header {
             Modifier::BOLD
         } else {
             Modifier::empty()
         };
-        // Flatten to styled chars so trimming and clipping can span fragments.
-        let mut chars: Vec<(char, Style, Option<usize>)> = Vec::new();
-        for (text, style, link) in cell {
-            let style = style.add_modifier(extra);
-            for ch in text.chars() {
-                chars.push((ch, style, *link));
+        let width = width.max(1);
+        let mut lines: Vec<Vec<Glyph>> = Vec::new();
+        let mut cur: Vec<Glyph> = Vec::new();
+        let mut cur_w = 0usize;
+        for word in cell_words(cell, extra) {
+            let ww = glyphs_width(&word);
+            if cur_w > 0 && cur_w + 1 + ww > width {
+                lines.push(std::mem::take(&mut cur));
+                cur_w = 0;
+            }
+            if cur_w > 0 {
+                cur.push(self.gap(cur.last(), word.first(), extra));
+                cur_w += 1;
+            }
+            for g in word {
+                let gw = char_width(g.0);
+                if cur_w > 0 && cur_w + gw > width {
+                    lines.push(std::mem::take(&mut cur));
+                    cur_w = 0;
+                }
+                cur.push(g);
+                cur_w += gw;
             }
         }
-        let start = chars
-            .iter()
-            .position(|(c, _, _)| !c.is_whitespace())
-            .unwrap_or(chars.len());
-        let end = chars
-            .iter()
-            .rposition(|(c, _, _)| !c.is_whitespace())
-            .map_or(start, |i| i + 1);
-        let slice = &chars[start..end];
+        lines.push(cur);
+        lines.iter().map(|l| self.render_glyphs(l)).collect()
+    }
 
-        let total: usize = slice.iter().map(|(c, _, _)| char_width(*c)).sum();
-        let (limit, ellipsis) = if total > width {
-            (width.saturating_sub(1), true)
-        } else {
-            (width, false)
-        };
+    /// The space joining two words of a wrapped cell: it keeps the style and
+    /// link of its neighbours when both share them, so a multi-word link stays
+    /// one continuous underlined hit-area.
+    fn gap(&self, prev: Option<&Glyph>, next: Option<&Glyph>, extra: Modifier) -> Glyph {
+        match (prev, next) {
+            (Some(&(_, ps, pl)), Some(&(_, ns, nl))) if ps == ns && pl == nl => (' ', ps, pl),
+            _ => (' ', self.base_style().add_modifier(extra), None),
+        }
+    }
 
+    /// Coalesce one visual line of styled glyphs into spans, with link ranges
+    /// as `[start, end)` column offsets relative to the start of the line.
+    fn render_glyphs(&self, glyphs: &[Glyph]) -> RenderedCell {
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut buf = String::new();
         let mut buf_style = self.base_style();
@@ -676,11 +716,7 @@ impl<'c> Builder<'c> {
         // link tracking is kept separate from span buffering.
         let mut links: Vec<(usize, usize, usize)> = Vec::new();
         let mut open: Option<(usize, usize)> = None;
-        for (ch, style, link) in slice.iter().copied() {
-            let cw = char_width(ch);
-            if used + cw > limit {
-                break;
-            }
+        for &(ch, style, link) in glyphs {
             if !buf.is_empty() && style != buf_style {
                 spans.push(Span::styled(std::mem::take(&mut buf), buf_style));
             }
@@ -702,17 +738,13 @@ impl<'c> Builder<'c> {
                 (None, None) => {}
             }
             buf.push(ch);
-            used += cw;
+            used += char_width(ch);
         }
         if let Some((s, cur)) = open {
             links.push((s, used, cur));
         }
         if !buf.is_empty() {
             spans.push(Span::styled(buf, buf_style));
-        }
-        if ellipsis {
-            spans.push(Span::styled("…", self.base_style().add_modifier(extra)));
-            used += 1;
         }
         RenderedCell { spans, used, links }
     }
@@ -831,13 +863,123 @@ fn prefix_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|s| s.content.width()).sum()
 }
 
-/// Trimmed display width of a table cell's concatenated text.
-fn cell_width(cell: &[Word]) -> usize {
-    let text: String = cell.iter().map(|(t, _, _)| t.as_str()).collect();
-    text.trim().width()
+/// Split a table cell's fragments into whitespace-delimited words of styled
+/// glyphs. Unlike [`split_words`], a word may span fragments (`**a**b` is one
+/// word), so wrapping never inserts a space inside it.
+fn cell_words(cell: &[Word], extra: Modifier) -> Vec<Vec<Glyph>> {
+    let mut words = Vec::new();
+    let mut cur: Vec<Glyph> = Vec::new();
+    for (text, style, link) in cell {
+        let style = style.add_modifier(extra);
+        for ch in text.chars() {
+            if ch.is_whitespace() {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            } else {
+                cur.push((ch, style, *link));
+            }
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+fn glyphs_width(glyphs: &[Glyph]) -> usize {
+    glyphs.iter().map(|g| char_width(g.0)).sum()
+}
+
+/// Content-driven table column widths within `budget` (all columns together,
+/// borders excluded; `budget >= min.len()`). `min[c]` is the column's longest
+/// word, `max[c]` its unwrapped content (`min <= max`, both at least 1).
+///
+/// - Everything fits unwrapped: each column gets its full content.
+/// - The longest words fit: each column keeps its longest word and the spare
+///   width goes to the columns in proportion to how much they still wrap, so
+///   short columns stay narrow and long prose takes the room.
+/// - Not even the longest words fit: the budget is shared in proportion to
+///   them and long words break mid-word.
+fn column_widths(min: &[usize], max: &[usize], budget: usize) -> Vec<usize> {
+    let total_max: usize = max.iter().sum();
+    if total_max <= budget {
+        return max.to_vec();
+    }
+    let total_min: usize = min.iter().sum();
+    if total_min <= budget {
+        let slack: Vec<usize> = max.iter().zip(min).map(|(x, n)| x - n).collect();
+        return distribute(min, &slack, budget - total_min);
+    }
+    let ones = vec![1; min.len()];
+    let weights: Vec<usize> = min.iter().map(|n| n - 1).collect();
+    distribute(&ones, &weights, budget.saturating_sub(min.len()))
+}
+
+/// `base[i]` plus a share of `spare` proportional to `weights[i]`, rounding
+/// by largest remainder so the shares add up to exactly `spare` (when
+/// `spare <= sum(weights)`, no column gets more than its weight).
+fn distribute(base: &[usize], weights: &[usize], spare: usize) -> Vec<usize> {
+    let total: usize = weights.iter().sum();
+    if total == 0 {
+        return base.to_vec();
+    }
+    let mut out: Vec<usize> = base
+        .iter()
+        .zip(weights)
+        .map(|(b, w)| b + w * spare / total)
+        .collect();
+    let given: usize = weights.iter().map(|w| w * spare / total).sum();
+    let mut order: Vec<usize> = (0..weights.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(weights[i] * spare % total));
+    for &i in order.iter().take(spare - given) {
+        out[i] += 1;
+    }
+    out
 }
 
 /// Display width of a single character (best-effort).
 fn char_width(ch: char) -> usize {
     ch.to_string().width()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_take_full_content_when_it_fits() {
+        assert_eq!(column_widths(&[3, 5], &[10, 20], 40), vec![10, 20]);
+    }
+
+    #[test]
+    fn spare_width_goes_to_columns_that_wrap() {
+        // A short column keeps its content; the long one takes the rest.
+        let w = column_widths(&[2, 6], &[2, 100], 30);
+        assert_eq!(w, vec![2, 28]);
+        // Slack 18 and 54 share 24 spare columns 1:3.
+        let w = column_widths(&[2, 6], &[20, 60], 32);
+        assert_eq!(w, vec![8, 24]);
+    }
+
+    #[test]
+    fn widths_fill_budget_exactly_and_respect_bounds() {
+        let (min, max) = ([3, 4, 5], [9, 17, 30]);
+        for budget in 12..56 {
+            let w = column_widths(&min, &max, budget);
+            assert_eq!(w.iter().sum::<usize>(), budget, "{budget}: {w:?}");
+            for c in 0..3 {
+                assert!(min[c] <= w[c] && w[c] <= max[c], "{budget}: {w:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn overlong_words_share_budget_proportionally() {
+        let w = column_widths(&[10, 30], &[10, 30], 20);
+        assert_eq!(w.iter().sum::<usize>(), 20);
+        assert!(w[0] >= 1 && w[0] < w[1], "{w:?}");
+        // Degenerate budget: every column still gets a cell.
+        assert_eq!(column_widths(&[10, 30], &[10, 30], 2), vec![1, 1]);
+    }
 }
