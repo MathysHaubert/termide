@@ -1,5 +1,5 @@
 {
-  description = "TermIDE - Cross-platform terminal IDE, file manager and virtual terminal";
+  description = "TermIDE - All-in-one terminal workspace: editor, file manager, terminal, git and coding agent";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -92,7 +92,7 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
 
             meta = with pkgs.lib; {
-              description = "Cross-platform terminal IDE, file manager and virtual terminal";
+              description = "All-in-one terminal workspace: editor, file manager, terminal, git and coding agent";
               homepage = "https://github.com/termide/termide";
               license = licenses.mit;
               maintainers = [ ];

@@ -3,7 +3,7 @@
 pkgname=termide-bin
 pkgver=0.35.0
 pkgrel=1
-pkgdesc="Cross-platform terminal IDE, file manager and virtual terminal (binary release)"
+pkgdesc="All-in-one terminal workspace: editor, file manager, terminal, git and coding agent (binary release)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/termide/termide"
 license=('MIT')

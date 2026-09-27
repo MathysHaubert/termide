@@ -57,7 +57,7 @@ name = "termide"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "Cross-platform terminal IDE, file manager and virtual terminal"
+description = "All-in-one terminal workspace: editor, file manager, terminal, git and coding agent"
 publish = false
 repository = "https://github.com/termide/termide"
 license = "MIT"
@@ -83,10 +83,11 @@ maintainer = "Nick Nizovtsev <nizovtsevnv@gmail.com>"
 copyright = "2025, Nick Nizovtsev <nizovtsevnv@gmail.com>"
 license-file = ["LICENSE", "4"]
 extended-description = """\
-TermIDE is a cross-platform terminal-based IDE, file manager, and virtual terminal \
-written in Rust. It features syntax highlighting for 21 languages, Git integration, \
-multi-panel accordion layout with smart stacking, and an integrated virtual terminal \
-with full PTY support."""
+TermIDE is an all-in-one terminal workspace for workstations and servers, written \
+in Rust. It combines a code editor with LSP, a dual-pane file manager with SFTP/FTP \
+and background file operations, an integrated terminal, Git integration, a read-only \
+database viewer, and a coding agent that works with local or hosted models. \
+On Unix, instances can be detached and reattached from any terminal."""
 depends = "$auto"
 section = "utils"
 priority = "optional"
@@ -102,7 +103,7 @@ assets = [
 [package.metadata.generate-rpm]
 name = "termide"
 license = "MIT"
-summary = "Cross-platform terminal IDE, file manager and virtual terminal"
+summary = "All-in-one terminal workspace: editor, file manager, terminal, git and coding agent"
 assets = [
     { source = "target/release/termide", dest = "/usr/bin/termide", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/termide/README.md", mode = "644", doc = true },
