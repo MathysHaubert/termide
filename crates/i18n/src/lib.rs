@@ -905,6 +905,10 @@ pub trait Translation: Send + Sync {
     fn projects_new(&self) -> &str;
     fn projects_switch(&self) -> &str;
     fn projects_change_root(&self) -> &str;
+    fn projects_delete_title(&self) -> &str;
+    fn projects_delete_many_title(&self) -> &str;
+    fn projects_delete_fmt(&self, path: &str) -> String;
+    fn projects_delete_many_fmt(&self, dir: &str, count: usize) -> String;
     fn project_created(&self) -> &str;
     fn project_moved(&self) -> &str;
 

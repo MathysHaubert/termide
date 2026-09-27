@@ -70,7 +70,7 @@ Menu activation/deactivation and each item can be accessed by mouse click or [ke
   - New project — start a project in another directory
   - Switch project — open the project switcher modal
   - Change root path — move the current project to another directory
-  - Below a separator, the known projects as a tree of directory submenus. Directories that only lead to one place are folded into one row (`github.com/termide`) and the prefix shared by all projects is left out. A directory that is itself a project and holds further projects lists itself first. The current project and the directories leading to it are shown in bold. `→`/`Enter` open a directory, `←`/`Esc` close it, `Enter` or a click on a project switches to it
+  - Below a separator, the known projects as a tree of directory submenus. Directories that only lead to one place are folded into one row (`github.com/termide`) and the prefix shared by all projects is left out. A directory that is itself a project and holds further projects lists itself first. The current project and the directories leading to it are shown in bold. `→`/`Enter` open a directory, `←`/`Esc` close it, `Enter` or a click on a project switches to it. `Delete`/`F8` deletes the saved session of the selected project, or of every project in the selected directory, after a confirmation; the current project is never deleted, and the sessions of projects nested inside a deleted one are kept
 - `Windows` — panel creation submenu:
   - Files — file manager panel
   - Terminal — terminal panel (has submenu for choosing a shell: lists all available shells on the system, the default shell is marked with ●)

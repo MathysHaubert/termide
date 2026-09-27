@@ -95,8 +95,13 @@ pub enum PendingAction {
     SwitchSession,
     /// Create new session in specified directory
     NewSession,
-    /// Delete session (with confirmation)
-    DeleteSession { path: PathBuf },
+    /// Delete the sessions of one or more projects (with confirmation)
+    DeleteSession {
+        paths: Vec<PathBuf>,
+        /// Projects menu selections to reopen afterwards (`None`: return to
+        /// the project switcher).
+        menu: Option<Vec<usize>>,
+    },
     /// Delete bookmark (with confirmation)
     DeleteBookmark {
         path: String,

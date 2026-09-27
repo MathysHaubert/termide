@@ -47,6 +47,14 @@ impl ProjectNode {
         self.project.as_deref() == Some(path) || self.children.iter().any(|c| c.contains(path))
     }
 
+    /// Every project at or below this node.
+    fn collect_projects<'a>(&'a self, out: &mut Vec<&'a Path>) {
+        out.extend(self.project.as_deref());
+        for child in &self.children {
+            child.collect_projects(out);
+        }
+    }
+
     /// Rows of the submenu this node opens. A directory that is a project
     /// and also holds projects lists itself first, set off by a separator.
     fn rows(&self) -> Vec<ProjectRow<'_>> {
@@ -79,6 +87,18 @@ impl<'a> ProjectRow<'a> {
             Self::Node(node) if !node.children.is_empty() => Some(node),
             _ => None,
         }
+    }
+
+    /// The projects Delete removes on this row: a directory's whole subtree,
+    /// or the single project of a leaf or self row.
+    pub fn projects(&self) -> Vec<&'a Path> {
+        let mut out = Vec::new();
+        match self {
+            Self::Node(node) => node.collect_projects(&mut out),
+            Self::Open(node) => out.extend(node.project.as_deref()),
+            Self::Action(_) | Self::Separator => {}
+        }
+        out
     }
 
     /// The project this row switches to, if it switches to one.
@@ -309,6 +329,42 @@ impl AppState {
         levels
     }
 
+    /// Select `selection` (the dropdown's row, then one per nested level)
+    /// in a freshly loaded tree. A row index past the end of its level falls
+    /// back to the last row, and the levels stop where the row no longer
+    /// opens a submenu, so a deletion never leaves the cursor nowhere.
+    pub fn restore_projects_selection(&mut self, selection: &[usize], screen: Rect) {
+        let Some((&first, nested)) = selection.split_first() else {
+            return;
+        };
+        self.ui.projects_nested.clear();
+        self.ui.projects_submenu.selected = first;
+        self.clamp_deepest_projects_row(screen);
+        for &index in nested {
+            self.ui.projects_nested.push(index);
+            if self.projects_menu_levels(screen).len() <= self.ui.projects_nested.len() {
+                self.ui.projects_nested.pop();
+                break;
+            }
+            self.clamp_deepest_projects_row(screen);
+        }
+    }
+
+    fn clamp_deepest_projects_row(&mut self, screen: Rect) {
+        let levels = self.projects_menu_levels(screen);
+        let level = levels.last().unwrap();
+        let mut index = level.selected.min(level.items.len().saturating_sub(1));
+        // Separators are never last in a level, so the row above is selectable.
+        if level.items.get(index).is_some_and(|item| item.is_separator) {
+            index = index.saturating_sub(1);
+        }
+        drop(levels);
+        match self.ui.projects_nested.last_mut() {
+            Some(selected) => *selected = index,
+            None => self.ui.projects_submenu.selected = index,
+        }
+    }
+
     /// Load the project list the menu shows as a tree.
     pub(crate) fn load_projects_tree(&mut self) {
         let projects: Vec<PathBuf> = termide_project::list_all_projects()
@@ -383,6 +439,16 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].project(), Some(Path::new("/home/u/p")));
         assert!(rows[2].submenu().is_none());
+        // Delete on `p` takes its whole subtree; on its self row, only `p`.
+        assert_eq!(
+            ProjectRow::Node(&tree[0]).projects(),
+            vec![
+                Path::new("/home/u/p"),
+                Path::new("/home/u/p/x"),
+                Path::new("/home/u/p/y")
+            ]
+        );
+        assert_eq!(rows[0].projects(), vec![Path::new("/home/u/p")]);
         assert_eq!(rows[2].project(), Some(Path::new("/home/u/p/x")));
     }
 
@@ -434,5 +500,37 @@ mod tests {
         // A stale level below a row without a submenu is not drawn.
         state.ui.projects_submenu.selected = first_tree_row + 1;
         assert_eq!(state.projects_menu_levels(screen).len(), 1);
+    }
+
+    #[test]
+    fn restored_selection_falls_back_within_the_new_tree() {
+        let home = PathBuf::from("/home/u");
+        let mut state = AppState::new();
+        let screen = Rect::new(0, 0, 120, 40);
+        let first_tree_row = PROJECTS_SUBMENU_ITEM_COUNT + 1;
+
+        // `p` still holds itself and `x` after `y` was deleted: the cursor
+        // that was on `y` moves up to `x`.
+        state.cache.projects = build_project_tree(
+            &paths(&["/home/u/p", "/home/u/p/x", "/home/u/q"]),
+            Some(&home),
+        );
+        state.restore_projects_selection(&[first_tree_row, 3], screen);
+        assert_eq!(state.ui.projects_nested, vec![2]);
+
+        // `p` has no submenu left: the cursor stays on `p` itself.
+        state.cache.projects = build_project_tree(&paths(&["/home/u/p", "/home/u/q"]), Some(&home));
+        state.restore_projects_selection(&[first_tree_row, 2], screen);
+        assert_eq!(state.ui.projects_submenu.selected, first_tree_row);
+        assert!(state.ui.projects_nested.is_empty());
+
+        // The last top-level project went: the cursor moves up past the
+        // separator to the last action.
+        state.cache.projects.clear();
+        state.restore_projects_selection(&[first_tree_row], screen);
+        assert_eq!(
+            state.ui.projects_submenu.selected,
+            PROJECTS_SUBMENU_ITEM_COUNT - 1
+        );
     }
 }

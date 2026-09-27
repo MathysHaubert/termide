@@ -361,7 +361,7 @@ impl App {
 
     /// Handle switch session modal result
     pub(super) fn handle_switch_session(&mut self, value: Box<dyn std::any::Any>) -> Result<()> {
-        use termide_modal::{ConfirmModal, SessionAction};
+        use termide_modal::SessionAction;
 
         if let Some(action) = value.downcast_ref::<SessionAction>() {
             match action {
@@ -369,12 +369,7 @@ impl App {
                     self.switch_to_session(path.clone())?;
                 }
                 SessionAction::Delete(path) => {
-                    let display = path.display().to_string();
-                    let modal = ConfirmModal::new("Delete session?", format!("Session: {display}"));
-                    self.state.set_pending_action(
-                        PendingAction::DeleteSession { path: path.clone() },
-                        ActiveModal::Confirm(Box::new(modal)),
-                    );
+                    self.confirm_delete_session(vec![path.clone()], None, None)
                 }
             }
         }
@@ -413,15 +408,54 @@ impl App {
     }
 
     /// Handle confirmed session deletion
-    pub(super) fn handle_delete_session(&mut self, path: &std::path::Path) -> Result<()> {
-        if let Err(e) = termide_project::Session::delete_session(path) {
-            log::error!("Failed to delete session for {:?}: {}", path, e);
-            self.show_error_modal(format!("Failed to delete session: {e}"));
-        } else {
+    /// Ask before deleting the stored state of the projects at `paths`.
+    /// `dir` names the menu directory they were picked from, if any; `menu`
+    /// is where to return afterwards, see `PendingAction::DeleteSession`.
+    pub(super) fn confirm_delete_session(
+        &mut self,
+        paths: Vec<std::path::PathBuf>,
+        dir: Option<&str>,
+        menu: Option<Vec<usize>>,
+    ) {
+        let t = termide_i18n::t();
+        let (title, message) = match (paths.as_slice(), dir) {
+            ([_, _, ..], Some(dir)) => (
+                t.projects_delete_many_title(),
+                t.projects_delete_many_fmt(dir, paths.len()),
+            ),
+            _ => (
+                t.projects_delete_title(),
+                t.projects_delete_fmt(&termide_core::util::shorten_home_path(
+                    &paths[0].display().to_string(),
+                )),
+            ),
+        };
+        let modal = termide_modal::ConfirmModal::new(title, message);
+        self.state.set_pending_action(
+            PendingAction::DeleteSession { paths, menu },
+            ActiveModal::Confirm(Box::new(modal)),
+        );
+    }
+
+    pub(super) fn handle_delete_session(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        menu: Option<Vec<usize>>,
+    ) -> Result<()> {
+        for path in paths {
+            if let Err(e) = termide_project::Session::delete_session(path) {
+                log::error!("Failed to delete session for {:?}: {}", path, e);
+                // Keep the error on screen instead of reopening over it.
+                self.show_error_modal(format!("Failed to delete session: {e}"));
+                return Ok(());
+            }
             log::info!("Deleted session for {:?}", path);
         }
-        // Reopen sessions modal with updated list
-        self.handle_open_projects_modal()?;
+        match menu {
+            Some(selection) => self.reopen_projects_menu(&selection),
+            // Reopen sessions modal with updated list
+            None => self.handle_open_projects_modal()?,
+        }
         Ok(())
     }
 

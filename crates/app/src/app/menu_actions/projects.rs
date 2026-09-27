@@ -1,7 +1,7 @@
 //! Sessions menu actions — session switching, directory switcher.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::super::App;
 use crate::projects_menu::ProjectsTarget;
@@ -190,6 +190,20 @@ impl App {
         let depth = levels.len() - 1;
         let level = &levels[depth];
         let target = ProjectsTarget::of(level.selected_row());
+        // What Delete removes: the project, or every project in the directory.
+        // The current project is kept, as in the project switcher.
+        let deletable: Vec<PathBuf> = level
+            .selected_row()
+            .map(|row| row.projects())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|path| *path != self.project_root)
+            .map(Path::to_path_buf)
+            .collect();
+        let dir = level
+            .selected_row()
+            .and_then(|row| row.submenu())
+            .map(|node| node.label.clone());
         let mut cursor = termide_state::SubmenuState {
             open: true,
             selected: level.selected,
@@ -212,12 +226,27 @@ impl App {
             }
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
             SubmenuNavAction::Execute => self.activate_projects_target(target, false)?,
-            SubmenuNavAction::Rename
-            | SubmenuNavAction::Edit
-            | SubmenuNavAction::Delete
-            | SubmenuNavAction::None => {}
+            SubmenuNavAction::Delete if !deletable.is_empty() => {
+                let mut selection = vec![self.state.ui.projects_submenu.selected];
+                selection.extend_from_slice(&self.state.ui.projects_nested);
+                self.state.close_menu();
+                self.confirm_delete_session(deletable, dir.as_deref(), Some(selection));
+            }
+            SubmenuNavAction::Delete => {}
+            SubmenuNavAction::Rename | SubmenuNavAction::Edit | SubmenuNavAction::None => {}
         }
         Ok(())
+    }
+
+    /// Open the Projects menu at `selection` (as saved from
+    /// `projects_submenu` and `projects_nested`), as close as the reloaded
+    /// tree still allows.
+    pub(in crate::app) fn reopen_projects_menu(&mut self, selection: &[usize]) {
+        let screen = self.screen_rect();
+        self.state.ui.menu_open = true;
+        self.state.ui.selected_menu_item = Some(termide_ui_render::PROJECTS_MENU_INDEX);
+        self.state.open_sessions_submenu();
+        self.state.restore_projects_selection(selection, screen);
     }
 
     /// Select `index` at menu level `depth` and close every level below it.

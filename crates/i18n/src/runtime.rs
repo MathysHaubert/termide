@@ -96,7 +96,7 @@ impl Translation for RuntimeTranslation {
         }
     }
 
-    // Generate 393 trivial `fn name(&self) -> &str` wrappers over get_string("name").
+    // Generate 395 trivial `fn name(&self) -> &str` wrappers over get_string("name").
     i18n_get_string_methods! {
         git_operation_cancelled,
         modal_yes,
@@ -554,6 +554,8 @@ impl Translation for RuntimeTranslation {
         projects_new,
         projects_switch,
         projects_change_root,
+        projects_delete_title,
+        projects_delete_many_title,
         project_created,
         project_moved,
         detach_instance,
@@ -1571,6 +1573,17 @@ impl Translation for RuntimeTranslation {
 
     fn image_error_fmt(&self, error: &str) -> String {
         self.format("image_error_fmt", &[("error", error)])
+    }
+
+    fn projects_delete_fmt(&self, path: &str) -> String {
+        self.format("projects_delete_fmt", &[("path", path)])
+    }
+
+    fn projects_delete_many_fmt(&self, dir: &str, count: usize) -> String {
+        self.format(
+            "projects_delete_many_fmt",
+            &[("dir", dir), ("count", &count.to_string())],
+        )
     }
 
     fn replace_done_fmt(&self, count: usize, files: usize) -> String {

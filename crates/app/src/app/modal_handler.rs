@@ -108,7 +108,7 @@ impl App {
                     }
                 }
 
-                // Return to bookmarks menu on cancel of bookmark deletion
+                // Return to the menu a deletion was started from on cancel
                 if matches!(result, ModalResult::Cancelled) {
                     use termide_state::PendingAction;
                     if let Some(action) = self.state.pending_action.take() {
@@ -141,6 +141,14 @@ impl App {
                             } => {
                                 self.state.close_modal();
                                 self.reopen_bookmarks_menu(None, is_project, selected);
+                                return Ok(());
+                            }
+                            PendingAction::DeleteSession {
+                                menu: Some(selection),
+                                ..
+                            } => {
+                                self.state.close_modal();
+                                self.reopen_projects_menu(&selection);
                                 return Ok(());
                             }
                             other => self.state.pending_action = Some(other),
@@ -477,9 +485,9 @@ impl App {
                 PendingAction::NewSession => {
                     self.handle_new_project_result(value)?;
                 }
-                PendingAction::DeleteSession { path } => {
+                PendingAction::DeleteSession { paths, menu } => {
                     if value.downcast_ref::<bool>().copied().unwrap_or(false) {
-                        self.handle_delete_session(&path)?;
+                        self.handle_delete_session(&paths, menu)?;
                     }
                 }
                 PendingAction::DeleteBookmark {
