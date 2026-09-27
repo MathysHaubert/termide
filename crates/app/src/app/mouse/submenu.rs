@@ -8,15 +8,15 @@ use ratatui::layout::Rect;
 use std::sync::Arc;
 
 use crate::app::App;
+use crate::projects_menu::ProjectsTarget;
 use termide_i18n as i18n;
 use termide_theme::Theme;
 use termide_ui_render::{
     dropdown_geometry, dropdown_width, get_ai_agent_choice_items, get_ai_items,
     get_bookmarks_group_items, get_bookmarks_items, get_commands_group_items, get_commands_items,
-    get_menu_item_x_position, get_options_items, get_projects_items, get_shell_items,
-    get_tools_items, language_dropdown_geometry, theme_dropdown_geometry, AI_MENU_INDEX,
-    BOOKMARKS_MENU_INDEX, COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX,
-    WINDOWS_MENU_INDEX,
+    get_menu_item_x_position, get_options_items, get_shell_items, get_tools_items,
+    language_dropdown_geometry, theme_dropdown_geometry, AI_MENU_INDEX, BOOKMARKS_MENU_INDEX,
+    COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX, WINDOWS_MENU_INDEX,
 };
 
 /// Hit-test a dropdown menu and return the clicked item index (if any).
@@ -173,25 +173,31 @@ impl App {
         Ok(true)
     }
 
-    /// Handle click on Sessions submenu dropdown
+    /// Handle click on the Projects menu or one of its open directory
+    /// submenus. Deeper levels are drawn on top, so they are tested first.
     /// Returns true if click was handled
     pub(in crate::app) fn handle_sessions_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
-        let menu_x = get_menu_item_x_position(PROJECTS_MENU_INDEX);
-        let items = get_projects_items(Some(&self.state.config.general.keybindings));
-        if let Some(index) = hit_dropdown_item(
-            x,
-            y,
-            menu_x,
-            1,
-            &items,
-            self.state.ui.projects_submenu.selected,
-            self.screen_rect(),
-        ) {
-            self.state.ui.projects_submenu.selected = index;
-            self.execute_projects_submenu_action()?;
+        let screen = self.screen_rect();
+        let levels = self.state.projects_menu_levels(screen);
+        let hit = levels.iter().enumerate().rev().find_map(|(depth, level)| {
+            let geometry =
+                dropdown_geometry(&level.items, level.selected, level.x, level.y, screen);
+            let index = geometry.item_at(x, y)?;
+            Some((depth, index, level.items.get(index)?.is_separator))
+        });
+        let Some((depth, index, is_separator)) = hit else {
+            drop(levels);
+            self.state.close_menu();
+            return Ok(true);
+        };
+        if is_separator {
             return Ok(true);
         }
-        self.state.close_menu();
+        let was_open = levels.len() > depth + 1 && levels[depth].selected == index;
+        let target = ProjectsTarget::of(levels[depth].rows.get(index).copied());
+        drop(levels);
+        self.select_projects_row(depth, index);
+        self.activate_projects_target(target, was_open)?;
         Ok(true)
     }
 

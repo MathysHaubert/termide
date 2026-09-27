@@ -321,6 +321,7 @@ impl AppState {
         self.ui.close_all_submenus();
         self.cache.shells.clear();
         self.cache.commands_registry = None;
+        self.cache.projects.clear();
         // Note: hotkey_table is NOT invalidated here — key bindings don't
         // change when a menu closes. Only invalidated on config/command changes.
     }
@@ -342,6 +343,7 @@ impl AppState {
     pub fn open_sessions_submenu(&mut self) {
         self.ui.close_all_submenus();
         self.ui.projects_submenu.open();
+        self.load_projects_tree();
     }
 
     /// Open Tools submenu

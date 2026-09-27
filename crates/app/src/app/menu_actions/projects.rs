@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use super::super::App;
+use crate::projects_menu::ProjectsTarget;
 use crate::state::{ActiveModal, PendingAction};
 use crate::PanelExt;
 use termide_app_core::Panel;
@@ -176,25 +177,41 @@ impl App {
     // Sessions submenu handling
     // =========================================================================
 
-    /// Handle keyboard event in Sessions submenu
+    /// Handle keyboard event in the Projects menu. Keys act on the deepest
+    /// open level: Right/Enter open a directory, Left/Esc close it again.
     pub(in crate::app) fn handle_projects_submenu_key(
         &mut self,
         key: crossterm::event::KeyEvent,
     ) -> Result<()> {
         use super::navigate_submenu;
         use super::SubmenuNavAction;
-        use termide_ui_render::PROJECTS_SUBMENU_ITEM_COUNT;
 
-        match navigate_submenu(
-            &key,
-            &mut self.state.ui.projects_submenu,
-            PROJECTS_SUBMENU_ITEM_COUNT,
-            &[],
-        ) {
+        let levels = self.state.projects_menu_levels(self.screen_rect());
+        let depth = levels.len() - 1;
+        let level = &levels[depth];
+        let target = ProjectsTarget::of(level.selected_row());
+        let mut cursor = termide_state::SubmenuState {
+            open: true,
+            selected: level.selected,
+        };
+        let action = navigate_submenu(&key, &mut cursor, level.items.len(), &level.separators());
+        drop(levels);
+        self.select_projects_row(depth, cursor.selected);
+
+        match action {
+            SubmenuNavAction::Close if depth > 0 => {
+                self.state.ui.projects_nested.pop();
+            }
             SubmenuNavAction::Close => self.state.close_menu(),
-            SubmenuNavAction::Execute => self.execute_projects_submenu_action()?,
-            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Left if depth > 0 => {
+                self.state.ui.projects_nested.pop();
+            }
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Right if matches!(target, ProjectsTarget::Submenu) => {
+                self.state.ui.projects_nested.push(0);
+            }
+            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Execute => self.activate_projects_target(target, false)?,
             SubmenuNavAction::Rename
             | SubmenuNavAction::Edit
             | SubmenuNavAction::Delete
@@ -203,22 +220,45 @@ impl App {
         Ok(())
     }
 
-    /// Execute action for selected Sessions submenu item
-    pub(in crate::app) fn execute_projects_submenu_action(&mut self) -> Result<()> {
-        match self.state.ui.projects_submenu.selected {
-            PROJECTS_SUBMENU_NEW => {
+    /// Select `index` at menu level `depth` and close every level below it.
+    pub(in crate::app) fn select_projects_row(&mut self, depth: usize, index: usize) {
+        let ui = &mut self.state.ui;
+        ui.projects_nested.truncate(depth);
+        match depth.checked_sub(1) {
+            None => ui.projects_submenu.selected = index,
+            Some(parent) => ui.projects_nested[parent] = index,
+        }
+    }
+
+    /// Carry out the selected row. `was_open` is whether the row's submenu
+    /// was open before it was selected, so a second click folds it again.
+    pub(in crate::app) fn activate_projects_target(
+        &mut self,
+        target: ProjectsTarget,
+        was_open: bool,
+    ) -> Result<()> {
+        match target {
+            ProjectsTarget::Submenu if !was_open => self.state.ui.projects_nested.push(0),
+            ProjectsTarget::Submenu | ProjectsTarget::None => {}
+            ProjectsTarget::Project(path) => {
+                self.state.close_menu();
+                if path != self.project_root {
+                    self.switch_to_session(path)?;
+                }
+            }
+            ProjectsTarget::Action(PROJECTS_SUBMENU_NEW) => {
                 self.state.close_menu();
                 self.handle_new_project()?;
             }
-            PROJECTS_SUBMENU_SWITCH => {
+            ProjectsTarget::Action(PROJECTS_SUBMENU_SWITCH) => {
                 self.state.close_menu();
                 self.handle_open_projects_modal()?;
             }
-            PROJECTS_SUBMENU_CHANGE_ROOT => {
+            ProjectsTarget::Action(PROJECTS_SUBMENU_CHANGE_ROOT) => {
                 self.state.close_menu();
                 self.handle_change_root_path()?;
             }
-            _ => {}
+            ProjectsTarget::Action(_) => {}
         }
         Ok(())
     }

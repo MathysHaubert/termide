@@ -15,7 +15,7 @@ use termide_theme::Theme;
 use termide_ui_render::{
     get_ai_agent_choice_items, get_ai_items, get_bookmarks_group_items, get_bookmarks_items,
     get_commands_group_items, get_commands_items, get_menu_item_x_position, get_options_items,
-    get_projects_items, get_shell_items, get_tools_items, render_collapsed_panel, render_dividers,
+    get_shell_items, get_tools_items, render_collapsed_panel, render_dividers,
     render_expanded_panel, render_menu, render_v_divider_ghost, Dropdown, ExpandedPanelParams,
     LanguageDropdown, MenuRenderParams, ThemeDropdown, AI_MENU_INDEX, BOOKMARKS_MENU_INDEX,
     COMMANDS_MENU_INDEX, OPTIONS_MENU_INDEX, PROJECTS_MENU_INDEX, TOOLS_SUBMENU_TERMINAL,
@@ -37,20 +37,12 @@ fn render_dropdowns_and_modals(
         && state.ui.selected_menu_item == Some(PROJECTS_MENU_INDEX)
         && state.ui.projects_submenu.open
     {
-        // Calculate position of Sessions menu item
-        let menu_x = get_menu_item_x_position(PROJECTS_MENU_INDEX);
-        let dropdown_y = 1_u16; // Below menu bar
-
-        // Render Sessions submenu
-        let sessions_items = get_projects_items(Some(&state.config.general.keybindings));
-        let dropdown = Dropdown::new(
-            &sessions_items,
-            state.ui.projects_submenu.selected,
-            menu_x,
-            dropdown_y,
-            theme,
-        );
-        dropdown.render(frame.buffer_mut());
+        // The dropdown, then each open directory submenu to its right.
+        let screen = frame.area();
+        for level in state.projects_menu_levels(screen) {
+            Dropdown::new(&level.items, level.selected, level.x, level.y, theme)
+                .render(frame.buffer_mut());
+        }
     }
 
     // Render Tools submenu if open

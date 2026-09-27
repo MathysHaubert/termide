@@ -382,7 +382,7 @@ impl App {
     }
 
     /// Switch to a different session
-    fn switch_to_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+    pub(super) fn switch_to_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
         // 1. Save current session
         self.auto_save_session();
 

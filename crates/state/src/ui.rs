@@ -309,6 +309,8 @@ pub struct UiState {
     pub vdrag: VerticalDividerDragState,
     /// Sessions submenu state
     pub projects_submenu: SubmenuState,
+    /// Selected row of each open project-tree submenu, outermost first.
+    pub projects_nested: Vec<usize>,
     /// Tools submenu state
     pub tools_submenu: SubmenuState,
     /// Tools nested submenu state (shell picker inside Terminal)
@@ -358,6 +360,7 @@ impl UiState {
     /// and their nested submenus. Use before opening a specific submenu.
     pub fn close_all_submenus(&mut self) {
         self.projects_submenu.close();
+        self.projects_nested.clear();
         self.tools_submenu.close();
         self.tools_nested.close();
         self.options_submenu.close();

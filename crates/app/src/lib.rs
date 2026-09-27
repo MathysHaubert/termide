@@ -12,6 +12,7 @@
 pub mod app;
 pub mod layout_session;
 pub mod panel_ext;
+pub mod projects_menu;
 pub mod state;
 mod state_operations;
 mod state_types;
