@@ -236,6 +236,46 @@ mod tests {
         assert!(result.width() <= 4);
     }
 
+    struct Waiting(bool);
+
+    impl Panel for Waiting {
+        fn name(&self) -> &'static str {
+            "waiting"
+        }
+        fn title(&self) -> String {
+            "waiting".to_string()
+        }
+        fn render(&mut self, _: Rect, _: &mut Buffer, _: &termide_core::RenderContext) {}
+        fn handle_key(&mut self, _: termide_core::KeyChord) -> Vec<termide_core::PanelEvent> {
+            vec![]
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn needs_attention(&self) -> bool {
+            self.0
+        }
+    }
+
+    #[test]
+    fn an_unfocused_panel_that_waits_highlights_its_title() {
+        let theme = Theme::default();
+        let warn = title_style(&Waiting(true), false, &theme);
+        assert_eq!(warn.fg, Some(theme.warning));
+        // Focused, or with nothing waiting, the title follows the border.
+        assert_eq!(
+            title_style(&Waiting(true), true, &theme),
+            border_style(true, &theme)
+        );
+        assert_eq!(
+            title_style(&Waiting(false), false, &theme),
+            border_style(false, &theme)
+        );
+    }
+
     #[test]
     fn test_truncate_only_status_no_main() {
         // Edge case: title that's mostly status
@@ -336,6 +376,29 @@ pub struct ExpandedPanelParams {
     pub omit_bottom_border: bool,
 }
 
+/// Style of a panel's border: accented when focused, dimmed otherwise.
+fn border_style(is_focused: bool, theme: &Theme) -> Style {
+    if is_focused {
+        Style::default()
+            .fg(theme.accented_fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.disabled)
+    }
+}
+
+/// Style of a panel's header text: the border's, except an unfocused panel
+/// that waits for the user stands out in the warning color.
+fn title_style(panel: &dyn Panel, is_focused: bool, theme: &Theme) -> Style {
+    if !is_focused && panel.needs_attention() {
+        Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        border_style(is_focused, theme)
+    }
+}
+
 /// Render collapsed panel (header only, 1 line).
 pub fn render_collapsed_panel(
     panel: &dyn Panel,
@@ -350,13 +413,8 @@ pub fn render_collapsed_panel(
     }
 
     let title = panel.title();
-    let style = if is_focused {
-        Style::default()
-            .fg(theme.accented_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme.disabled)
-    };
+    let style = border_style(is_focused, theme);
+    let title_style = title_style(panel, is_focused, theme);
 
     let y = area.y;
 
@@ -375,7 +433,7 @@ pub fn render_collapsed_panel(
     let buttons_width = buttons.width() as u16;
 
     if area.width > 1 + buttons_width {
-        buf.set_string(area.x + 1, y, buttons, style);
+        buf.set_string(area.x + 1, y, buttons, title_style);
     }
 
     // Title (smart truncation preserving spinner and status)
@@ -389,7 +447,7 @@ pub fn render_collapsed_panel(
     let title_width = display_title.width();
 
     if !display_title.is_empty() {
-        buf.set_string(title_start, y, &display_title, style);
+        buf.set_string(title_start, y, &display_title, title_style);
     }
 
     // Fill remaining with horizontal line
@@ -417,13 +475,8 @@ pub fn render_expanded_panel(
     }
 
     let title = panel.title();
-    let style = if is_focused {
-        Style::default()
-            .fg(theme.accented_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme.disabled)
-    };
+    let style = border_style(is_focused, theme);
+    let title_style = title_style(&**panel, is_focused, theme);
 
     // Create title: [≡] icon Title (with emoji) or [≡] Title (unicode mode)
     // Smart truncate title to fit within panel width
@@ -437,10 +490,10 @@ pub fn render_expanded_panel(
     // Available width: panel width - 2 (borders) - buttons - 1 (trailing space)
     let available_for_title = (area.width as usize).saturating_sub(2 + buttons_width + 1);
     let truncated_title = smart_truncate_title(&title, available_for_title);
-    let title_line = panel.colorize_title(&truncated_title, style);
-    let mut title_spans = vec![Span::styled(buttons_text, style)];
+    let title_line = panel.colorize_title(&truncated_title, title_style);
+    let mut title_spans = vec![Span::styled(buttons_text, title_style)];
     title_spans.extend(title_line.spans);
-    title_spans.push(Span::styled(" ", style));
+    title_spans.push(Span::styled(" ", title_style));
 
     let borders = if params.omit_bottom_border {
         Borders::TOP | Borders::LEFT | Borders::RIGHT

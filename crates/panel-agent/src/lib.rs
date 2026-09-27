@@ -667,6 +667,9 @@ pub struct AgentPanel {
     run_start: Option<Instant>,
     /// The current run hit an error or was aborted, so its closing line is `✗`.
     run_failed: bool,
+    /// A run ended or a question arrived since the panel was last rendered
+    /// focused; its header is highlighted while it is unfocused.
+    attention: bool,
     /// The current run stopped at a `/pause` (its closing line says so).
     run_paused: bool,
     /// A `/pause` was asked for and the run has not reached a step boundary
@@ -901,6 +904,7 @@ impl AgentPanel {
             goal_errored: false,
             run_start: None,
             run_failed: false,
+            attention: false,
             run_paused: false,
             pause_requested: false,
             pause_start: None,
@@ -1962,6 +1966,7 @@ impl AgentPanel {
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.activity = None;
+                self.attention = true;
                 if self.run_paused {
                     // The run waits at a pause: its line ticks the pause's
                     // length (no time of day), and the run's own clock stays
@@ -2242,6 +2247,7 @@ impl AgentPanel {
                     .with_detail(text.clone())
                     .with_cancel(t.agent_handoff_dismiss());
                     self.pending = Some(Pending::Handoff { form, brief: text });
+                    self.attention = true;
                 }
                 Err(error) => self.notice(
                     termide_i18n::t().agent_notice_handoff_failed_fmt(&error.to_string()),
@@ -2330,6 +2336,7 @@ impl AgentPanel {
                 form,
                 answers,
             });
+            self.attention = true;
             // The question pauses the running call until it is answered.
             let before = self.running_tool_wait();
             self.permission_wait = Some((Instant::now(), before));
@@ -5244,6 +5251,10 @@ impl Panel for AgentPanel {
         format!("{label}: {subject}")
     }
 
+    fn needs_attention(&self) -> bool {
+        self.attention
+    }
+
     fn context_menu_items(&self) -> Vec<(String, &'static str)> {
         let t = termide_i18n::t();
         // Only actions with no home elsewhere. New/switch/delete sessions also
@@ -5394,6 +5405,10 @@ impl Panel for AgentPanel {
             return;
         }
         buf.set_style(area, Style::default().fg(self.colors.fg).bg(self.colors.bg));
+        // Shown focused, whatever waited is now in front of the user.
+        if ctx.is_focused {
+            self.attention = false;
+        }
 
         let input_rows = self.input_rows(area.height, area.width);
         // The input bar carries its own titled top border, which divides it
@@ -7079,6 +7094,15 @@ mod tests {
     }
 
     fn render_buf(panel: &mut AgentPanel, width: u16, height: u16) -> Buffer {
+        render_buf_focused(panel, width, height, true)
+    }
+
+    fn render_buf_focused(
+        panel: &mut AgentPanel,
+        width: u16,
+        height: u16,
+        is_focused: bool,
+    ) -> Buffer {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
         let colors = ThemeColors::default();
@@ -7091,7 +7115,7 @@ mod tests {
         let ctx = RenderContext {
             theme: &colors,
             config: &config,
-            is_focused: true,
+            is_focused,
             panel_index: 0,
             terminal_width: width,
             terminal_height: height,
@@ -7100,6 +7124,21 @@ mod tests {
         };
         panel.render(area, &mut buf, &ctx);
         buf
+    }
+
+    #[test]
+    fn a_finished_run_asks_for_attention_until_the_panel_is_shown_focused() {
+        let mut panel = AgentPanel::new(setup(vec![]));
+        assert!(!panel.needs_attention());
+        panel.apply(AgentEvent::AgentStart);
+        assert!(!panel.needs_attention());
+        panel.apply(AgentEvent::AgentEnd);
+        assert!(panel.needs_attention());
+        // Rendered in an inactive group it keeps waiting.
+        render_buf_focused(&mut panel, 40, 12, false);
+        assert!(panel.needs_attention());
+        render_buf(&mut panel, 40, 12);
+        assert!(!panel.needs_attention());
     }
 
     #[test]

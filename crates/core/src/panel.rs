@@ -469,6 +469,13 @@ pub trait Panel: Any {
         HeightMode::Free
     }
 
+    /// Whether the panel waits for the user (a question to answer, finished
+    /// work to look at). The header of an unfocused panel is highlighted while
+    /// this holds; the panel clears it once it renders focused.
+    fn needs_attention(&self) -> bool {
+        false
+    }
+
     /// Colorize the truncated title for the panel header.
     ///
     /// Override this to apply per-segment coloring (e.g. git indicators).

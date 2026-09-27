@@ -518,7 +518,8 @@ name the pattern they record (`cargo build *`, a site, a path). `↑`/`↓` and
 `Enter`, or the row's digit, answer it; a click picks a row and a second click
 (or `Enter`) confirms it, so a stray click cannot answer; `Esc` stops the run.
 The status line announces the question too, so a panel that is not in focus
-does not ask unseen. "In this project" appends the rule to
+does not ask unseen; the header of such a panel turns the warning color until
+the panel is focused, and so does it when a run ends. "In this project" appends the rule to
 `.termide/config.toml` in the project, "everywhere" to the global
 configuration; answers for the session live until the panel closes.
 
