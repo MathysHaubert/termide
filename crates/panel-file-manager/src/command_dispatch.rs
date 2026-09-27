@@ -95,7 +95,9 @@ impl FileManager {
             FmCommand::GoParent => {
                 // Use VfsState for navigation (works for both local and remote paths)
                 // navigate_up returns None if already at root - don't refresh in that case
-                if let Some(dir_name) = self.vfs.navigate_up() {
+                if self.at_local_drive_root() {
+                    events.push(PanelEvent::OpenDirectorySwitcher);
+                } else if let Some(dir_name) = self.vfs.navigate_up() {
                     self.navigation.save_for_going_up(dir_name);
                     // Sync local path with VfsState
                     self.current_path = self.vfs.path_buf();

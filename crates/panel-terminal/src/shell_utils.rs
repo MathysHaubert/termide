@@ -326,21 +326,95 @@ pub fn detect_shell() -> String {
 /// - pwsh / powershell: `-NoLogo`
 /// - cmd: no args
 pub fn get_shell_args(shell_path: &str) -> Vec<&'static str> {
-    let shell_name = std::path::Path::new(shell_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    // Strip .exe suffix for matching on Windows
-    let shell_name = shell_name.strip_suffix(".exe").unwrap_or(&shell_name);
-
-    match shell_name {
+    match shell_name(shell_path).as_str() {
         "fish" => vec!["-l"],      // login shell
         "zsh" => vec!["-l", "-i"], // login + interactive
         "bash" => vec![],          // PTY will make it interactive automatically
         "pwsh" | "powershell" => vec!["-NoLogo"],
         "cmd" => vec![],
         _ => vec![],
+    }
+}
+
+/// Lowercased executable name without `.exe`.
+fn shell_name(shell_path: &str) -> String {
+    let shell_name = std::path::Path::new(shell_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match shell_name.strip_suffix(".exe") {
+        Some(stem) => stem.to_string(),
+        None => shell_name,
+    }
+}
+
+/// Command syntax family of a shell, as far as typing a command into it goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShellKind {
+    /// sh, bash (Git Bash included), zsh, fish and anything unrecognised.
+    #[default]
+    Posix,
+    /// cmd.exe.
+    Cmd,
+    /// Windows PowerShell and PowerShell Core.
+    PowerShell,
+}
+
+impl ShellKind {
+    pub fn from_shell_path(shell_path: &str) -> Self {
+        match shell_name(shell_path).as_str() {
+            "cmd" => Self::Cmd,
+            "pwsh" | "powershell" => Self::PowerShell,
+            _ => Self::Posix,
+        }
+    }
+
+    /// A command line changing to `path`, quoted for this shell. cmd needs
+    /// `/d` to switch drives; neither cmd nor PowerShell understands POSIX
+    /// quoting.
+    pub fn cd_command(self, path: &std::path::Path) -> String {
+        let path = path.to_string_lossy();
+        match self {
+            Self::Posix => format!("cd '{}'", path.replace('\'', "'\\''")),
+            // A Windows path cannot contain `"`, so plain quoting is enough.
+            Self::Cmd => format!("cd /d \"{path}\""),
+            Self::PowerShell => format!("Set-Location -LiteralPath '{}'", path.replace('\'', "''")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn shell_kind_from_executable_name() {
+        assert_eq!(ShellKind::from_shell_path("cmd.exe"), ShellKind::Cmd);
+        assert_eq!(
+            ShellKind::from_shell_path("PWSH.EXE"),
+            ShellKind::PowerShell
+        );
+        assert_eq!(
+            ShellKind::from_shell_path("powershell"),
+            ShellKind::PowerShell
+        );
+        assert_eq!(ShellKind::from_shell_path("/bin/zsh"), ShellKind::Posix);
+        assert_eq!(
+            ShellKind::from_shell_path("wsl -d Ubuntu"),
+            ShellKind::Posix
+        );
+    }
+
+    #[test]
+    fn cd_command_quotes_for_each_shell() {
+        let path = Path::new(r"D:\it's here");
+        assert_eq!(ShellKind::Posix.cd_command(path), r"cd 'D:\it'\''s here'");
+        assert_eq!(ShellKind::Cmd.cd_command(path), r#"cd /d "D:\it's here""#);
+        assert_eq!(
+            ShellKind::PowerShell.cd_command(path),
+            r"Set-Location -LiteralPath 'D:\it''s here'"
+        );
     }
 }

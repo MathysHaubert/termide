@@ -188,9 +188,10 @@ impl FileManager {
             return false; // Stale result — user navigated away
         }
 
-        // Build entries with ".." prefix
+        // Build entries with ".." prefix. A drive root keeps it too: from
+        // there ".." offers the other drives.
         let mut entries = Vec::new();
-        if self.current_path.parent().is_some() {
+        if self.current_path.parent().is_some() || termide_vfs::is_drive_root(&self.current_path) {
             entries.push(FileEntry {
                 name: "..".to_string(),
                 is_dir: true,

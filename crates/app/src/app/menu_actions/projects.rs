@@ -136,6 +136,20 @@ impl App {
             }
         }
 
+        // Drive roots (Windows only): the one way to another drive without
+        // typing its path, and what ".." at a drive root opens.
+        for path in termide_vfs::drive_roots() {
+            if items.iter().any(|item| item.path == path) {
+                continue;
+            }
+            items.push(DirectoryItem {
+                display: path.display().to_string(),
+                is_current: current_dir.as_ref() == Some(&path),
+                path,
+                is_bookmark: false,
+            });
+        }
+
         // Sort items alphabetically by display path
         items.sort_by(|a, b| a.display.cmp(&b.display));
 

@@ -442,6 +442,12 @@ impl FileManager {
         self.vfs.is_remote()
     }
 
+    /// At the root of a local Windows drive or share, where going up means
+    /// picking another drive rather than a parent directory.
+    pub(crate) fn at_local_drive_root(&self) -> bool {
+        !self.is_remote() && termide_vfs::is_drive_root(&self.current_path)
+    }
+
     /// Get display path (includes protocol for remote paths).
     pub fn display_path(&self) -> String {
         self.vfs.display_path()

@@ -60,7 +60,7 @@ pub mod fuse_mount;
 // Re-exports for convenience
 pub use cache::DirCache;
 pub use error::{VfsError, VfsResult};
-pub use local::LocalFileSystem;
+pub use local::{drive_roots, is_drive_root, LocalFileSystem};
 pub use traits::VfsProvider;
 pub use types::{
     AuthMethod, ConnectOptions, ConnectionState, CopyProgress, DownloadProgress, UploadProgress,

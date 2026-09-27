@@ -26,6 +26,39 @@ fn map_io_error(e: std::io::Error, path: PathBuf) -> VfsError {
     }
 }
 
+/// Whether `path` is the root of a Windows drive or UNC share (`C:\`,
+/// `\\server\share\`): a local path with no parent that still is not the whole
+/// filesystem, because the other drives sit beside it rather than above it.
+/// Always false on Unix, where `/` has no prefix.
+pub fn is_drive_root(path: &Path) -> bool {
+    path.parent().is_none()
+        && matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(_))
+        )
+}
+
+/// Roots of the mounted drives (`C:\`, `D:\`, ...), in letter order. Empty on
+/// Unix, where every mount already hangs below `/`.
+///
+/// Reads the drive bitmask only: no drive is touched, so an empty card reader
+/// or a disconnected network letter costs nothing here.
+pub fn drive_roots() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        // SAFETY: takes no arguments and only returns a bitmask.
+        let mask = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
+        (0..26u8)
+            .filter(|bit| mask & (1 << bit) != 0)
+            .map(|bit| PathBuf::from(format!("{}:\\", (b'A' + bit) as char)))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 /// Local filesystem provider.
 ///
 /// This provider wraps the standard library's filesystem operations
@@ -660,6 +693,27 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let provider = LocalFileSystem::new();
         (provider, temp_dir)
+    }
+
+    #[test]
+    fn unix_root_is_not_a_drive_root() {
+        assert!(!is_drive_root(Path::new("/")));
+        assert!(!is_drive_root(Path::new("/home")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_and_share_roots_are_drive_roots() {
+        assert!(is_drive_root(Path::new(r"C:\")));
+        assert!(is_drive_root(Path::new(r"\\server\share\")));
+        assert!(!is_drive_root(Path::new(r"C:\Users")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_roots_include_the_system_drive() {
+        let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        assert!(drive_roots().contains(&PathBuf::from(format!("{system}\\"))));
     }
 
     #[test]

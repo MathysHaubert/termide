@@ -702,12 +702,7 @@ impl App {
 
                 // Try as Terminal
                 if let Some(terminal) = panel.as_terminal_mut() {
-                    // Shell-escape the path for cd command
-                    // Simple escaping: wrap in single quotes, escape existing single quotes
-                    let path_str = path.to_string_lossy();
-                    let escaped_path = format!("'{}'", path_str.replace('\'', "'\\''"));
-                    let cd_command = format!("cd {}\n", escaped_path);
-                    let _ = terminal.send_command(&cd_command);
+                    let _ = terminal.send_cd(path);
                     self.state.set_info(format!("cd {}", path.display()));
                     return Ok(());
                 }

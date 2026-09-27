@@ -127,6 +127,8 @@ pub struct Terminal {
     /// Last working directory reported to the app, so a `cd` inside the shell
     /// is announced once instead of on every tick.
     last_reported_cwd: Option<std::path::PathBuf>,
+    /// Syntax the shell expects when the app types a command into it.
+    shell_kind: shell_utils::ShellKind,
 }
 
 /// Where a terminal panel's title text comes from.
@@ -273,6 +275,7 @@ impl Terminal {
             )),
             cached_cwd: std::sync::Mutex::new(None),
             last_reported_cwd: None,
+            shell_kind: shell_utils::ShellKind::default(),
         }
     }
 
@@ -365,6 +368,7 @@ impl Terminal {
         );
         term.title = TitleSource::Shell { user_host };
         term.initial_cwd = working_dir;
+        term.shell_kind = shell_utils::ShellKind::from_shell_path(shell_path);
         Ok(term)
     }
 
@@ -577,6 +581,11 @@ impl Terminal {
         writer.write_all(data)?;
         writer.flush()?;
         Ok(())
+    }
+
+    /// Change the shell's directory to `path`, quoted for this shell.
+    pub fn send_cd(&mut self, path: &std::path::Path) -> Result<()> {
+        self.send_command(&self.shell_kind.cd_command(path))
     }
 
     /// Send a command to the terminal and execute it (adds Enter)

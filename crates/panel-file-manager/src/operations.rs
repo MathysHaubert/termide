@@ -266,6 +266,9 @@ impl FileManager {
         }
 
         if is_parent {
+            if self.at_local_drive_root() {
+                return Some(PanelEvent::OpenDirectorySwitcher);
+            }
             if let Some(dir_name) = self.current_path.file_name() {
                 self.navigation
                     .save_for_going_up(dir_name.to_string_lossy().into_owned());

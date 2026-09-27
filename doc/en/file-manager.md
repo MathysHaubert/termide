@@ -26,6 +26,10 @@ authentication setup.
 | `Tab`             | Go to next panel                           |
 | `Shift+Tab`       | Go to previous panel                       |
 
+On Windows the directory switcher also lists every drive. At the root of a
+drive or network share there is no parent to go to, so `..` and `Backspace`
+open the switcher there instead.
+
 ## File Selection
 
 | Shortcut           | Action                                     |
