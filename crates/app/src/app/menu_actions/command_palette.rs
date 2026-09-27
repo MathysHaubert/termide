@@ -103,7 +103,7 @@ impl App {
                 },
             ),
             (
-                "open_projects",
+                "switch_directory",
                 CommandEntry {
                     label: t.help_desc_switch_directory().into(),
                     category: t.palette_category_navigation(),

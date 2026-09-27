@@ -342,6 +342,9 @@ impl App {
             "open_bookmark_add" => self.handle_add_bookmark()?,
             "open_command_palette" => self.handle_open_command_palette()?,
             "open_path" => self.open_path_prompt(),
+            // Not a global binding (the panels own the key), but the palette
+            // offers it for the focused panel.
+            "switch_directory" => self.handle_open_directory_switcher()?,
             "close_panel" => self.handle_close_panel_request()?,
             "toggle_stack" => self.toggle_panel_stacking(),
             "swap_left" => self.handle_swap_panel_left()?,
