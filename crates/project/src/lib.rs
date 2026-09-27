@@ -262,6 +262,32 @@ fn merge_move(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Remove the files of the project stored in `session_dir`, then the
+/// directories left empty up to `projects_dir`.
+///
+/// Storage directories nest like the project paths they mirror, so the
+/// subdirectories of `session_dir` hold the state of projects inside this
+/// one and are kept.
+fn delete_project_files(session_dir: &Path, projects_dir: &Path) -> std::io::Result<()> {
+    if !session_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(session_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    let mut dir = session_dir;
+    while dir != projects_dir && dir.starts_with(projects_dir) && fs::remove_dir(dir).is_ok() {
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    Ok(())
+}
+
 impl Session {
     /// Get the storage directory for a specific project
     ///
@@ -279,14 +305,12 @@ impl Session {
         Ok(Self::get_project_dir(project_root)?.join("session.toml"))
     }
 
-    /// Delete session directory for a specific project
+    /// Delete the stored state of a specific project.
     pub fn delete_session(project_root: &Path) -> Result<()> {
         let session_dir = Self::get_project_dir(project_root)?;
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir)
-                .with_context(|| format!("Failed to delete session: {}", session_dir.display()))?;
-        }
-        Ok(())
+        let projects_dir = get_data_dir()?.join(PROJECTS_DIR);
+        delete_project_files(&session_dir, &projects_dir)
+            .with_context(|| format!("Failed to delete session: {}", session_dir.display()))
     }
 
     /// Load session from file for a specific project
@@ -328,6 +352,41 @@ mod tests {
     #[derive(Serialize, Deserialize)]
     struct Panels {
         panels: Vec<PanelState>,
+    }
+
+    /// Deleting a project keeps the projects stored inside it and prunes
+    /// only the directories it leaves empty.
+    #[test]
+    fn deleting_a_project_keeps_nested_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects = tmp.path().join(PROJECTS_DIR);
+        let outer = projects.join("home/u/notes");
+        let inner = outer.join("journal");
+        let lone = projects.join("home/u/work/api");
+        for dir in [&inner, &lone] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        for file in [
+            outer.join("session.toml"),
+            outer.join("session-1.log"),
+            inner.join("session.toml"),
+            lone.join("session.toml"),
+        ] {
+            fs::write(file, "").unwrap();
+        }
+
+        delete_project_files(&outer, &projects).unwrap();
+        assert!(!outer.join("session.toml").exists());
+        assert!(!outer.join("session-1.log").exists());
+        assert!(inner.join("session.toml").exists());
+
+        delete_project_files(&lone, &projects).unwrap();
+        assert!(!projects.join("home/u/work").exists());
+        assert!(projects.join("home/u").exists());
+
+        delete_project_files(&inner, &projects).unwrap();
+        assert!(!projects.join("home").exists());
+        assert!(projects.exists());
     }
 
     /// The agent variant serialises like the others and an absent session
