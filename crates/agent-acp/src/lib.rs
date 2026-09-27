@@ -758,9 +758,7 @@ impl Shared {
 
     fn ask_permission(&self, params: &Value) -> Value {
         let call = permission_call(&params["toolCall"]);
-        let ctx = ToolContext {
-            cwd: self.cwd.clone(),
-        };
+        let ctx = ToolContext::new(self.cwd.clone());
         // The hooks decide the request as they would for the built-in agent:
         // a read-only command or a matching rule passes without a prompt, an
         // unknown one reaches the user, and a session or always grant is
@@ -1836,9 +1834,7 @@ mod tests {
         let cancel = CancelToken::new();
         let (prompter, rx) = permission_channel(cancel);
         let mut hooks = PermissionHooks::new(PermissionRules::default(), Box::new(prompter));
-        let ctx = ToolContext {
-            cwd: PathBuf::from("/tmp"),
-        };
+        let ctx = ToolContext::new(PathBuf::from("/tmp"));
         assert_eq!(hooks.before_tool_call(&call, &ctx), ToolDecision::Allow);
         assert!(
             rx.try_recv().is_err(),

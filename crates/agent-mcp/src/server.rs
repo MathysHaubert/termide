@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use serde_json::{json, Value};
-use termide_agent_core::{execute_tool, CancelToken, Hooks, ToolCall, ToolRegistry};
+use termide_agent_core::{execute_tool, CancelToken, Hooks, ToolCall, ToolContext, ToolRegistry};
 
 use crate::client::PROTOCOL_VERSION;
 
@@ -304,7 +304,7 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
             &shared.tools,
             &call,
             hooks.as_mut(),
-            &shared.cwd,
+            &ToolContext::new(shared.cwd.clone()),
             &cancel,
             &mut |_| {},
         );
@@ -321,7 +321,7 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
 mod tests {
     use super::*;
     use std::io::Read;
-    use termide_agent_core::{Tool, ToolContext, ToolDecision, ToolResultMessage, ToolUpdate};
+    use termide_agent_core::{Tool, ToolDecision, ToolResultMessage, ToolUpdate};
 
     struct Echo;
 

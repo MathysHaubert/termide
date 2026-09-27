@@ -928,12 +928,7 @@ pub fn run_agent_headless(
                 }
             }
             AgentEvent::ToolExecutionStart { call } => {
-                let subject = subject_of(
-                    &call,
-                    &ToolContext {
-                        cwd: cwd.to_path_buf(),
-                    },
-                );
+                let subject = subject_of(&call, &ToolContext::new(cwd.to_path_buf()));
                 if !quiet {
                     if subject.is_empty() {
                         eprintln!("· {}", call.name);

@@ -1,0 +1,151 @@
+//! Questions the model asks the user in the middle of a run.
+//!
+//! The `question` tool blocks on the agent thread until the user answers, the
+//! way a permission prompt does: the questions travel to the panel over a
+//! channel and the wait wakes regularly to notice an abort. A run with no one
+//! to ask — a subagent, headless mode — has no [`UserAsker`] in its
+//! [`ToolContext`](crate::ToolContext), and the tool says so to the model.
+
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::Duration;
+
+use crate::cancel::CancelToken;
+
+/// One choice offered for a question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionOption {
+    /// What the user picks, and what the answer reports.
+    pub label: String,
+    /// What picking it means; may be empty.
+    pub description: String,
+}
+
+/// One question: its text, a short header naming its topic, the choices, and
+/// whether several of them can be picked. An answer of the user's own is
+/// always on offer besides the choices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    pub header: String,
+    pub question: String,
+    pub options: Vec<QuestionOption>,
+    pub multi_select: bool,
+}
+
+/// The user's answer to one question: the labels picked, in the order the
+/// options were offered, and the text they typed, if any.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QuestionAnswer {
+    pub chosen: Vec<String>,
+    pub custom: Option<String>,
+}
+
+/// How a set of questions ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuestionReply {
+    /// One answer per question, in their order.
+    Answered(Vec<QuestionAnswer>),
+    /// The user dismissed the questions, or the run stopped before they
+    /// answered.
+    Declined,
+}
+
+/// One outstanding set of questions and the channel for its reply.
+pub struct QuestionEnvelope {
+    pub questions: Vec<Question>,
+    pub reply: Sender<QuestionReply>,
+}
+
+/// Asks the panel's user. Cloneable and shared by the calls of one run; each
+/// ask blocks until its reply comes back.
+#[derive(Clone)]
+pub struct UserAsker {
+    tx: Sender<QuestionEnvelope>,
+    cancel: CancelToken,
+}
+
+impl std::fmt::Debug for UserAsker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserAsker").finish_non_exhaustive()
+    }
+}
+
+/// Build an asker and the receiver the panel polls from `tick()`.
+#[must_use]
+pub fn question_channel(cancel: CancelToken) -> (UserAsker, Receiver<QuestionEnvelope>) {
+    let (tx, rx) = mpsc::channel();
+    (UserAsker { tx, cancel }, rx)
+}
+
+impl UserAsker {
+    /// Put `questions` to the user and wait for the reply. A stopped run, or
+    /// a panel that went away, counts as declined.
+    #[must_use]
+    pub fn ask(&self, questions: Vec<Question>) -> QuestionReply {
+        let (reply, answer) = mpsc::channel();
+        let envelope = QuestionEnvelope { questions, reply };
+        if self.tx.send(envelope).is_err() {
+            return QuestionReply::Declined;
+        }
+        loop {
+            match answer.recv_timeout(Duration::from_millis(100)) {
+                Ok(reply) => return reply,
+                Err(RecvTimeoutError::Timeout) if self.cancel.is_cancelled() => {
+                    return QuestionReply::Declined;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return QuestionReply::Declined,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn question() -> Question {
+        Question {
+            header: "Scope".into(),
+            question: "Which crates?".into(),
+            options: vec![QuestionOption {
+                label: "core".into(),
+                description: String::new(),
+            }],
+            multi_select: false,
+        }
+    }
+
+    #[test]
+    fn the_reply_comes_back_to_the_asking_thread() {
+        let (asker, rx) = question_channel(CancelToken::new());
+        let worker = std::thread::spawn(move || asker.ask(vec![question()]));
+        let envelope = rx.recv().unwrap();
+        assert_eq!(envelope.questions, vec![question()]);
+        let answer = QuestionAnswer {
+            chosen: vec!["core".into()],
+            custom: None,
+        };
+        envelope
+            .reply
+            .send(QuestionReply::Answered(vec![answer.clone()]))
+            .unwrap();
+        assert_eq!(
+            worker.join().unwrap(),
+            QuestionReply::Answered(vec![answer])
+        );
+    }
+
+    #[test]
+    fn a_dropped_question_or_a_stop_declines() {
+        let (asker, rx) = question_channel(CancelToken::new());
+        let worker = std::thread::spawn(move || asker.ask(vec![question()]));
+        drop(rx.recv().unwrap());
+        assert_eq!(worker.join().unwrap(), QuestionReply::Declined);
+
+        let cancel = CancelToken::new();
+        let (asker, _rx) = question_channel(cancel.clone());
+        let worker = std::thread::spawn(move || asker.ask(vec![question()]));
+        cancel.cancel();
+        assert_eq!(worker.join().unwrap(), QuestionReply::Declined);
+    }
+}

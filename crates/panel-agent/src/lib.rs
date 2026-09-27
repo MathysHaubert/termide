@@ -8906,9 +8906,7 @@ mod tests {
             ["bash".to_string(), "skill:review".to_string()].into(),
         ));
         let mut guard = ToolsetGuard { blocked };
-        let ctx = ToolContext {
-            cwd: PathBuf::from("/tmp"),
-        };
+        let ctx = ToolContext::new(PathBuf::from("/tmp"));
         let call = |name: &str, args: serde_json::Value| ToolCall {
             id: "c".into(),
             name: name.into(),

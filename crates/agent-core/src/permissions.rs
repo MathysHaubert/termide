@@ -1152,9 +1152,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn ctx() -> ToolContext {
-        ToolContext {
-            cwd: PathBuf::from("/proj"),
-        }
+        ToolContext::new(PathBuf::from("/proj"))
     }
 
     fn call(name: &str, args: Value) -> ToolCall {

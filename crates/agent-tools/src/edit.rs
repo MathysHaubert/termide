@@ -329,9 +329,7 @@ mod tests {
             name: "edit".into(),
             arguments: args,
         };
-        let ctx = ToolContext {
-            cwd: dir.to_path_buf(),
-        };
+        let ctx = ToolContext::new(dir.to_path_buf());
         EditTool.execute(&call, &ctx, &mut |_| {}, &CancelToken::new())
     }
 

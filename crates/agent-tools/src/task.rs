@@ -134,9 +134,7 @@ mod tests {
     fn run_with(tool: &TaskTool, args: Value) -> ToolResultMessage {
         tool.execute(
             &call(args),
-            &ToolContext {
-                cwd: std::env::temp_dir(),
-            },
+            &ToolContext::new(std::env::temp_dir()),
             &mut |_| {},
             &CancelToken::new(),
         )

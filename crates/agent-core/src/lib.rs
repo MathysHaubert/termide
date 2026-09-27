@@ -20,6 +20,7 @@
 
 pub mod acp;
 pub mod agent;
+pub mod ask;
 pub mod cancel;
 pub mod checkpoints;
 pub mod commands;
@@ -42,6 +43,10 @@ pub use acp::{AcpConfig, AcpFlavor};
 pub use agent::{
     execute_tool, Agent, AgentConfig, AgentEvent, ChainedHooks, Hooks, NoHooks, QueueHandle,
     QueueMode, ToolDecision,
+};
+pub use ask::{
+    question_channel, Question, QuestionAnswer, QuestionEnvelope, QuestionOption, QuestionReply,
+    UserAsker,
 };
 pub use cancel::CancelToken;
 pub use checkpoints::{CheckpointHooks, CheckpointStore, SavedFile, Undone};

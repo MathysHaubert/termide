@@ -303,9 +303,7 @@ mod tests {
         );
         let tool = FetchTool::new(web);
         let cancel = CancelToken::new();
-        let ctx = ToolContext {
-            cwd: std::env::temp_dir(),
-        };
+        let ctx = ToolContext::new(std::env::temp_dir());
         let first = tool.execute(
             &call(
                 "fetch",
@@ -339,9 +337,7 @@ mod tests {
     fn fetch_refuses_other_schemes_and_bad_urls() {
         let tool = FetchTool::new(http_web());
         let cancel = CancelToken::new();
-        let ctx = ToolContext {
-            cwd: std::env::temp_dir(),
-        };
+        let ctx = ToolContext::new(std::env::temp_dir());
         for url in ["file:///etc/passwd", "not a url"] {
             let result = tool.execute(
                 &call("fetch", json!({ "url": url })),
@@ -358,9 +354,7 @@ mod tests {
         let tool = WebSearchTool::new(http_web());
         let result = tool.execute(
             &call("web_search", json!({ "query": "rust" })),
-            &ToolContext {
-                cwd: std::env::temp_dir(),
-            },
+            &ToolContext::new(std::env::temp_dir()),
             &mut |_| {},
             &CancelToken::new(),
         );

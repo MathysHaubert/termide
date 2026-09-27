@@ -265,9 +265,7 @@ mod tests {
         std::fs::write(&existing, "before").unwrap();
         let store = Arc::new(Mutex::new(CheckpointStore::for_session(tmp.path(), "s1")));
         let mut hooks = CheckpointHooks::new(Arc::clone(&store));
-        let ctx = ToolContext {
-            cwd: tmp.path().to_path_buf(),
-        };
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
         let call = |name: &str, path: &str| ToolCall {
             id: "c".into(),
             name: name.into(),

@@ -290,9 +290,7 @@ mod tests {
     }
 
     fn ctx() -> ToolContext {
-        ToolContext {
-            cwd: PathBuf::from("/tmp"),
-        }
+        ToolContext::new(PathBuf::from("/tmp"))
     }
 
     #[test]

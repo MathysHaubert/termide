@@ -151,9 +151,7 @@ mod tests {
     }
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
-        ToolContext {
-            cwd: dir.to_path_buf(),
-        }
+        ToolContext::new(dir.to_path_buf())
     }
 
     fn run(dir: &std::path::Path, args: Value) -> ToolResultMessage {

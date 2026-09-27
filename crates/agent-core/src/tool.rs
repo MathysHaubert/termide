@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::ask::UserAsker;
 use crate::cancel::CancelToken;
 use crate::message::{ToolCall, ToolResultMessage};
 use crate::provider::ToolSpec;
@@ -14,6 +15,20 @@ use crate::provider::ToolSpec;
 pub struct ToolContext {
     /// Directory relative paths resolve against; the project root by default.
     pub cwd: PathBuf,
+    /// Someone to put a question to; `None` when no one is watching the run
+    /// (a subagent, headless mode).
+    pub asker: Option<UserAsker>,
+}
+
+impl ToolContext {
+    /// A context in `cwd` with no one to ask.
+    #[must_use]
+    pub fn new(cwd: impl Into<PathBuf>) -> Self {
+        Self {
+            cwd: cwd.into(),
+            asker: None,
+        }
+    }
 }
 
 /// Partial progress reported while a tool is still running.

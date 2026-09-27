@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::ask::UserAsker;
 use crate::cancel::CancelToken;
 use crate::compaction::{
     context_tokens, is_context_overflow_error, should_compact, split_point, CompactionPolicy,
@@ -165,13 +166,10 @@ pub fn execute_tool(
     tools: &ToolRegistry,
     call: &ToolCall,
     hooks: &mut dyn Hooks,
-    cwd: &std::path::Path,
+    ctx: &ToolContext,
     cancel: &CancelToken,
     on_update: &mut dyn FnMut(ToolUpdate),
 ) -> ToolResultMessage {
-    let ctx = ToolContext {
-        cwd: cwd.to_path_buf(),
-    };
     if cancel.is_cancelled() {
         return ToolResultMessage::error(call, "The run was cancelled before this tool ran.");
     }
@@ -186,7 +184,7 @@ pub fn execute_tool(
             ),
         );
     };
-    let effective = match hooks.before_tool_call(call, &ctx) {
+    let effective = match hooks.before_tool_call(call, ctx) {
         ToolDecision::Allow | ToolDecision::Approve { arguments: None } => call.clone(),
         ToolDecision::Replace { arguments }
         | ToolDecision::Approve {
@@ -199,7 +197,7 @@ pub fn execute_tool(
             return ToolResultMessage::error(call, format!("Tool call blocked: {reason}"));
         }
     };
-    tool.execute(&effective, &ctx, on_update, cancel)
+    tool.execute(&effective, ctx, on_update, cancel)
 }
 
 /// Extension points of the loop. All methods have permissive defaults.
@@ -370,6 +368,8 @@ pub struct Agent {
     compaction_prompts: CompactionPrompts,
     goal_prompt: GoalPrompt,
     handoff_prompt: HandoffPrompt,
+    /// Whom the `question` tool asks; `None` when no one is watching.
+    asker: Option<UserAsker>,
 }
 
 impl Agent {
@@ -394,7 +394,15 @@ impl Agent {
             compaction_prompts: CompactionPrompts::default(),
             goal_prompt: GoalPrompt::default(),
             handoff_prompt: HandoffPrompt::default(),
+            asker: None,
         }
+    }
+
+    /// Let tools put questions to the user through `asker`.
+    #[must_use]
+    pub fn with_asker(mut self, asker: UserAsker) -> Self {
+        self.asker = Some(asker);
+        self
     }
 
     #[must_use]
@@ -762,7 +770,11 @@ impl Agent {
                 update,
             });
         };
-        execute_tool(&self.tools, call, hooks, &self.cwd, cancel, &mut on_update)
+        let ctx = ToolContext {
+            cwd: self.cwd.clone(),
+            asker: self.asker.clone(),
+        };
+        execute_tool(&self.tools, call, hooks, &ctx, cancel, &mut on_update)
     }
 
     fn call_model(
@@ -1908,9 +1920,7 @@ mod tests {
             name: "bash".into(),
             arguments: serde_json::json!({ "command": command }),
         };
-        let ctx = ToolContext {
-            cwd: PathBuf::from("/p"),
-        };
+        let ctx = ToolContext::new(PathBuf::from("/p"));
 
         // Replace flows into the next hook and out of the chain.
         let mut chain = ChainedHooks::new(vec![Box::new(Rewriter), Box::new(Judge(vec![]))]);
