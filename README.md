@@ -6,7 +6,7 @@
 
 **English** | [中文](README.zh.md) | [Русский](README.ru.md)
 
-A zero-config terminal IDE that unifies an editor, file manager, and terminal — with built-in git, database, hex, Markdown, image, and Mermaid viewers — in one cross-platform TUI written in Rust.
+An all-in-one terminal workspace for your workstation and your servers: code editor with LSP, dual-pane file manager with SFTP/FTP, terminal, git, database viewer and a coding agent — one zero-config static binary written in Rust.
 
 **[Website](https://termide.github.io)** | **[Documentation](doc/en/README.md)** | **[Releases](https://github.com/termide/termide/releases)** | **[Screenshots](https://ibb.co/album/nPX6p6)**
 
@@ -14,30 +14,33 @@ A zero-config terminal IDE that unifies an editor, file manager, and terminal �
 
 ## Why TermIDE?
 
-Unlike traditional terminal editors that need extensive plugin configuration, TermIDE works out of the box:
+Terminal editors cover the code; everything around it — files on remote hosts, databases, git, long-running shells, a coding agent — usually takes plugins or separate tools. TermIDE ships all of it in one binary that works out of the box on a laptop, a server, or a phone:
 
-| Feature | TermIDE | Vim/Neovim | Helix | Micro |
-|---------|:-------:|:----------:|:-----:|:-----:|
-| LSP Support | ✓ | ✓ | ✓ | plugin |
-| Zero Config | ✓ | ✗ | ✓ | ✓ |
-| Script Automation | ✓ | ✓ | ✗ | plugin |
-| Remote Filesystems (SFTP/FTP) | ✓ | ✓ | ✗ | ✗ |
-| Hex / Binary Viewer | ✓ | plugin | ✗ | plugin |
-| Database Viewer | ✓ | plugin | ✗ | ✗ |
-| Markdown Preview | ✓ | plugin | ✗ | ✗ |
-| Diagram Viewer (Mermaid) | ✓ | plugin | ✗ | ✗ |
-| Image Viewer | ✓ | plugin | ✗ | ✗ |
-| Built-in Terminal | ✓ | plugin | ✗ | ✗ |
-| File Manager | ✓ | plugin | ✗ | ✗ |
-| Background File Operations | ✓ | plugin | ✗ | ✗ |
-| Git Integration | ✓ | plugin | ✗ | ✗ |
-| Project Layouts | ✓ | plugin | ✗ | ✗ |
-| Detachable Instances | ✓ | ✗ | ✗ | ✗ |
-| Multi-panel Layout | ✓ | plugin | ✗ | ✗ |
-| Bookmarks | ✓ | plugin | ✗ | ✗ |
-| Resource Monitor | ✓ | ✗ | ✗ | ✗ |
+| Feature | TermIDE | [Fresh](https://getfresh.dev) | Vim/Neovim | Helix | Micro |
+|---------|:-------:|:-----:|:----------:|:-----:|:-----:|
+| LSP Support | ✓ | ✓ | ✓ | ✓ | plugin |
+| Zero Config | ✓ | ✓ | ✗ | ✓ | ✓ |
+| Script Automation | ✓ | ✓ | ✓ | ✗ | plugin |
+| Built-in Coding Agent (local or hosted models) | ✓ | ✗ | plugin | ✗ | ✗ |
+| External Agents (Claude Code, Codex, Gemini CLI) | ✓ | ✓ | plugin | ✗ | ✗ |
+| MCP Servers | ✓ | ✗ | plugin | ✗ | ✗ |
+| Remote Filesystems (SFTP/FTP) | ✓ | SSH | ✓ | ✗ | ✗ |
+| Hex / Binary Viewer | ✓ | ✗ | plugin | ✗ | plugin |
+| Database Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
+| Markdown Preview | ✓ | ✓ | plugin | ✗ | ✗ |
+| Diagram Viewer (Mermaid) | ✓ | ✗ | plugin | ✗ | ✗ |
+| Image Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
+| Built-in Terminal | ✓ | ✓ | plugin | ✗ | ✗ |
+| File Manager | ✓ | tree only | plugin | ✗ | ✗ |
+| Background File Operations | ✓ | ✗ | plugin | ✗ | ✗ |
+| Git Integration | ✓ | ✓ | plugin | ✗ | ✗ |
+| Project Layouts | ✓ | ✓ | plugin | ✗ | ✗ |
+| Detachable Instances | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Multi-panel Layout | ✓ | ✓ | plugin | ✗ | ✗ |
+| Bookmarks | ✓ | ✓ | plugin | ✗ | ✗ |
+| Resource Monitor | ✓ | ✗ | ✗ | ✗ | ✗ |
 
-**TermIDE = Editor + File Manager + Terminal in one TUI application.**
+**TermIDE = Editor + File Manager + Terminal + Git + Agent in one TUI application.**
 
 ## Features
 
