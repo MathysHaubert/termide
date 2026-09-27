@@ -2,9 +2,10 @@
 //!
 //! Renders a commit graph with proper box-drawing junctions (`● │ ├ ╮ ╯ ╭ ╰ ─`)
 //! computed from each commit's parent hashes, instead of restyling git's
-//! diagonal ASCII output. It is a **pure** function over `(hash, parents)` so it
-//! can be unit-tested in isolation; [`crate::get_log_graph_unicode`] wires it to
-//! the git-log panel (gated by the `git_log.unicode_graph` setting).
+//! diagonal ASCII output. It is a **pure** fold over `(hash, parents)` so it
+//! can be unit-tested in isolation; [`GraphLayout`] carries the fold from one
+//! piece of history to the next, which is how [`crate::LogStream`] feeds the
+//! git-log panel (gated by the `git_log.unicode_graph` setting).
 //!
 //! Layout model (lazygit/tig-flavoured):
 //! - One **commit row** per commit: `●` in the commit's lane, `│` for every
@@ -60,11 +61,28 @@ fn render(cells: &[char]) -> String {
 /// Lay out and render the commit graph. Returns rows top-to-bottom (commit rows
 /// interleaved with connector rows).
 pub fn render_graph(commits: &[GraphCommit]) -> Vec<GraphRow> {
-    // Each active lane holds the hash it is currently routing toward.
-    let mut lanes: Vec<Option<String>> = Vec::new();
-    let mut rows: Vec<GraphRow> = Vec::new();
-
+    let mut layout = GraphLayout::default();
+    let mut rows = Vec::new();
     for (idx, c) in commits.iter().enumerate() {
+        layout.push(c, idx, &mut rows);
+    }
+    rows
+}
+
+/// The layout carried from one commit to the next, so a history read in
+/// pieces renders exactly as it would in one go: the lanes are all the state
+/// the graph has.
+#[derive(Debug, Clone, Default)]
+pub struct GraphLayout {
+    /// Each active lane holds the hash it is currently routing toward.
+    lanes: Vec<Option<String>>,
+}
+
+impl GraphLayout {
+    /// Lay out the next commit `c` (newer ones already pushed), appending its
+    /// rows to `rows`; its commit row refers to `commits[idx]`.
+    pub fn push(&mut self, c: &GraphCommit, idx: usize, rows: &mut Vec<GraphRow>) {
+        let lanes = &mut self.lanes;
         // Lanes whose pending hash is this commit (its children's edges).
         let incoming: Vec<usize> = lanes
             .iter()
@@ -75,7 +93,7 @@ pub fn render_graph(commits: &[GraphCommit]) -> Vec<GraphRow> {
 
         let commit_col = match incoming.first() {
             Some(&i) => i,
-            None => free_slot(&mut lanes), // a tip not referenced by any child
+            None => free_slot(lanes), // a tip not referenced by any child
         };
 
         // --- connector ABOVE: fold extra incoming lanes into commit_col ---
@@ -141,7 +159,7 @@ pub fn render_graph(commits: &[GraphCommit]) -> Vec<GraphRow> {
             let col = match lanes.iter().position(|l| l.as_deref() == Some(p.as_str())) {
                 Some(i) => i, // shares a lane already heading to that parent
                 None => {
-                    let i = free_slot(&mut lanes);
+                    let i = free_slot(lanes);
                     lanes[i] = Some(p.clone());
                     i
                 }
@@ -194,8 +212,6 @@ pub fn render_graph(commits: &[GraphCommit]) -> Vec<GraphRow> {
             });
         }
     }
-
-    rows
 }
 
 /// Parse `git log --format=%h\t%p` (tab between hash and the space-separated
