@@ -312,10 +312,18 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
     }
 
     let manifest_path = global.join(SEEDS_MANIFEST);
-    let mut manifest: BTreeMap<String, String> = std::fs::read_to_string(&manifest_path)
-        .ok()
-        .and_then(|text| toml::from_str(&text).ok())
-        .unwrap_or_default();
+    // Without a readable manifest every edited file looks never offered, so
+    // the new defaults land beside them as `.new` — noisy, never destructive.
+    let mut manifest: BTreeMap<String, String> = match std::fs::read_to_string(&manifest_path) {
+        Err(_) => BTreeMap::new(),
+        Ok(text) => toml::from_str(&text).unwrap_or_else(|error| {
+            log::warn!(
+                "{} is unreadable ({error}); starting it over",
+                manifest_path.display()
+            );
+            BTreeMap::new()
+        }),
+    };
     let mut manifest_changed = false;
 
     for (relative, seed) in shipped_assets() {
@@ -324,7 +332,15 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
         let last = manifest.get(&relative).cloned();
         match std::fs::read_to_string(&path) {
             // Missing: write it.
-            Err(_) => std::fs::write(&path, seed)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::write(&path, seed)?;
+            }
+            // There but unreadable (not UTF-8, no permission): the user's,
+            // whatever it holds. Leave it, and try again next start.
+            Err(error) => {
+                log::warn!("Leaving {} alone: {error}", path.display());
+                continue;
+            }
             // Already on the current shipped version: nothing to do.
             Ok(current) if seed_hash(&current) == shipped => {}
             // Untouched since we last wrote it, but the shipped version moved:
@@ -346,8 +362,14 @@ pub fn ensure_global_layout(global: &Path) -> std::io::Result<()> {
     }
 
     if manifest_changed {
-        if let Ok(text) = toml::to_string(&manifest) {
-            let _ = std::fs::write(&manifest_path, text);
+        let written = toml::to_string(&manifest)
+            .map_err(std::io::Error::other)
+            .and_then(|text| std::fs::write(&manifest_path, text));
+        if let Err(error) = written {
+            log::warn!(
+                "Could not record the seeds in {}: {error}",
+                manifest_path.display()
+            );
         }
     }
     Ok(())
@@ -930,6 +952,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&soul).unwrap(), "mine");
         let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
         assert_eq!(dirs.soul(DEFAULT_AGENT).as_deref(), Some("mine"));
+    }
+
+    /// A seed file that exists but cannot be read as text is the user's; it
+    /// used to count as missing and be overwritten.
+    #[test]
+    fn an_unreadable_seed_file_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        ensure_global_layout(&global).unwrap();
+        let compact = global.join("system/compact.md");
+        let bytes = [0xff, 0xfe, b'm', b'i', b'n', b'e'];
+        std::fs::write(&compact, bytes).unwrap();
+        std::fs::remove_file(global.join(SEEDS_MANIFEST)).unwrap();
+        ensure_global_layout(&global).unwrap();
+        assert_eq!(std::fs::read(&compact).unwrap(), bytes);
     }
 
     #[test]
