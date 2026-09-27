@@ -2770,7 +2770,9 @@ impl AgentPanel {
                 self.sync_blocked();
             }
             Err(PromptError::Busy) => self.context_stale = true,
-            Err(_) => {}
+            // A stopped worker takes no change; the panel keeps showing what
+            // the agent really has, and the journal says why.
+            Err(error) => log::warn!("The agent's tools and prompt were not updated: {error}"),
         }
     }
 

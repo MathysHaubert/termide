@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
 use serde_json::{json, Value};
@@ -108,7 +108,13 @@ impl McpServer {
 impl Drop for McpServer {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
-        for cancel in self.shared.running.lock().unwrap().values() {
+        for cancel in self
+            .shared
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
             cancel.cancel();
         }
         // Wake the accept loop so it sees the flag.
@@ -246,7 +252,12 @@ fn handle(shared: &Shared, message: &Value) -> Option<Value> {
     let Some(id) = message.get("id").cloned() else {
         if method == "notifications/cancelled" {
             let request = message["params"]["requestId"].to_string();
-            if let Some(cancel) = shared.running.lock().unwrap().get(&request) {
+            if let Some(cancel) = shared
+                .running
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&request)
+            {
                 cancel.cancel();
             }
         }
@@ -299,7 +310,7 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
         .unwrap()
         .insert(key.clone(), cancel.clone());
     let result = {
-        let mut hooks = shared.hooks.lock().unwrap();
+        let mut hooks = shared.hooks.lock().unwrap_or_else(PoisonError::into_inner);
         let result = execute_tool(
             &shared.tools,
             &call,
@@ -310,7 +321,11 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
         );
         hooks.after_tool_call(&call, result)
     };
-    shared.running.lock().unwrap().remove(&key);
+    shared
+        .running
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&key);
     json!({
         "content": [{ "type": "text", "text": result.plain_text() }],
         "isError": result.is_error,

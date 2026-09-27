@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -136,7 +136,11 @@ impl AcpRuntime {
             config.timeout_secs,
             config.flavor,
         );
-        *runtime.shared.child.lock().unwrap() = Some(child);
+        *runtime
+            .shared
+            .child
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(child);
         Ok(runtime)
     }
 
@@ -192,7 +196,14 @@ impl AcpRuntime {
 
 impl Backend for AcpRuntime {
     fn prompt(&self, message: UserMessage) -> Result<(), PromptError> {
-        if matches!(*self.shared.conn.lock().unwrap(), Conn::Failed(_)) {
+        if matches!(
+            *self
+                .shared
+                .conn
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            Conn::Failed(_)
+        ) {
             return Err(PromptError::Stopped);
         }
         if self
@@ -205,13 +216,21 @@ impl Backend for AcpRuntime {
         }
         self.shared.cancel.reset();
         let _ = self.shared.events.send(AgentEvent::AgentStart);
-        self.shared.queue.lock().unwrap().insert(0, message);
+        self.shared
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(0, message);
         self.shared.kick();
         Ok(())
     }
 
     fn steer(&self, message: UserMessage) {
-        self.shared.queue.lock().unwrap().push(message);
+        self.shared
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(message);
         let lens = self.queue_lens();
         let _ = self.shared.events.send(AgentEvent::QueueUpdate {
             steering: lens.0,
@@ -220,7 +239,11 @@ impl Backend for AcpRuntime {
     }
 
     fn take_queued(&self) -> Vec<UserMessage> {
-        let mut queue = self.shared.queue.lock().unwrap();
+        let mut queue = self
+            .shared
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         // While the session is starting, the first message is the run's own
         // prompt, not one waiting; it stays.
         let keep = usize::from(!self.shared.busy.load(Ordering::Acquire) && !queue.is_empty());
@@ -236,7 +259,12 @@ impl Backend for AcpRuntime {
     }
 
     fn queue_lens(&self) -> (usize, usize) {
-        let queued = self.shared.queue.lock().unwrap().len();
+        let queued = self
+            .shared
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
         let running = self.shared.busy.load(Ordering::Acquire);
         // While a turn runs, its own message is not in the queue; while the
         // session is starting, the first message is.
@@ -251,7 +279,12 @@ impl Backend for AcpRuntime {
             return;
         }
         self.shared.cancel.cancel();
-        if let Conn::Ready { session_id } = &*self.shared.conn.lock().unwrap() {
+        if let Conn::Ready { session_id } = &*self
+            .shared
+            .conn
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
             let _ = self
                 .shared
                 .notify("session/cancel", json!({ "sessionId": session_id }));
@@ -275,15 +308,27 @@ impl Backend for AcpRuntime {
     }
 
     fn available_models(&self) -> Vec<BackendModel> {
-        self.shared.models.lock().unwrap().clone()
+        self.shared
+            .models
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn current_model(&self) -> Option<String> {
-        self.shared.current_model.lock().unwrap().clone()
+        self.shared
+            .current_model
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn context_usage(&self) -> Option<(u64, u64)> {
-        *self.shared.context.lock().unwrap()
+        *self
+            .shared
+            .context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Claude Code's calls of termide's tools, and its permission requests,
@@ -302,7 +347,12 @@ impl Backend for AcpRuntime {
     }
 
     fn select_model(&self, model_id: String) -> Result<(), String> {
-        let session_id = match &*self.shared.conn.lock().unwrap() {
+        let session_id = match &*self
+            .shared
+            .conn
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
             Conn::Ready { session_id } => session_id.clone(),
             Conn::Starting => return Err("the agent is still starting".to_string()),
             Conn::Failed(error) => return Err(error.clone()),
@@ -312,7 +362,12 @@ impl Backend for AcpRuntime {
         if self.is_busy() {
             return Err("finish or stop the current task first".to_string());
         }
-        let option = self.shared.model_option.lock().unwrap().clone();
+        let option = self
+            .shared
+            .model_option
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         match option {
             Some(config_id) => self.shared.request(
                 "session/set_config_option",
@@ -325,7 +380,11 @@ impl Backend for AcpRuntime {
                 Duration::from_secs(30),
             )?,
         };
-        *self.shared.current_model.lock().unwrap() = Some(model_id);
+        *self
+            .shared
+            .current_model
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(model_id);
         Ok(())
     }
 
@@ -338,8 +397,18 @@ impl Drop for AcpRuntime {
     fn drop(&mut self) {
         self.shared.cancel.cancel();
         // Closing stdin tells a well-behaved agent to exit; kill the rest.
-        self.shared.writer.lock().unwrap().take();
-        if let Some(mut child) = self.shared.child.lock().unwrap().take() {
+        self.shared
+            .writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(mut child) = self
+            .shared
+            .child
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -375,7 +444,7 @@ impl Shared {
             Err(error) => Conn::Failed(error),
         };
         let ready = matches!(conn, Conn::Ready { .. });
-        *self.conn.lock().unwrap() = conn;
+        *self.conn.lock().unwrap_or_else(PoisonError::into_inner) = conn;
         if ready && self.flavor == AcpFlavor::Codex {
             self.apply_mode(self.mode.get());
         }
@@ -394,7 +463,12 @@ impl Shared {
             return params;
         }
         let mut options = json!({ "settingSources": [], "strictMcpConfig": true });
-        if let Some(host) = self.host_tools.lock().unwrap().take() {
+        if let Some(host) = self
+            .host_tools
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             match McpServer::start(host.tools, host.hooks, self.cwd.clone()) {
                 Ok(server) => {
                     params["mcpServers"] = json!([{
@@ -407,7 +481,10 @@ impl Shared {
                     }]);
                     options["tools"] = json!([]);
                     options["allowedTools"] = json!([format!("mcp__{SERVER_NAME}")]);
-                    *self.mcp_server.lock().unwrap() = Some(server);
+                    *self
+                        .mcp_server
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(server);
                 }
                 Err(error) => log::warn!("cannot serve termide's tools to {}: {error}", self.name),
             }
@@ -424,7 +501,7 @@ impl Shared {
     /// `configured` have it ask about everything, so termide's rules and the
     /// user decide.
     fn apply_mode(&self, mode: Mode) {
-        let session_id = match &*self.conn.lock().unwrap() {
+        let session_id = match &*self.conn.lock().unwrap_or_else(PoisonError::into_inner) {
             Conn::Ready { session_id } => session_id.clone(),
             _ => return,
         };
@@ -450,7 +527,10 @@ impl Shared {
     /// `configOptions`. Missing or malformed data leaves the lists empty.
     fn adopt_models(&self, result: &Value) {
         if result["models"].is_object() {
-            *self.model_option.lock().unwrap() = None;
+            *self
+                .model_option
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = None;
             self.adopt_model_list(&result["models"]);
         } else {
             self.adopt_model_option(&result["configOptions"]);
@@ -484,10 +564,16 @@ impl Shared {
                 None => entry(o).into_iter().collect(),
             })
             .collect();
-        *self.model_option.lock().unwrap() = Some(config_id.to_string());
-        *self.models.lock().unwrap() = list;
+        *self
+            .model_option
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(config_id.to_string());
+        *self.models.lock().unwrap_or_else(PoisonError::into_inner) = list;
         if let Some(current) = option["currentValue"].as_str() {
-            *self.current_model.lock().unwrap() = Some(current.to_string());
+            *self
+                .current_model
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(current.to_string());
         }
     }
 
@@ -506,9 +592,12 @@ impl Shared {
             })
             .unwrap_or_default();
         let current = models["currentModelId"].as_str().map(str::to_string);
-        *self.models.lock().unwrap() = list;
+        *self.models.lock().unwrap_or_else(PoisonError::into_inner) = list;
         if let Some(current) = current {
-            *self.current_model.lock().unwrap() = Some(current);
+            *self
+                .current_model
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(current);
         }
     }
 
@@ -518,11 +607,14 @@ impl Shared {
         if !self.busy.load(Ordering::Acquire) {
             return;
         }
-        let session_id = match &*self.conn.lock().unwrap() {
+        let session_id = match &*self.conn.lock().unwrap_or_else(PoisonError::into_inner) {
             Conn::Starting => return,
             Conn::Ready { session_id } => session_id.clone(),
             Conn::Failed(error) => {
-                self.queue.lock().unwrap().clear();
+                self.queue
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear();
                 let _ = self.events.send(AgentEvent::MessageEnd(Message::Assistant(
                     AssistantMessage::failed("acp", &self.name, StopReason::Error, error.clone()),
                 )));
@@ -533,7 +625,13 @@ impl Shared {
         };
         // Everything queued goes as one turn: messages typed while the agent
         // works are usually one thought written in pieces.
-        let message = UserMessage::merge(self.queue.lock().unwrap().drain(..).collect());
+        let message = UserMessage::merge(
+            self.queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .drain(..)
+                .collect(),
+        );
         let Some(message) = message else {
             let _ = self.events.send(AgentEvent::AgentEnd);
             self.busy.store(false, Ordering::Release);
@@ -576,9 +674,16 @@ impl Shared {
         self.close_message_with(stop, error, usage);
         let _ = self.events.send(AgentEvent::TurnEnd);
         if self.cancel.is_cancelled() {
-            self.queue.lock().unwrap().clear();
+            self.queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
         }
-        let queued = self.queue.lock().unwrap().len();
+        let queued = self
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
         let _ = self.events.send(AgentEvent::QueueUpdate {
             steering: queued,
             follow_up: 0,
@@ -595,7 +700,11 @@ impl Shared {
     /// [`Self::close_message`], with the turn's token usage when the agent
     /// reported it.
     fn close_message_with(&self, stop: StopReason, error: Option<String>, usage: Usage) {
-        let text = self.open_message.lock().unwrap().take();
+        let text = self
+            .open_message
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         if text.is_none() && error.is_none() {
             return;
         }
@@ -623,17 +732,26 @@ impl Shared {
     fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, tx);
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         if let Err(error) = self.write(&message) {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&id);
             return Err(error);
         }
         let deadline = Instant::now() + timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id);
                 return Err(format!("{method}: no reply within {} s", timeout.as_secs()));
             }
             match rx.recv_timeout(left.min(Duration::from_millis(100))) {
@@ -653,7 +771,7 @@ impl Shared {
     fn write(&self, message: &Value) -> Result<(), String> {
         let mut line = message.to_string();
         line.push('\n');
-        let mut guard = self.writer.lock().unwrap();
+        let mut guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let writer = guard.as_mut().ok_or("the agent was shut down")?;
         writer
             .write_all(line.as_bytes())
@@ -684,7 +802,12 @@ impl Shared {
                         )),
                         None => Ok(message["result"].clone()),
                     };
-                    if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
+                    if let Some(tx) = self
+                        .pending
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&id)
+                    {
                         let _ = tx.send(reply);
                     }
                 }
@@ -703,8 +826,11 @@ impl Shared {
             }
         }
         // The agent is gone: a pending prompt learns it, later ones are refused.
-        self.pending.lock().unwrap().clear();
-        let mut conn = self.conn.lock().unwrap();
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        let mut conn = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
         if !matches!(*conn, Conn::Failed(_)) {
             *conn = Conn::Failed("the agent exited".into());
         }
@@ -764,7 +890,11 @@ impl Shared {
         // unknown one reaches the user, and a session or always grant is
         // recorded so it is asked only once. The user is never troubled with
         // anything the built-in agent would have let through silently.
-        let decision = self.hooks.lock().unwrap().before_tool_call(&call, &ctx);
+        let decision = self
+            .hooks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .before_tool_call(&call, &ctx);
         let options = params["options"].as_array().cloned().unwrap_or_default();
         let pick = |kinds: &[&str]| {
             kinds.iter().find_map(|kind| {
@@ -797,7 +927,10 @@ impl Shared {
         match update["sessionUpdate"].as_str().unwrap_or("") {
             "agent_message_chunk" => {
                 let text = update["content"]["text"].as_str().unwrap_or("").to_string();
-                let mut open = self.open_message.lock().unwrap();
+                let mut open = self
+                    .open_message
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
                 if open.is_none() {
                     *open = Some(String::new());
                     let _ = self.events.send(AgentEvent::MessageStart);
@@ -811,8 +944,16 @@ impl Shared {
             }
             "agent_thought_chunk" => {
                 let text = update["content"]["text"].as_str().unwrap_or("").to_string();
-                if self.open_message.lock().unwrap().is_none() {
-                    *self.open_message.lock().unwrap() = Some(String::new());
+                if self
+                    .open_message
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_none()
+                {
+                    *self
+                        .open_message
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(String::new());
                     let _ = self.events.send(AgentEvent::MessageStart);
                 }
                 let _ = self
@@ -827,7 +968,10 @@ impl Shared {
                 // shows with its command or path.
                 if !has_arguments(update) && !is_finished(update) {
                     let id = update["toolCallId"].as_str().unwrap_or("").to_string();
-                    self.announced.lock().unwrap().insert(id, update.clone());
+                    self.announced
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(id, update.clone());
                     return;
                 }
                 let _ = self.events.send(AgentEvent::ToolExecutionStart {
@@ -840,7 +984,11 @@ impl Shared {
             "tool_call_update" => {
                 let id = update["toolCallId"].as_str().unwrap_or("");
                 if has_arguments(update) || is_finished(update) {
-                    let announced = self.announced.lock().unwrap().remove(id);
+                    let announced = self
+                        .announced
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(id);
                     if let Some(mut call) = announced {
                         for (key, value) in update.as_object().into_iter().flatten() {
                             if !value.is_null() {
@@ -859,16 +1007,26 @@ impl Shared {
             "usage_update" => {
                 if let (Some(used), Some(size)) = (update["used"].as_u64(), update["size"].as_u64())
                 {
-                    *self.context.lock().unwrap() = Some((used, size));
+                    *self.context.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some((used, size));
                 }
             }
             "current_model_update" => {
                 if let Some(id) = update["modelId"].as_str() {
-                    *self.current_model.lock().unwrap() = Some(id.to_string());
+                    *self
+                        .current_model
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(id.to_string());
                 }
             }
             // The agent changed its options itself: the model among them.
-            "config_option_update" if self.model_option.lock().unwrap().is_some() => {
+            "config_option_update"
+                if self
+                    .model_option
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some() =>
+            {
                 self.adopt_model_option(&update["configOptions"]);
             }
             other => log::debug!("acp {}: update {other} ignored", self.name),

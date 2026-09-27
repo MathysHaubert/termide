@@ -14,7 +14,7 @@ mod tool;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, PoisonError};
 
 use termide_agent_core::{LateTools, McpServerConfig, Tool};
 
@@ -76,7 +76,7 @@ impl Connections {
         });
         let (tx, rx) = mpsc::channel();
         {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             for (name, state) in state.iter() {
                 let event = match state {
                     State::Pending => continue,
@@ -92,7 +92,10 @@ impl Connections {
                 let _ = tx.send(event);
             }
         }
-        self.subscribers.lock().unwrap().push(tx);
+        self.subscribers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(tx);
         rx
     }
 
@@ -108,13 +111,16 @@ impl Connections {
                 error: error.clone(),
             },
         };
-        self.state.lock().unwrap().insert(
-            name.to_string(),
-            match outcome {
-                Ok(tools) => State::Ready(tools),
-                Err(error) => State::Failed(error),
-            },
-        );
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                name.to_string(),
+                match outcome {
+                    Ok(tools) => State::Ready(tools),
+                    Err(error) => State::Failed(error),
+                },
+            );
         self.subscribers
             .lock()
             .unwrap()

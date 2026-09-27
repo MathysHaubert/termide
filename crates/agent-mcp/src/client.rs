@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -67,7 +67,7 @@ impl McpClient {
             });
         }
         let client = Self::from_streams(stdout, stdin, Duration::from_secs(config.timeout_secs));
-        *client.child.lock().unwrap() = Some(child);
+        *client.child.lock().unwrap_or_else(PoisonError::into_inner) = Some(child);
         Ok(client)
     }
 
@@ -108,7 +108,10 @@ impl McpClient {
             .as_str()
             .unwrap_or("")
             .to_string();
-        *self.server_name.lock().unwrap() = name.clone();
+        *self
+            .server_name
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = name.clone();
         Ok(name)
     }
 
@@ -197,15 +200,24 @@ impl McpClient {
     ) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, tx);
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         if let Err(error) = self.write(&message) {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&id);
             return Err(error);
         }
         let outcome = wait(&rx, self.timeout, cancel);
         if outcome.is_err() {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&id);
         }
         outcome.map_err(|error| format!("{method}: {error}"))
     }
@@ -217,7 +229,7 @@ impl McpClient {
     fn write(&self, message: &Value) -> Result<(), String> {
         let mut line = message.to_string();
         line.push('\n');
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         writer
             .write_all(line.as_bytes())
             .and_then(|()| writer.flush())
@@ -227,7 +239,12 @@ impl McpClient {
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.lock().unwrap().take() {
+        if let Some(mut child) = self
+            .child
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -285,7 +302,11 @@ fn read_loop(reader: impl Read, pending: Pending, writer: SharedWriter) {
                 } else {
                     Ok(message["result"].clone())
                 };
-                if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                if let Some(tx) = pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id)
+                {
                     let _ = tx.send(reply);
                 }
             }
@@ -297,7 +318,7 @@ fn read_loop(reader: impl Read, pending: Pending, writer: SharedWriter) {
                 });
                 let mut line = reply.to_string();
                 line.push('\n');
-                let mut writer = writer.lock().unwrap();
+                let mut writer = writer.lock().unwrap_or_else(PoisonError::into_inner);
                 let _ = writer
                     .write_all(line.as_bytes())
                     .and_then(|()| writer.flush());
@@ -307,7 +328,10 @@ fn read_loop(reader: impl Read, pending: Pending, writer: SharedWriter) {
         }
     }
     // The server is gone: every waiting request learns it now.
-    pending.lock().unwrap().clear();
+    pending
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
 }
 
 #[cfg(test)]
