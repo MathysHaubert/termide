@@ -161,6 +161,10 @@ impl HelpGenerator {
                 description: t.help_desc_open_outline().to_string(),
             },
             HelpEntry {
+                keys: Self::format_keys(&kb.open_agent),
+                description: t.help_desc_open_agent().to_string(),
+            },
+            HelpEntry {
                 keys: Self::format_keys(&kb.open_diagnostics),
                 description: t.help_desc_open_diagnostics().to_string(),
             },

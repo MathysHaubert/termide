@@ -147,6 +147,7 @@ pub trait Translation: Send + Sync {
     fn help_desc_open_projects(&self) -> &str;
     fn help_desc_open_git_status(&self) -> &str;
     fn help_desc_open_outline(&self) -> &str;
+    fn help_desc_open_agent(&self) -> &str;
     fn help_desc_open_diagnostics(&self) -> &str;
     fn help_desc_open_git_log(&self) -> &str;
     fn help_desc_toggle_stack(&self) -> &str;

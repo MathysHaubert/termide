@@ -200,6 +200,7 @@ impl Translation for RuntimeTranslation {
         help_desc_open_projects,
         help_desc_open_git_status,
         help_desc_open_outline,
+        help_desc_open_agent,
         help_desc_open_diagnostics,
         help_desc_open_git_log,
         help_desc_toggle_stack,
@@ -1732,6 +1733,38 @@ mod tests {
                     .collect();
                 assert!(extra.is_empty(), "{lang}: {key} has {extra:?}");
             }
+        }
+    }
+
+    /// A key missing from a language silently shows the English text, so
+    /// nothing at runtime points at it: every dictionary has exactly en's keys.
+    #[test]
+    fn every_language_has_every_key() {
+        let en = loader::load_language("en").unwrap();
+        for (lang, _) in crate::SUPPORTED_LANGUAGES {
+            let data = loader::load_language(lang).unwrap();
+            let mut missing: Vec<_> = en
+                .strings
+                .keys()
+                .filter(|key| !data.strings.contains_key(*key))
+                .chain(
+                    en.formats
+                        .keys()
+                        .filter(|key| !data.formats.contains_key(*key)),
+                )
+                .collect();
+            missing.sort();
+            assert!(missing.is_empty(), "{lang} lacks {missing:?}");
+            assert_eq!(
+                data.strings.len(),
+                en.strings.len(),
+                "{lang}: extra strings"
+            );
+            assert_eq!(
+                data.formats.len(),
+                en.formats.len(),
+                "{lang}: extra formats"
+            );
         }
     }
 
