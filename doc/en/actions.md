@@ -95,9 +95,9 @@ The menu rereads both files every time it opens, so commands added to a file by 
 | `Hotkey:` | Optional hotkey (`key`) |
 | `Project command` | Checked: the command is saved to the project's `.termide/commands.toml`; unchecked: to the global file |
 
-A new command's identifier is derived from `Menu item:`, or from `Command:` when the label is empty; the characters `/ \ : * ? " < > | .` are replaced with `-`. Toggling `Project command` while editing moves the command to the other file. The form does not edit `params`; they are kept as they are in the file.
+A new command's identifier is derived from `Menu item:`, or from `Command:` when the label is empty; the characters `/ \ : * ? " < > | .` are replaced with `-`. If a command with that identifier already exists, the new one gets a free variant (`build-2`) instead of replacing it. Emptying `Menu item:` while editing removes the label, so the menu shows the identifier. Toggling `Project command` while editing moves the command to the other file. The form does not edit `params`; they are kept as they are in the file. Renaming (`F2`) onto the identifier of another command is refused.
 
-Saving from the form, renaming or deleting rewrites the whole `commands.toml`: comments and the order of the tables are not preserved. If you keep comments in the file, edit it by hand.
+Saving from the form, renaming or deleting edits `commands.toml` in place: the other commands, their order and the comments around them stay as they are, only the fields that changed are rewritten, and a new command is added at the end. A renamed command moves to the end of the file.
 
 ## Execution modes
 
@@ -113,7 +113,7 @@ Background and report commands appear in the [Operations](operations.md) panel, 
 
 ### Report window
 
-When a report command finishes, a window titled with the command's identifier and `✓` (exit code 0) or `✗` (any other exit code) shows its output: standard output first, then standard error. Lines are trimmed and empty lines are dropped; a command with no output shows `(no output)`. If several report commands finish at the same moment, only the last one's window is shown.
+When a report command finishes, a window titled with the command's label and `✓` (exit code 0) or `✗` (any other exit code) shows its output: standard output first, then standard error. Indentation and blank lines inside the output are kept, tabs are expanded to four spaces, and blank lines before and after each stream are dropped; a command with no output shows `(no output)`. If several report commands finish at the same moment, only the last one's window is shown.
 
 | Key | Action |
 |-----|--------|
@@ -163,10 +163,7 @@ default = true
 | `bool` | Checkbox, toggled with `Space` / `Enter` or a click | `true` or `false` |
 | `select` | Choice switched with `←` / `→`; starts at `default`, otherwise at the first option | The selected option |
 
-Current limitations:
-
-- The form is shown only when the command is started by its hotkey or from the command palette; choosing it in the `Commands` menu runs it at once, without parameters.
-- In `terminal` mode the parameters are not passed; use `background` or `report` for commands that read them.
+The form is shown however the command is started: from the `Commands` menu, by its hotkey or from the command palette. The variables reach the command in every mode; in `terminal` mode they are set in the new terminal's shell, so they stay there after the command ends.
 
 ## Hotkeys
 
@@ -174,7 +171,7 @@ Current limitations:
 
 Commands with a hotkey are also listed in the command palette (`Ctrl+P`) as `Run command: <label>`.
 
-The form's `Hotkey:` field accepts `Ctrl`, `Alt` and `Shift` combined with a letter, a digit, `F1`–`F12` or a named key (`Enter`, `Tab`, `Space`, `Home`, `PageUp`, arrows and so on), and it rejects a hotkey that another command or a global TermIDE shortcut already uses (`Hotkey is already in use`). A hotkey written into the file by hand is not checked: if it matches a global shortcut, the shortcut wins and the command never runs from the keyboard.
+The form's `Hotkey:` field accepts `Ctrl`, `Alt` and `Shift` combined with a letter, a digit, `F1`–`F12` or a named key (`Enter`, `Tab`, `Space`, `Home`, `PageUp`, arrows and so on), and it rejects a hotkey that another command or a global TermIDE shortcut already uses (`Hotkey is already in use`). A hotkey written into the file by hand is not checked: if it matches a global shortcut, the shortcut wins and the command never runs from the keyboard. It takes effect the next time the `Commands` menu is opened or the file is saved from TermIDE.
 
 ## Tips
 

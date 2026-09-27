@@ -928,6 +928,7 @@ settings_value_default_fmt = "(ডিফল্ট {value})"
 projects_delete_failed_fmt = "সংরক্ষিত সেশন মোছা যায়নি: {error}"
 command_edit_title_fmt = "কমান্ড সম্পাদনা: {name}"
 command_run_failed_fmt = "কমান্ড চালানো যায়নি: {error}"
+command_name_taken_fmt = "\"{name}\" নামের কমান্ড আগে থেকেই আছে"
 [plurals]
 day = { one = "", other = "" }
 element = { one = "আইটেম", other = "আইটেম" }

@@ -928,6 +928,7 @@ settings_value_default_fmt = "(bawaan {value})"
 projects_delete_failed_fmt = "Gagal menghapus sesi tersimpan: {error}"
 command_edit_title_fmt = "Edit perintah: {name}"
 command_run_failed_fmt = "Gagal menjalankan perintah: {error}"
+command_name_taken_fmt = "Perintah bernama \"{name}\" sudah ada"
 [plurals]
 day = { one = "", other = "" }
 element = { one = "elemen", other = "elemen" }

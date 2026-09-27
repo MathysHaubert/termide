@@ -928,6 +928,7 @@ settings_value_default_fmt = "(기본값 {value})"
 projects_delete_failed_fmt = "저장된 세션을 삭제하지 못했습니다: {error}"
 command_edit_title_fmt = "명령 편집: {name}"
 command_run_failed_fmt = "명령을 실행하지 못했습니다: {error}"
+command_name_taken_fmt = "\"{name}\" 명령이 이미 있습니다"
 [plurals]
 day = { one = "", other = "" }
 element = { one = "항목", other = "항목" }

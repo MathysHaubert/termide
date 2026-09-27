@@ -928,6 +928,7 @@ settings_value_default_fmt = "(mặc định {value})"
 projects_delete_failed_fmt = "Không thể xóa phiên đã lưu: {error}"
 command_edit_title_fmt = "Sửa lệnh: {name}"
 command_run_failed_fmt = "Không thể chạy lệnh: {error}"
+command_name_taken_fmt = "Đã có lệnh tên \"{name}\""
 [plurals]
 day = { one = "", other = "" }
 element = { one = "mục", other = "mục" }

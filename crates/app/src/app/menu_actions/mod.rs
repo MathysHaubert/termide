@@ -100,6 +100,9 @@ impl App {
         }
         let reg = termide_config::commands::CommandsRegistry::load_merged(Some(&self.project_root));
         self.state.cache.commands_registry = reg.clone();
+        // The hotkey table holds the commands' keys too: a file edited by
+        // hand is read here, and its keys must take effect with it.
+        self.state.cache.hotkey_table = None;
         reg
     }
 

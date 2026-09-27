@@ -283,8 +283,19 @@ impl Terminal {
 
     /// Create new terminal with specified working directory (auto-detects shell)
     pub fn new_with_cwd(rows: u16, cols: u16, cwd: Option<std::path::PathBuf>) -> Result<Self> {
+        Self::new_with_cwd_env(rows, cols, cwd, &[])
+    }
+
+    /// Like [`Terminal::new_with_cwd`], with `env` added to the shell's
+    /// environment (a custom command's parameters, for one).
+    pub fn new_with_cwd_env(
+        rows: u16,
+        cols: u16,
+        cwd: Option<std::path::PathBuf>,
+        env: &[(String, String)],
+    ) -> Result<Self> {
         let shell = shell_utils::detect_shell();
-        Self::new_with_shell(rows, cols, &shell, cwd)
+        Self::spawn_shell(rows, cols, &shell, cwd, env)
     }
 
     /// Create new terminal with a specific shell and optional working directory.
@@ -293,6 +304,16 @@ impl Terminal {
         cols: u16,
         shell_path: &str,
         cwd: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        Self::spawn_shell(rows, cols, shell_path, cwd, &[])
+    }
+
+    fn spawn_shell(
+        rows: u16,
+        cols: u16,
+        shell_path: &str,
+        cwd: Option<std::path::PathBuf>,
+        env: &[(String, String)],
     ) -> Result<Self> {
         let pty_system = native_pty_system();
         let size = PtySize {
@@ -329,6 +350,9 @@ impl Terminal {
         cmd.cwd(&working_dir);
         Self::set_env(&mut cmd, &working_dir);
         cmd.env("SHELL", shell_path);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
 
         let child = pair.slave.spawn_command(cmd)?;
         let shell_pid = child.process_id();

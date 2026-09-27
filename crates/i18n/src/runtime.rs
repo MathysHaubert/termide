@@ -1409,6 +1409,10 @@ impl Translation for RuntimeTranslation {
         self.format("command_run_failed_fmt", &[("error", error)])
     }
 
+    fn command_name_taken_fmt(&self, name: &str) -> String {
+        self.format("command_name_taken_fmt", &[("name", name)])
+    }
+
     fn git_commit_title(&self, count: usize, repo: &str, branch: &str) -> String {
         self.format(
             "git_commit_title",

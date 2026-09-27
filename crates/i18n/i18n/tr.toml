@@ -928,6 +928,7 @@ settings_value_default_fmt = "(varsayılan {value})"
 projects_delete_failed_fmt = "Kaydedilen oturum silinemedi: {error}"
 command_edit_title_fmt = "Komutu düzenle: {name}"
 command_run_failed_fmt = "Komut çalıştırılamadı: {error}"
+command_name_taken_fmt = "\"{name}\" adlı bir komut zaten var"
 [plurals]
 day = { one = "", other = "" }
 element = { one = "öğe", other = "öğe" }

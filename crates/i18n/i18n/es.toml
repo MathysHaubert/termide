@@ -928,6 +928,7 @@ settings_value_default_fmt = "(por defecto {value})"
 projects_delete_failed_fmt = "No se pudo eliminar la sesión guardada: {error}"
 command_edit_title_fmt = "Editar comando: {name}"
 command_run_failed_fmt = "No se pudo ejecutar el comando: {error}"
+command_name_taken_fmt = "Ya existe un comando llamado «{name}»"
 [plurals]
 day = { one = "", other = "s" }
 element = { one = "elemento", other = "elementos" }

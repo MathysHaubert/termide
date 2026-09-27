@@ -962,6 +962,7 @@ settings_value_default_fmt = "(по умолчанию {value})"
 projects_delete_failed_fmt = "Не удалось удалить сохранённую сессию: {error}"
 command_edit_title_fmt = "Изменить команду: {name}"
 command_run_failed_fmt = "Не удалось запустить команду: {error}"
+command_name_taken_fmt = "Команда «{name}» уже есть"
 
 [plurals]
 # Russian pluralization: 1 день, 2-4 дня, 5+ дней

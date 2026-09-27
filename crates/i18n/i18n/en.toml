@@ -962,6 +962,7 @@ settings_value_default_fmt = "(default {value})"
 projects_delete_failed_fmt = "Failed to delete the saved session: {error}"
 command_edit_title_fmt = "Edit command: {name}"
 command_run_failed_fmt = "Failed to run command: {error}"
+command_name_taken_fmt = "A command named \"{name}\" already exists"
 
 [plurals]
 day = { one = "", other = "s" }

@@ -153,6 +153,7 @@ pub fn enumerate_bindings(config: &Config) -> Vec<(BindingLocation, ParsedKeyBin
     push(&mut out, "general", "copy", &g.copy);
     push(&mut out, "general", "cut", &g.cut);
     push(&mut out, "general", "paste", &g.paste);
+    push(&mut out, "general", "detach_instance", &g.detach_instance);
 
     let e = &config.editor.keybindings;
     push(&mut out, "editor", "save", &e.save);
@@ -550,6 +551,30 @@ mod tests {
                 "{reachable} has a non-function-key alternative and must not be reported"
             );
         }
+    }
+
+    /// Every global action is enumerated, so a clash with any of them is
+    /// found — and the shipped defaults clash with none.
+    #[test]
+    fn the_default_global_bindings_do_not_clash() {
+        let mut cfg = Config::default();
+        cfg.normalize();
+        let actions: Vec<String> = enumerate_bindings(&cfg)
+            .into_iter()
+            .filter(|(l, _, _)| l.section == "general")
+            .map(|(l, _, _)| l.action)
+            .collect();
+        for action in ["detach_instance", "open_agent", "panel_action_menu"] {
+            assert!(
+                actions.iter().any(|a| a == action),
+                "{action} is not enumerated"
+            );
+        }
+        let clashes: Vec<_> = find_conflicts(&cfg)
+            .into_iter()
+            .filter(|c| c.locations.iter().all(|l| l.section == "general"))
+            .collect();
+        assert!(clashes.is_empty(), "{clashes:?}");
     }
 
     #[test]

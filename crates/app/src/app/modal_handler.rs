@@ -749,6 +749,7 @@ impl App {
                     group,
                     selected,
                 } => {
+                    let mut taken = None;
                     if let Some(new_name) = value.downcast_ref::<String>() {
                         let sanitized = termide_modal::sanitize_filename(new_name.trim());
                         if !sanitized.is_empty() && sanitized != command_name {
@@ -760,7 +761,10 @@ impl App {
                             };
                             let mut metadata =
                                 termide_config::commands::CommandsMetadata::load(&config_dir);
-                            if let Some(entry) = metadata.entries.remove(&command_name) {
+                            if metadata.entries.contains_key(&sanitized) {
+                                // Renaming onto another command would replace it.
+                                taken = Some(sanitized);
+                            } else if let Some(entry) = metadata.entries.remove(&command_name) {
                                 metadata.entries.insert(sanitized, entry);
                                 if let Err(e) = metadata.save(&config_dir) {
                                     log::error!("Failed to save commands.toml: {}", e);
@@ -770,7 +774,12 @@ impl App {
                             self.state.cache.hotkey_table = None;
                         }
                     }
-                    self.reopen_commands_menu(group, selected);
+                    match taken {
+                        Some(name) => {
+                            self.show_error_modal(termide_i18n::t().command_name_taken_fmt(&name))
+                        }
+                        None => self.reopen_commands_menu(group, selected),
+                    }
                 }
                 PendingAction::AiCreate {
                     section,

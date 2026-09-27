@@ -108,19 +108,11 @@ impl App {
                         format!("{} \u{2717}", result.command_name)
                     };
 
-                    let mut lines = vec![];
-                    for line in result.stdout.lines() {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            lines.push((String::new(), trimmed.to_string()));
-                        }
-                    }
-                    for line in result.stderr.lines() {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            lines.push((String::new(), trimmed.to_string()));
-                        }
-                    }
+                    let mut lines: Vec<(String, String)> =
+                        report_lines(&result.stdout, &result.stderr)
+                            .into_iter()
+                            .map(|line| (String::new(), line))
+                            .collect();
                     if lines.is_empty() {
                         lines.push((
                             String::new(),
@@ -161,5 +153,48 @@ impl App {
                 Err(std::sync::mpsc::TryRecvError::Empty) => true, // keep polling
             }
         });
+    }
+}
+
+/// The lines a report window shows: stdout, then stderr, each as printed —
+/// indentation and blank lines inside kept, tabs expanded, trailing spaces
+/// and the blank lines around each stream dropped.
+fn report_lines(stdout: &str, stderr: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    for stream in [stdout, stderr] {
+        let stream_lines: Vec<String> = stream
+            .lines()
+            .map(|line| line.trim_end().replace('\t', "    "))
+            .collect();
+        let Some(first) = stream_lines.iter().position(|l| !l.is_empty()) else {
+            continue;
+        };
+        let last = stream_lines
+            .iter()
+            .rposition(|l| !l.is_empty())
+            .unwrap_or(first);
+        lines.extend_from_slice(&stream_lines[first..=last]);
+    }
+    lines
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::report_lines;
+
+    #[test]
+    fn a_report_keeps_indentation_and_inner_blank_lines() {
+        let stdout = "\nerror: failed\n  --> src/a.rs:1\n\n\tnote\n\n";
+        assert_eq!(
+            report_lines(stdout, "warning  \n"),
+            [
+                "error: failed",
+                "  --> src/a.rs:1",
+                "",
+                "    note",
+                "warning"
+            ]
+        );
+        assert!(report_lines("\n \n", "").is_empty());
     }
 }

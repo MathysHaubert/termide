@@ -928,6 +928,7 @@ settings_value_default_fmt = "(既定 {value})"
 projects_delete_failed_fmt = "保存済みセッションを削除できませんでした: {error}"
 command_edit_title_fmt = "コマンドを編集: {name}"
 command_run_failed_fmt = "コマンドを実行できませんでした: {error}"
+command_name_taken_fmt = "「{name}」という名前のコマンドは既にあります"
 [plurals]
 day = { one = "", other = "" }
 element = { one = "アイテム", other = "アイテム" }

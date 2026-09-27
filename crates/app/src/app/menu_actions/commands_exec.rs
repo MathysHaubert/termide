@@ -1,8 +1,9 @@
 //! Command execution — running commands as terminals, background jobs, or reports.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use termide_config::commands::{decode_command_menu_key, CommandMenuKeyKind};
+use termide_config::commands::{decode_command_menu_key, CommandItem, CommandMenuKeyKind};
 
 use super::super::App;
 
@@ -20,210 +21,116 @@ impl App {
             return Ok(());
         }
 
-        let command = match registry.find_command_anywhere_scoped(&decoded.name, decoded.is_project)
-        {
-            Some(command) => command.clone(),
-            None => return Ok(()),
-        };
-
-        if let Some(ref meta) = command.metadata {
-            if !meta.params.is_empty() {
-                let modal = termide_modal::CommandParamsModal::new(
-                    command.name.clone(),
-                    meta.params.clone(),
-                );
-                self.state.set_pending_action(
-                    termide_state::PendingAction::RunCommandWithParams { command },
-                    crate::state::ActiveModal::CommandParams(Box::new(modal)),
-                );
-                return Ok(());
-            }
+        match registry.find_command_anywhere_scoped(&decoded.name, decoded.is_project) {
+            Some(command) => self.start_command(command.clone()),
+            None => Ok(()),
         }
-
-        self.run_command(&command)
     }
 
-    /// Run a command with user-provided parameters (from CommandParamsModal).
+    /// Run `command` the way every entry point does — the menu, a hotkey,
+    /// the palette: a command with parameters asks for them first.
+    pub(in crate::app) fn start_command(&mut self, command: CommandItem) -> Result<()> {
+        if let Some(meta) = command.metadata.as_ref().filter(|m| !m.params.is_empty()) {
+            let modal =
+                termide_modal::CommandParamsModal::new(command.name.clone(), meta.params.clone());
+            self.state.set_pending_action(
+                termide_state::PendingAction::RunCommandWithParams { command },
+                crate::state::ActiveModal::CommandParams(Box::new(modal)),
+            );
+            return Ok(());
+        }
+        self.run_command_with_params(&command, &HashMap::new())
+    }
+
+    /// Run a command, its parameters (from CommandParamsModal) passed as
+    /// `TERMIDE_PARAM_<NAME>` environment variables in every mode.
     pub(in crate::app) fn run_command_with_params(
         &mut self,
-        command: &termide_config::commands::CommandItem,
-        params: &std::collections::HashMap<String, String>,
+        command: &CommandItem,
+        params: &HashMap<String, String>,
     ) -> Result<()> {
         use termide_config::commands::CommandMode;
         use termide_panel_terminal::Terminal;
 
         let cwd = self.get_focused_panel_cwd();
-        let mut cmd = build_command_command(command, &cwd);
+        let env = param_env(params);
+        log::info!(
+            "Running {} command '{}' in {:?} with {} params",
+            command.mode.as_str(),
+            command.name,
+            cwd,
+            env.len()
+        );
 
-        // Pass parameters as TERMIDE_PARAM_<NAME> env vars
-        for (name, value) in params {
-            let env_key = format!("TERMIDE_PARAM_{}", name.to_uppercase().replace('-', "_"));
-            cmd.env(&env_key, value);
-        }
-
-        if command.mode == CommandMode::Report {
-            self.run_report_command_with_cmd(command, cmd)?;
-        } else if command.mode == CommandMode::Background {
-            log::info!(
-                "Running background command '{}' with {} params",
-                command.name,
-                params.len()
-            );
-            match cmd
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .stdin(std::process::Stdio::null())
-                .spawn()
-            {
-                Ok(mut child) => {
-                    let pid = child.id();
-                    let op_id = self.state.next_synthetic_operation_id();
-                    self.state.track_operation(
-                        op_id,
-                        termide_state::OperationType::CommandBackground,
-                        command.name.clone(),
-                        String::new(),
-                        0,
-                        0,
-                    );
-                    let (tx, rx) = std::sync::mpsc::channel::<()>();
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                        let _ = tx.send(());
-                    });
-                    self.state.bg_command_handles.push((op_id, rx, pid));
-                    let _ = self.open_operations_panel();
-                }
-                Err(e) => {
-                    log::error!("Failed to run background command '{}': {}", command.name, e);
-                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
+        match command.mode {
+            CommandMode::Report => {
+                let mut cmd = build_command_command(command, &cwd);
+                cmd.envs(env);
+                self.run_report_command_with_cmd(command, cmd)?;
+            }
+            CommandMode::Background => {
+                let mut cmd = build_command_command(command, &cwd);
+                cmd.envs(env);
+                match cmd
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        let pid = child.id();
+                        let op_id = self.state.next_synthetic_operation_id();
+                        self.state.track_operation(
+                            op_id,
+                            termide_state::OperationType::CommandBackground,
+                            command_label(command),
+                            String::new(),
+                            0,
+                            0,
+                        );
+                        // Track completion in a background thread, polled
+                        // from the main loop.
+                        let (tx, rx) = std::sync::mpsc::channel::<()>();
+                        std::thread::spawn(move || {
+                            let _ = child.wait();
+                            let _ = tx.send(());
+                        });
+                        self.state.bg_command_handles.push((op_id, rx, pid));
+                        let _ = self.open_operations_panel();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to run background command '{}': {}", command.name, e);
+                        self.show_error_modal(
+                            termide_i18n::t().command_run_failed_fmt(&e.to_string()),
+                        );
+                    }
                 }
             }
-        } else {
-            log::info!(
-                "Running command '{}' with {} params",
-                command.name,
-                params.len()
-            );
-            self.close_help_panels();
-            let width = self.state.terminal.width;
-            let height = self.state.terminal.height;
-            let term_height = height.saturating_sub(3);
-            let term_width = width.saturating_sub(2);
-            // Can't pass env to Terminal::new_with_cwd, so just run without params for terminal mode
-            let command_str = command_terminal_command(command);
-            match Terminal::new_with_cwd(term_height, term_width, Some(cwd)) {
-                Ok(mut terminal) => {
-                    let _ = terminal.send_command(&command_str);
-                    self.add_panel(Box::new(terminal));
-                    self.auto_save_session();
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to create terminal for command '{}': {}",
-                        command.name,
-                        e
-                    );
-                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Run a command
-    pub(in crate::app::menu_actions) fn run_command(
-        &mut self,
-        command: &termide_config::commands::CommandItem,
-    ) -> Result<()> {
-        use termide_config::commands::CommandMode;
-        use termide_panel_terminal::Terminal;
-
-        let cwd = self.get_focused_panel_cwd();
-
-        if command.mode == CommandMode::Report {
-            // Run in background with output capture, show result in modal
-            self.run_report_command(command, &cwd)?;
-        } else if command.mode == CommandMode::Background {
-            // Background spawn — tracked in Operations panel
-            log::info!("Running background command '{}' in {:?}", command.name, cwd);
-            match build_command_command(command, &cwd)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .stdin(std::process::Stdio::null())
-                .spawn()
-            {
-                Ok(mut child) => {
-                    let pid = child.id();
-                    let op_id = self.state.next_synthetic_operation_id();
-                    self.state.track_operation(
-                        op_id,
-                        termide_state::OperationType::CommandBackground,
-                        command.name.clone(),
-                        String::new(),
-                        0,
-                        0,
-                    );
-                    // Track completion in background thread
-                    let (tx, rx) = std::sync::mpsc::channel::<()>();
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                        let _ = tx.send(());
-                    });
-                    // Store handle to poll for completion
-                    self.state.bg_command_handles.push((op_id, rx, pid));
-                    // Open operations panel to show progress
-                    let _ = self.open_operations_panel();
-                }
-                Err(e) => {
-                    log::error!("Failed to run background command '{}': {}", command.name, e);
-                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
-                }
-            }
-        } else {
-            // Run in new terminal panel
-            log::info!("Running command '{}' in {:?}", command.name, cwd);
-
-            self.close_help_panels();
-
-            let width = self.state.terminal.width;
-            let height = self.state.terminal.height;
-            let term_height = height.saturating_sub(3);
-            let term_width = width.saturating_sub(2);
-
-            let command_str = command_terminal_command(command);
-
-            match Terminal::new_with_cwd(term_height, term_width, Some(cwd)) {
-                Ok(mut terminal) => {
-                    let _ = terminal.send_command(&command_str);
-                    self.add_panel(Box::new(terminal));
-                    self.auto_save_session();
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to create terminal for command '{}': {}",
-                        command.name,
-                        e
-                    );
-                    self.show_error_modal(termide_i18n::t().command_run_failed_fmt(&e.to_string()));
+            CommandMode::Terminal => {
+                self.close_help_panels();
+                let term_height = self.state.terminal.height.saturating_sub(3);
+                let term_width = self.state.terminal.width.saturating_sub(2);
+                match Terminal::new_with_cwd_env(term_height, term_width, Some(cwd), &env) {
+                    Ok(mut terminal) => {
+                        let _ = terminal.send_command(&command_terminal_command(command));
+                        self.add_panel(Box::new(terminal));
+                        self.auto_save_session();
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to create terminal for command '{}': {}",
+                            command.name,
+                            e
+                        );
+                        self.show_error_modal(
+                            termide_i18n::t().command_run_failed_fmt(&e.to_string()),
+                        );
+                    }
                 }
             }
         }
 
         Ok(())
-    }
-
-    /// Run a report command in background, capturing output for modal display
-    fn run_report_command(
-        &mut self,
-        command: &termide_config::commands::CommandItem,
-        cwd: &std::path::Path,
-    ) -> Result<()> {
-        log::info!("Running report command '{}' in {:?}", command.name, cwd);
-
-        let cmd = build_command_command(command, cwd);
-        self.run_report_command_with_cmd(command, cmd)
     }
 
     /// Run a report command with a pre-built Command (e.g. with env vars from params).
@@ -242,7 +149,7 @@ impl App {
         match child {
             Ok(child) => {
                 let pid = child.id();
-                let command_name = command.name.clone();
+                let command_name = command_label(command);
                 let (tx, rx) = std::sync::mpsc::channel();
 
                 std::thread::spawn(move || {
@@ -268,7 +175,7 @@ impl App {
                 self.state.track_operation(
                     op_id,
                     termide_state::OperationType::CommandReport,
-                    command.name.clone(),
+                    command_label(command),
                     String::new(),
                     0,
                     0,
@@ -312,8 +219,33 @@ impl App {
 // Command execution utilities (private module-level functions)
 // =========================================================================
 
+/// The name a command shows in the menu: its `name`, or its identifier.
+fn command_label(command: &CommandItem) -> String {
+    command
+        .metadata
+        .as_ref()
+        .and_then(|m| m.display_name.clone())
+        .unwrap_or_else(|| command.name.clone())
+}
+
+/// The environment variables a command's parameters become:
+/// `TERMIDE_PARAM_<NAME>`, upper-cased, with `-` as `_`.
+fn param_env(params: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = params
+        .iter()
+        .map(|(name, value)| {
+            (
+                format!("TERMIDE_PARAM_{}", name.to_uppercase().replace('-', "_")),
+                value.clone(),
+            )
+        })
+        .collect();
+    env.sort();
+    env
+}
+
 /// Get the command string to send to a terminal panel.
-fn command_terminal_command(command: &termide_config::commands::CommandItem) -> String {
+fn command_terminal_command(command: &CommandItem) -> String {
     command.command.clone().unwrap_or_default()
 }
 

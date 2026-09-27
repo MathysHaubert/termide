@@ -929,6 +929,7 @@ settings_value_default_fmt = "(Standard {value})"
 projects_delete_failed_fmt = "Gespeicherte Sitzung konnte nicht gelöscht werden: {error}"
 command_edit_title_fmt = "Befehl bearbeiten: {name}"
 command_run_failed_fmt = "Befehl konnte nicht ausgeführt werden: {error}"
+command_name_taken_fmt = "Ein Befehl namens „{name}“ existiert bereits"
 [plurals]
 day = { one = "", other = "en" }
 element = { one = "Element", other = "Elemente" }

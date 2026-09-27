@@ -928,6 +928,7 @@ settings_value_default_fmt = "(डिफ़ॉल्ट {value})"
 projects_delete_failed_fmt = "सहेजा गया सत्र हटाया नहीं जा सका: {error}"
 command_edit_title_fmt = "कमांड संपादित करें: {name}"
 command_run_failed_fmt = "कमांड चलाई नहीं जा सकी: {error}"
+command_name_taken_fmt = "\"{name}\" नाम का कमांड पहले से मौजूद है"
 [plurals]
 # Hindi has simple plural (same form for 1 and many in most cases)
 day = { one = "", other = "" }

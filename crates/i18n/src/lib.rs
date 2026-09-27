@@ -646,6 +646,7 @@ pub trait Translation: Send + Sync {
     fn projects_delete_failed_fmt(&self, error: &str) -> String;
     fn command_edit_title_fmt(&self, name: &str) -> String;
     fn command_run_failed_fmt(&self, error: &str) -> String;
+    fn command_name_taken_fmt(&self, name: &str) -> String;
     fn agent_notice_goal_checking(&self) -> &str;
     fn agent_notice_handoff_preparing(&self) -> &str;
     fn agent_notice_stopping(&self) -> &str;

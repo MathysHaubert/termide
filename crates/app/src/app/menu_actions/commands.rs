@@ -2,71 +2,18 @@
 
 use anyhow::Result;
 use termide_config::commands::{decode_command_menu_key, CommandMenuKeyKind};
-use termide_config::{GlobalKeybindings, KeyBinding};
 use termide_modal::ReservedHotkey;
 
 use super::super::App;
 
-fn push_reserved_hotkeys(reserved: &mut Vec<ReservedHotkey>, binding: &Option<KeyBinding>) {
-    let Some(binding) = binding else {
-        return;
-    };
-    match binding {
-        KeyBinding::Single(key) => reserved.push(ReservedHotkey {
-            binding: key.clone(),
-        }),
-        KeyBinding::Multiple(keys) => {
-            for key in keys {
-                reserved.push(ReservedHotkey {
-                    binding: key.clone(),
-                });
-            }
-        }
-    }
-}
-
-fn collect_global_reserved_hotkeys(kb: &GlobalKeybindings) -> Vec<ReservedHotkey> {
-    let mut reserved = Vec::new();
-    push_reserved_hotkeys(&mut reserved, &kb.toggle_menu);
-    push_reserved_hotkeys(&mut reserved, &kb.new_file_manager);
-    push_reserved_hotkeys(&mut reserved, &kb.new_terminal);
-    push_reserved_hotkeys(&mut reserved, &kb.new_editor);
-    push_reserved_hotkeys(&mut reserved, &kb.new_journal);
-    push_reserved_hotkeys(&mut reserved, &kb.open_help);
-    push_reserved_hotkeys(&mut reserved, &kb.open_preferences);
-    push_reserved_hotkeys(&mut reserved, &kb.open_projects);
-    push_reserved_hotkeys(&mut reserved, &kb.new_project);
-    push_reserved_hotkeys(&mut reserved, &kb.open_git_status);
-    push_reserved_hotkeys(&mut reserved, &kb.open_outline);
-    push_reserved_hotkeys(&mut reserved, &kb.open_diagnostics);
-    push_reserved_hotkeys(&mut reserved, &kb.open_git_log);
-    push_reserved_hotkeys(&mut reserved, &kb.open_bookmark_add);
-    push_reserved_hotkeys(&mut reserved, &kb.open_command_palette);
-    push_reserved_hotkeys(&mut reserved, &kb.open_path);
-    push_reserved_hotkeys(&mut reserved, &kb.prev_group);
-    push_reserved_hotkeys(&mut reserved, &kb.next_group);
-    push_reserved_hotkeys(&mut reserved, &kb.prev_panel);
-    push_reserved_hotkeys(&mut reserved, &kb.next_panel);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_1);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_2);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_3);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_4);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_5);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_6);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_7);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_8);
-    push_reserved_hotkeys(&mut reserved, &kb.goto_panel_9);
-    push_reserved_hotkeys(&mut reserved, &kb.close_panel);
-    push_reserved_hotkeys(&mut reserved, &kb.toggle_stack);
-    push_reserved_hotkeys(&mut reserved, &kb.swap_left);
-    push_reserved_hotkeys(&mut reserved, &kb.swap_right);
-    push_reserved_hotkeys(&mut reserved, &kb.move_first);
-    push_reserved_hotkeys(&mut reserved, &kb.move_last);
-    push_reserved_hotkeys(&mut reserved, &kb.resize_smaller);
-    push_reserved_hotkeys(&mut reserved, &kb.resize_larger);
-    push_reserved_hotkeys(&mut reserved, &kb.panel_action_menu);
-    push_reserved_hotkeys(&mut reserved, &kb.quit);
-    reserved
+/// Every global binding: a command's hotkey is matched after them, so one
+/// of these would never reach it.
+fn collect_global_reserved_hotkeys(config: &termide_config::Config) -> Vec<ReservedHotkey> {
+    termide_config::enumerate_bindings(config)
+        .into_iter()
+        .filter(|(location, _, _)| location.section == "general")
+        .map(|(_, _, binding)| ReservedHotkey { binding })
+        .collect()
 }
 
 impl App {
@@ -75,7 +22,7 @@ impl App {
         registry: &termide_config::commands::CommandsRegistry,
         exclude: Option<(&str, bool)>,
     ) -> Vec<ReservedHotkey> {
-        let mut reserved = collect_global_reserved_hotkeys(&self.state.config.general.keybindings);
+        let mut reserved = collect_global_reserved_hotkeys(&self.state.config);
         for (command, key_str) in registry.commands_with_hotkeys() {
             if exclude.is_some_and(|(name, is_project)| {
                 command.name == name && command.is_project == is_project
@@ -188,7 +135,7 @@ impl App {
                 if let Some(command) = registry.find_root_command(&decoded.name, decoded.is_project)
                 {
                     self.state.close_menu();
-                    self.run_command(command)?;
+                    self.start_command(command.clone())?;
                 }
             }
             CommandMenuKeyKind::Group => {
@@ -271,7 +218,7 @@ impl App {
 
         if let Some(command) = group.items.get(self.state.ui.commands_nested.selected) {
             self.state.close_menu();
-            self.run_command(command)?;
+            self.start_command(command.clone())?;
         }
 
         Ok(())
@@ -391,9 +338,7 @@ impl App {
         let reserved = registry
             .as_ref()
             .map(|r| self.collect_reserved_command_hotkeys(r, None))
-            .unwrap_or_else(|| {
-                collect_global_reserved_hotkeys(&self.state.config.general.keybindings)
-            });
+            .unwrap_or_else(|| collect_global_reserved_hotkeys(&self.state.config));
 
         let t = termide_i18n::t();
         let modal = termide_modal::CommandConfigModal::new_create(t.menu_commands_add(), groups)

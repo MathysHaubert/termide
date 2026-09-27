@@ -34,13 +34,16 @@ impl App {
         }
     }
 
-    /// Create a new command entry in commands.toml.
+    /// Create a new command entry in commands.toml. The identifier comes
+    /// from the label, so two commands may share it: the new one then gets a
+    /// free variant (`build-2`) instead of replacing the other.
     fn create_command_entry(
         &mut self,
         result: &termide_modal::CommandConfigResult,
         config_dir: &Path,
     ) -> Result<()> {
-        self.write_command_entry(result, config_dir, result.name.clone())?;
+        let key = CommandsMetadata::load(config_dir).free_name(&result.name);
+        self.write_command_entry(result, config_dir, key)?;
         Ok(())
     }
 
@@ -61,7 +64,8 @@ impl App {
             source_metadata.save(&source_dir)?;
 
             let mut target_metadata = CommandsMetadata::load(&target_dir);
-            target_metadata.entries.insert(old_key, entry);
+            let key = target_metadata.free_name(&old_key);
+            target_metadata.entries.insert(key, entry);
             target_metadata.save(&target_dir)?;
         } else {
             self.write_command_entry(result, &target_dir, old_key)?;
@@ -95,9 +99,8 @@ impl App {
 
 /// Apply CommandConfigResult fields to a CommandMetadata entry.
 fn apply_result_to_entry(entry: &mut CommandMetadata, result: &termide_modal::CommandConfigResult) {
-    if result.display_name.is_some() {
-        entry.display_name = result.display_name.clone();
-    }
+    // An emptied label is removed, so the menu falls back to the identifier.
+    entry.display_name = result.display_name.clone();
     entry.command = result.command.clone();
     entry.mode = Some(result.mode);
     entry.key = result.hotkey.clone();
@@ -136,5 +139,19 @@ mod tests {
             entry.mode,
             Some(termide_config::commands::CommandMode::Terminal)
         );
+    }
+
+    #[test]
+    fn an_emptied_label_is_removed() {
+        let mut entry = CommandMetadata {
+            display_name: Some("Old".into()),
+            ..Default::default()
+        };
+        let result = CommandConfigResult {
+            display_name: None,
+            ..result_with_project(false)
+        };
+        apply_result_to_entry(&mut entry, &result);
+        assert_eq!(entry.display_name, None);
     }
 }

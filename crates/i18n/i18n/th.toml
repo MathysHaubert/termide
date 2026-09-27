@@ -928,6 +928,7 @@ settings_value_default_fmt = "(ค่าเริ่มต้น {value})"
 projects_delete_failed_fmt = "ลบเซสชันที่บันทึกไว้ไม่สำเร็จ: {error}"
 command_edit_title_fmt = "แก้ไขคำสั่ง: {name}"
 command_run_failed_fmt = "รันคำสั่งไม่สำเร็จ: {error}"
+command_name_taken_fmt = "มีคำสั่งชื่อ \"{name}\" อยู่แล้ว"
 [plurals]
 # Thai doesn't have plural forms
 day = { one = "", other = "" }

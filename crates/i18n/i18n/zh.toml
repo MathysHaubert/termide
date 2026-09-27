@@ -942,6 +942,7 @@ settings_value_default_fmt = "(默认 {value})"
 projects_delete_failed_fmt = "删除已保存的会话失败：{error}"
 command_edit_title_fmt = "编辑命令：{name}"
 command_run_failed_fmt = "运行命令失败：{error}"
+command_name_taken_fmt = "已存在名为“{name}”的命令"
 
 [plurals]
 # Chinese doesn't have plural forms

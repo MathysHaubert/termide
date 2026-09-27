@@ -5046,6 +5046,7 @@ dependencies = [
  "termide-agent-core",
  "termide-keyboard",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

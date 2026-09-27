@@ -24,6 +24,15 @@ pub enum CommandMode {
 }
 
 impl CommandMode {
+    /// The spelling `commands.toml` uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Background => "background",
+            Self::Report => "report",
+        }
+    }
+
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "terminal" => Some(Self::Terminal),
@@ -45,6 +54,16 @@ pub enum CommandParamType {
 }
 
 impl CommandParamType {
+    /// The spelling `commands.toml` uses.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Number => "number",
+            Self::Bool => "bool",
+            Self::Select => "select",
+        }
+    }
+
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "text" => Some(Self::Text),
@@ -57,7 +76,7 @@ impl CommandParamType {
 }
 
 /// A single parameter definition from commands.toml.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandParam {
     /// Variable name (used as TERMIDE_PARAM_<NAME> env var).
     pub name: String,
@@ -76,7 +95,7 @@ pub struct CommandParam {
 }
 
 /// Metadata for a single command, parsed from a [command_name] section in commands.toml.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CommandMetadata {
     /// Inline shell command.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,14 +272,118 @@ impl CommandsMetadata {
     }
 
     /// Save metadata to `commands.toml` in the given directory.
+    ///
+    /// The file is edited in place rather than rewritten: commands keep
+    /// their order and the comments around them, a changed command has only
+    /// its changed fields rewritten, and new commands go at the end. A file
+    /// that does not parse is replaced.
     pub fn save(&self, config_dir: &Path) -> std::io::Result<()> {
         let toml_path = config_dir.join("commands.toml");
         if let Some(parent) = toml_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(&self.entries).map_err(std::io::Error::other)?;
-        std::fs::write(&toml_path, content)
+        let original = std::fs::read_to_string(&toml_path).unwrap_or_default();
+        std::fs::write(&toml_path, self.render_over(&original))
     }
+
+    /// The text of `original` edited to hold exactly these entries.
+    fn render_over(&self, original: &str) -> String {
+        use toml_edit::{DocumentMut, Item};
+
+        let mut doc: DocumentMut = original.parse().unwrap_or_default();
+        let before = Self::parse(original).entries;
+
+        let gone: Vec<String> = doc
+            .iter()
+            .filter(|(key, item)| item.is_table() && !self.entries.contains_key(*key))
+            .map(|(key, _)| key.to_string())
+            .collect();
+        for key in gone {
+            doc.remove(&key);
+        }
+
+        let mut added: Vec<&String> = Vec::new();
+        for (name, meta) in &self.entries {
+            match doc.get_mut(name).and_then(Item::as_table_mut) {
+                Some(table) => {
+                    if before.get(name) != Some(meta) {
+                        write_fields(table, meta, before.get(name).map(|m| &m.params));
+                    }
+                }
+                None => added.push(name),
+            }
+        }
+        added.sort();
+        for name in added {
+            let mut table = toml_edit::Table::new();
+            write_fields(&mut table, &self.entries[name], None);
+            doc.insert(name, Item::Table(table));
+        }
+        doc.to_string()
+    }
+
+    /// `base`, or `base-2`, `base-3`… — the first identifier no entry has.
+    pub fn free_name(&self, base: &str) -> String {
+        if !self.entries.contains_key(base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|name| !self.entries.contains_key(name))
+            .expect("an unbounded range has a free name")
+    }
+}
+
+/// Write `meta` into `table`, touching only the fields that differ, so that
+/// the comments and layout of the rest survive. `old_params` is what the
+/// table held; the parameter tables are rewritten only when they changed.
+fn write_fields(
+    table: &mut toml_edit::Table,
+    meta: &CommandMetadata,
+    old_params: Option<&Vec<CommandParam>>,
+) {
+    fn set(table: &mut toml_edit::Table, key: &str, value: Option<&str>) {
+        match value {
+            Some(v) if table.get(key).and_then(toml_edit::Item::as_str) == Some(v) => {}
+            Some(v) => {
+                table.insert(key, toml_edit::value(v));
+            }
+            None => {
+                table.remove(key);
+            }
+        }
+    }
+    set(table, "name", meta.display_name.as_deref());
+    set(table, "command", meta.command.as_deref());
+    set(table, "mode", meta.mode.map(CommandMode::as_str));
+    set(table, "group", meta.group.as_deref());
+    set(table, "key", meta.key.as_deref());
+
+    if old_params == Some(&meta.params) {
+        return;
+    }
+    if meta.params.is_empty() {
+        table.remove("params");
+        return;
+    }
+    let mut params = toml_edit::ArrayOfTables::new();
+    for param in &meta.params {
+        let mut t = toml_edit::Table::new();
+        t.insert("name", toml_edit::value(&param.name));
+        if param.label != param.name {
+            t.insert("label", toml_edit::value(&param.label));
+        }
+        t.insert("type", toml_edit::value(param.param_type.as_str()));
+        if !param.options.is_empty() {
+            let options: toml_edit::Array = param.options.iter().map(String::as_str).collect();
+            t.insert("options", toml_edit::value(options));
+        }
+        if let Some(default) = &param.default {
+            t.insert("default", toml_edit::value(default));
+        }
+        params.push(t);
+    }
+    table.insert("params", toml_edit::Item::ArrayOfTables(params));
 }
 
 /// A single command item from commands.toml.
@@ -538,6 +661,67 @@ key = "Ctrl+T"
         let clean = &meta.entries["clean"];
         assert!(clean.mode.is_none());
         assert!(clean.key.is_none());
+    }
+
+    /// Saving edits the file: order, comments and untouched fields stay.
+    #[test]
+    fn saving_keeps_order_comments_and_other_commands() {
+        let original = r#"# Build helpers
+[zeta]
+command = "make z"   # the slow one
+
+[alpha]
+name = "Alpha"
+command = "make a"
+
+[[alpha.params]]
+name = "target"
+type = "select"
+options = ["a", "b"]
+
+[gone]
+command = "rm -rf nothing"
+"#;
+        let mut meta = CommandsMetadata::parse(original);
+        meta.entries.remove("gone");
+        meta.entries.get_mut("alpha").unwrap().display_name = None;
+        meta.entries.insert(
+            "new".into(),
+            CommandMetadata {
+                command: Some("echo new".into()),
+                mode: Some(CommandMode::Report),
+                ..Default::default()
+            },
+        );
+        let saved = meta.render_over(original);
+        assert_eq!(
+            saved,
+            r#"# Build helpers
+[zeta]
+command = "make z"   # the slow one
+
+[alpha]
+command = "make a"
+
+[[alpha.params]]
+name = "target"
+type = "select"
+options = ["a", "b"]
+
+[new]
+command = "echo new"
+mode = "report"
+"#
+        );
+        // What was written reads back as what was saved.
+        assert_eq!(CommandsMetadata::parse(&saved).entries, meta.entries);
+    }
+
+    #[test]
+    fn a_new_command_does_not_take_an_existing_name() {
+        let meta = CommandsMetadata::parse("[build]\ncommand = \"make\"\n[build-2]\n");
+        assert_eq!(meta.free_name("test"), "test");
+        assert_eq!(meta.free_name("build"), "build-3");
     }
 
     #[test]
