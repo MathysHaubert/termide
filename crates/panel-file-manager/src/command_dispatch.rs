@@ -441,7 +441,8 @@ impl FileManager {
                 // same rule as create_file / create_dir use via
                 // `create_target_dir`. Cursor on a root entry
                 // pastes into `current_path`; cursor inside an
-                // expanded subdir pastes into that subdir.
+                // expanded subdir, or on the expanded subdir
+                // itself, pastes into that subdir.
                 let (local_target, _vfs_target) = self.create_target_dir();
                 let t = termide_i18n::t();
                 let message =

@@ -1082,6 +1082,46 @@ mod tests {
         );
     }
 
+    /// Creating on an expanded directory must land inside it: its children
+    /// are what the tree shows under the cursor. A collapsed directory at
+    /// the same level keeps the "alongside the cursor" rule.
+    #[test]
+    fn create_directory_on_expanded_dir_lands_inside_it() {
+        let (mut fm, temp_dir) = create_file_manager_in_temp();
+        std::fs::create_dir(temp_dir.path().join("sub")).unwrap();
+        std::fs::create_dir(temp_dir.path().join("other")).unwrap();
+        // The listing is read on a worker thread; apply it before looking
+        // rows up, as `tick()` would.
+        let reload = |fm: &mut FileManager| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !fm.check_async_reload() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "listing never arrived"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        fm.load_directory().unwrap();
+        reload(&mut fm);
+        let vis_of = |fm: &FileManager, name: &str| {
+            (0..fm.visible_indices.len())
+                .find(|&i| fm.tree_entry_at(i).unwrap().file_entry.name == name)
+                .unwrap()
+        };
+
+        let sub = vis_of(&fm, "sub");
+        fm.expand_dir(sub);
+        fm.selected = sub;
+        fm.create_directory("inside".to_string()).unwrap();
+        assert!(canonical_temp_path(&temp_dir).join("sub/inside").is_dir());
+        reload(&mut fm);
+
+        fm.selected = vis_of(&fm, "other");
+        fm.create_directory("beside".to_string()).unwrap();
+        assert!(canonical_temp_path(&temp_dir).join("beside").is_dir());
+    }
+
     #[test]
     fn test_file_manager_new() {
         let (fm, temp_dir) = create_file_manager_in_temp();

@@ -150,6 +150,8 @@ land **at the cursor's tree level**, not always in the panel's root:
   current directory.
 - Cursor inside an expanded subdirectory → the action targets that
   subdirectory.
+- Cursor on an expanded directory itself → the action targets that
+  directory, where its visible children are.
 
 This matches the visual position of the cursor — what you see is where
 the file is created or pasted.

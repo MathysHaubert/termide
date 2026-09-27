@@ -376,23 +376,32 @@ impl FileManager {
     /// the highlighted entry. So cursor on a root-level item creates
     /// in the panel's `current_path`; cursor anywhere inside an
     /// expanded subdir creates in that subdir (the parent of the
-    /// highlighted entry).
+    /// highlighted entry). The exception is an expanded directory
+    /// under the cursor: its children are what the user sees below
+    /// it, so the new entry goes inside it.
     pub(crate) fn create_target_dir(&self) -> (std::path::PathBuf, Option<termide_vfs::VfsPath>) {
         if let Some(te) = self.tree_entry_at(self.selected) {
-            // Top-level rows (depth == 0) and ".." always anchor at
-            // current_path. For any nested entry we use the parent of
-            // its full_path, which corresponds to the visible subdir
-            // the row belongs to.
-            if te.depth > 0 && te.file_entry.name != ".." {
-                if let Some(parent) = te.full_path.parent() {
-                    let local = parent.to_path_buf();
-                    let vfs = if self.vfs.is_remote() {
-                        self.remote_vfs_path_for(&local)
-                    } else {
-                        None
-                    };
-                    return (local, vfs);
-                }
+            // ".." always anchors at current_path. An expanded
+            // directory is its own target; any other nested entry
+            // targets the parent of its full_path, which corresponds
+            // to the visible subdir the row belongs to.
+            let target = if te.file_entry.name == ".." {
+                None
+            } else if te.expanded == Some(true) {
+                Some(te.full_path.as_path())
+            } else if te.depth > 0 {
+                te.full_path.parent()
+            } else {
+                None
+            };
+            if let Some(dir) = target {
+                let local = dir.to_path_buf();
+                let vfs = if self.vfs.is_remote() {
+                    self.remote_vfs_path_for(&local)
+                } else {
+                    None
+                };
+                return (local, vfs);
             }
         }
         (
