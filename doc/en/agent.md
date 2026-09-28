@@ -675,9 +675,9 @@ together (see [The agent directory](#the-agent-directory)).
   session this sets its display name). The session confirmation names the
   session (its display name, first prompt, or "untitled") and its id.
 - The first two rows of Agents, Skills and Prompts create a new item — **New
-  (project)** under `.termide/ai/`, or **New (global)** under the configuration
-  directory — asking for a name and opening the new file. Sessions are created
-  by running an agent, so they have no create rows.
+  (in project)** under `.termide/ai/`, or **New (global)** under the
+  configuration directory — asking for a name and opening the new file.
+  Sessions are created by running an agent, so they have no create rows.
 - Each session row shows, dim on the right, when it was last worked on
   (e.g. "2h ago").
 
