@@ -10,6 +10,7 @@ description = "Coding agent panel for termide: transcript, input, tool calls and
 [dependencies]
 chrono.workspace = true
 crossterm.workspace = true
+ignore.workspace = true
 log.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true

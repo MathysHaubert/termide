@@ -4926,67 +4926,54 @@ struct MentionSpan {
 }
 
 /// Files and directories under `root` matching `prefix` (the text after `@`),
-/// as completion items: a relative path each, directories ending in `/`. A
-/// shallow, budgeted walk that skips version-control and build noise, so it
-/// stays cheap on every keystroke even in a large tree.
+/// as completion items: a relative path each, directories ending in `/`,
+/// ranked by fuzzy match on the path as the open prompt ranks them. The walk
+/// leaves out what git ignores, `.git` and `.termide`, and hidden entries
+/// unless `prefix` starts with `.`; it is budgeted, so it stays cheap on
+/// every keystroke even in a large tree.
 fn file_completions(root: &std::path::Path, prefix: &str) -> Vec<CompletionItem> {
+    use termide_ui::fuzzy::{rank, Query};
+
     const MAX_RESULTS: usize = 50;
     const MAX_VISITED: usize = 4000;
-    /// Directory names never worth offering.
-    const SKIP: [&str; 4] = [".git", "target", "node_modules", ".termide"];
 
-    let needle = prefix.to_ascii_lowercase();
     let wants_hidden = prefix.starts_with('.');
-    let mut out: Vec<(bool, String)> = Vec::new(); // (name_starts_with, path)
-    let mut stack = vec![root.to_path_buf()];
-    let mut visited = 0usize;
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if visited >= MAX_VISITED {
-                break;
+    let walk = ignore::WalkBuilder::new(root)
+        .hidden(!wants_hidden)
+        .filter_entry(|entry| {
+            let name = entry.file_name();
+            name != ".git" && name != ".termide"
+        })
+        .build();
+    let mut candidates: Vec<String> = walk
+        .flatten()
+        .filter(|entry| entry.depth() > 0)
+        .take(MAX_VISITED)
+        .filter_map(|entry| {
+            let relative = entry.path().strip_prefix(root).ok()?;
+            let mut path = relative.to_string_lossy().replace('\\', "/");
+            // `Path::is_dir` follows a symlink to a directory.
+            if entry.path().is_dir() {
+                path.push('/');
             }
-            visited += 1;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if SKIP.contains(&name.as_str()) {
-                continue;
-            }
-            if name.starts_with('.') && !wants_hidden {
-                continue;
-            }
-            let path = entry.path();
-            let is_dir = path.is_dir();
-            let Ok(relative) = path.strip_prefix(root) else {
-                continue;
-            };
-            let mut rel = relative.to_string_lossy().replace('\\', "/");
-            if is_dir {
-                rel.push('/');
-                if stack.len() < MAX_VISITED {
-                    stack.push(path.clone());
-                }
-            }
-            let hay = rel.to_ascii_lowercase();
-            let name_match = name.to_ascii_lowercase().starts_with(&needle);
-            if needle.is_empty() || name_match || hay.contains(&needle) {
-                out.push((name_match, rel));
-            }
-        }
-        if visited >= MAX_VISITED {
-            break;
-        }
-    }
-    // Name-prefix matches first, then shortest paths, then alphabetical.
-    out.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.len().cmp(&b.1.len()))
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    out.truncate(MAX_RESULTS);
-    out.into_iter()
-        .map(|(_, path)| CompletionItem::new(path.clone()).with_label(path))
+            Some(path)
+        })
+        .collect();
+    // Shortest paths first, so an empty or loose query offers the top of the
+    // tree before its depths.
+    candidates.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+
+    let mut query = Query::fuzzy_path(prefix);
+    rank(candidates.iter().map(|path| query.score(path)))
+        .into_iter()
+        .take(MAX_RESULTS)
+        .map(|i| {
+            let path = &candidates[i];
+            let matched = query.positions(path).unwrap_or_default();
+            CompletionItem::new(path.clone())
+                .with_label(path.clone())
+                .with_matched(matched)
+        })
         .collect()
 }
 
@@ -10009,6 +9996,15 @@ mod tests {
         // A prefix filters, name matches rank first.
         let main = file_completions(dir.path(), "main");
         assert_eq!(main.first().map(|i| i.value.as_str()), Some("src/main.rs"));
+        // What git ignores is not offered; the match is fuzzy on the path.
+        std::fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        std::fs::write(dir.path().join("target/debug/main"), "").unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
+        let values: Vec<String> = file_completions(dir.path(), "srmain")
+            .into_iter()
+            .map(|i| i.value)
+            .collect();
+        assert_eq!(values, ["src/main.rs"]);
 
         // Typing @ opens the file popup; selecting a file replaces the token.
         let mut panel = AgentPanel::new(AgentPanelSetup {

@@ -377,7 +377,8 @@ on a name typed in full sends it.
 
 Typing `@` opens the same list with the files and directories under the
 panel's directory instead, so a path is a few keystrokes: `@ma` finds
-`src/main.rs`. `Tab` or `Enter` inserts the highlighted one; a directory ends
+`src/main.rs`, and the letters need not be adjacent (`@srmain`). What git
+ignores is left out, and hidden entries unless you type the `.`. `Tab` or `Enter` inserts the highlighted one; a directory ends
 in `/` and reopens the list for its contents, so you can drill in. The agent
 reads the file you name; `@` is only quick path entry, nothing is attached
 behind your back.
