@@ -1,4 +1,4 @@
-//! The attach client: a thin byte pump between this terminal and a instance
+//! The attach client: a thin byte pump between this terminal and an instance
 //! daemon.
 //!
 //! It deliberately knows nothing about termide's rendering. Output arrives as

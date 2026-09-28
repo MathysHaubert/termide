@@ -1,6 +1,6 @@
 //! The list of detached instances, kept as one `<id>.info` sidecar per socket.
 //!
-//! There is no central index file: a instance is whatever has a live socket in
+//! There is no central index file: an instance is whatever has a live socket in
 //! the runtime directory. That keeps the registry self-healing — a daemon that
 //! dies without cleaning up leaves a socket whose pid no longer exists, and
 //! [`prune_dead`] removes it on the next listing.
@@ -93,7 +93,7 @@ pub fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Write (or overwrite) the sidecar for a instance.
+/// Write (or overwrite) the sidecar for an instance.
 pub fn write_info(info: &InstanceInfo) -> Result<()> {
     let path = paths::info_path(&info.id)?;
     std::fs::write(&path, info.serialise())
@@ -107,7 +107,7 @@ pub fn read_info(id: &str) -> Option<InstanceInfo> {
     InstanceInfo::parse(id, &text)
 }
 
-/// Mark a instance attached or detached, leaving the rest of the sidecar alone.
+/// Mark an instance attached or detached, leaving the rest of the sidecar alone.
 pub fn set_attached(id: &str, attached: bool) -> Result<()> {
     if let Some(mut info) = read_info(id) {
         info.attached = attached;
@@ -116,7 +116,7 @@ pub fn set_attached(id: &str, attached: bool) -> Result<()> {
     Ok(())
 }
 
-/// Delete every file belonging to a instance.
+/// Delete every file belonging to an instance.
 ///
 /// All three of them: a leftover `.term` is small but permanent, and since
 /// `prune_dead` routes through here, anything this function forgets accretes

@@ -3,7 +3,7 @@
 //! Sockets and their sidecar `.info` files live in a per-user runtime
 //! directory, never in a shared `/tmp`: a world-writable directory invites
 //! symlink races on a multi-user host, and a stale socket there would let
-//! another account impersonate a instance.
+//! another account impersonate an instance.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 ///
 /// `dirs::runtime_dir()` is `$XDG_RUNTIME_DIR` on Linux/BSD and `None` on
 /// macOS, where the data directory is the closest per-user equivalent that
-/// survives for the lifetime of the login instance.
+/// survives for the lifetime of the login session.
 pub fn runtime_dir() -> Result<PathBuf> {
     let base = match dirs::runtime_dir() {
         Some(dir) => dir.join("termide"),
@@ -54,7 +54,7 @@ pub fn info_path(id: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{id}.info")))
 }
 
-/// Turn a project directory into a instance id stem.
+/// Turn a project directory into an instance id stem.
 ///
 /// The stem is the directory name reduced to characters that are safe both
 /// as a filename and as something the user retypes into `--attach`.

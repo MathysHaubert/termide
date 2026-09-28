@@ -137,8 +137,7 @@ the best experience.
 2. Extract the archive.
 3. Run `termide.exe` in Windows Terminal.
 
-Configuration lives under `%APPDATA%\termide\` (config, sessions) and
-`%LOCALAPPDATA%\termide\cache\` (logs).
+Configuration, project layouts and logs live under `%APPDATA%\termide\`.
 
 Alternatively, in **WSL/WSL2** use the Linux x86_64 build (`termide-0.35.0-x86_64-unknown-linux-gnu.tar.gz`) as on any Linux.
 
@@ -342,16 +341,24 @@ Arguments:
 Options:
   --log-level <LEVEL>  Set log level (trace, debug, info, warn, error)
   --no-lsp             Disable LSP language servers
-  --config <FILE>      Use custom config file path
+  --config <PATH>      Use custom config file path
   --diagnostics        Run pre-flight diagnostics and exit (no UI)
   --detached           Start a detached instance that survives the terminal
                        closing, and print its id (Unix only)
   --attach [<ID>]      Attach to a detached instance, most recent if omitted
+  -f, --force          With --attach: take the instance over from a client
+                       already attached to it, detaching that client
+  --kill <ID>          End a detached instance with every shell and job in it
+                       and exit; unsaved changes in it are lost
   --list-instances     List detached instances and exit
   --completions <SHELL>
                        Print a completion script (bash, zsh, fish) and exit
   --install-completions [<SHELL>]
                        Install the completion script for $SHELL, or the named one
+  --prompt <PROMPT>    Run one agent task without the UI, print the answer to
+                       stdout and exit; `-` reads the prompt from stdin
+  --agent <NAME>       With --prompt: the agent definition to use
+  --output <FORMAT>    With --prompt: text (default), json or stream-json
   -h, --help           Print help
   -V, --version        Print version
 ```
@@ -413,14 +420,14 @@ the file without the ignored setting, the file as it was is first copied to
 - macOS: `~/Library/Application Support/termide/projects/`
 - Windows: `%APPDATA%\termide\projects\`
 
-**Log file location:**
-- Linux/BSD: `~/.cache/termide/termide.log` (or `$XDG_CACHE_HOME/termide/termide.log`)
-- macOS: `~/Library/Caches/termide/termide.log`
-- Windows: `%LOCALAPPDATA%\termide\cache\termide.log`
+**Log file location:** each run writes its own `session-<date>-<time>.log`
+into the project's directory under the project data location above; logs older
+than 24 hours are removed. `logging.file_path` replaces this with one fixed file.
 
 **Bookmarks location:**
-- Linux/BSD: `~/.local/share/termide/bookmarks.toml` (or `$XDG_DATA_HOME/termide/bookmarks.toml`)
+- Linux/BSD: `~/.config/termide/bookmarks.toml` (or `$XDG_CONFIG_HOME/termide/bookmarks.toml`)
 - macOS: `~/Library/Application Support/termide/bookmarks.toml`
+- Windows: `%APPDATA%\termide\bookmarks.toml`
 
 ### Example Configuration
 
@@ -432,7 +439,7 @@ vim_mode = false
 project_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
-always_detachable = false  # keep sessions alive across terminal closes (Unix)
+always_detachable = false  # keep the instance alive across terminal closes (Unix)
 resource_monitor_interval = 1000
 
 [editor]

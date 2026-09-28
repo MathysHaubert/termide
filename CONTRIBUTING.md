@@ -310,15 +310,15 @@ Use the [Bug Report template](.github/ISSUE_TEMPLATE/bug_report.md) when reporti
 
 **Log locations:**
 
-Each run writes its own `session-<date>-<time>.log` into the session directory
+Each run writes its own `session-<date>-<time>.log` into the project directory
 for the project you opened, under the data directory:
 
-- Linux: `~/.local/share/termide/sessions/<project path>/`
-  (or `$XDG_DATA_HOME/termide/sessions/<project path>/`)
-- macOS: `~/Library/Application Support/termide/sessions/<project path>/`
-- Windows: `%APPDATA%\termide\sessions\<project path>\`
+- Linux: `~/.local/share/termide/projects/<project path>/`
+  (or `$XDG_DATA_HOME/termide/projects/<project path>/`)
+- macOS: `~/Library/Application Support/termide/projects/<project path>/`
+- Windows: `%APPDATA%\termide\projects\<project path>\`
 
-`termide --diagnostics` prints the exact session directory for the current
+`termide --diagnostics` prints the exact project directory for the current
 project. Logs older than 24 hours are removed automatically. Setting
 `logging.file_path` in `config.toml` overrides all of this with a single fixed
 file.
@@ -425,11 +425,11 @@ Contains:
 **Windows:** `%APPDATA%\termide\`
 
 Contains:
-- `sessions/` - Project session files, unsaved buffers, and per-run logs
+- `projects/` - Per-project saved layouts, unsaved buffers, and per-run logs
 
 ### Logs
 
-Logs live in the session directory, not in a cache directory — see
+Logs live in the project directory, not in a cache directory — see
 [Log locations](#bug-reports) above. One file per run,
 `session-<date>-<time>.log`, pruned after 24 hours.
 

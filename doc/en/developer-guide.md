@@ -108,52 +108,71 @@ TermIDE uses a Cargo workspace with modular crates:
 ```
 termide/
 ├── src/                       # Binary entry point
-│   ├── main.rs               # App initialization, terminal setup
+│   ├── completions.rs        # Shell completion scripts (--completions)
+│   ├── main.rs               # CLI parsing, app initialization, terminal setup
 │   └── ui.rs                 # Top-level rendering bridge
 ├── crates/
-│   ├── app/                  # Application core, event handling, panel management
+│   ├── agent-acp/            # External agent over the Agent Client Protocol (stdio)
+│   ├── agent-core/           # Provider-agnostic agent core: messages, tools, agent loop
+│   ├── agent-hooks/          # Command hooks: external programs run on tool calls
+│   ├── agent-mcp/            # MCP client (tools from servers) and termide's own MCP server
+│   ├── agent-providers/      # Model providers (OpenAI-compatible chat completions)
+│   ├── agent-tools/          # Built-in agent tools: read, edit, write, bash
+│   ├── agent-web/            # Web tools: fetch and web_search, over HTTP or a local Chrome
+│   ├── app/                  # Application orchestrator, event handling, panel management
 │   ├── app-core/             # Core application traits (LayoutController, PanelProvider)
-│   ├── app-modal/            # Modal dialog handling
-│   ├── app-panel/            # Panel management operations
-│   ├── app-session/          # Session save/restore logic
-│   ├── app-watcher/          # File system watcher integration
 │   ├── buffer/               # Text buffer implementation (ropey-based)
 │   ├── clipboard/            # System clipboard integration
 │   ├── config/               # Configuration management (TOML)
 │   ├── core/                 # Core Panel trait and shared types
-│   ├── file-ops/             # File operations (copy, move, delete, upload, download)
+│   ├── db/                   # Database access core (SQLite, PostgreSQL, MySQL)
+│   ├── detach/               # Detached (daemonised) instance hosting
+│   ├── fetch/                # Minimal, security-bounded HTTP(S) GET for viewer panels
+│   ├── file-ops/             # File operations queue (copy, move, delete, upload, download)
 │   ├── git/                  # Git integration (status, diff, log)
-│   ├── highlight/            # Syntax highlighting (tree-sitter, 22 languages)
+│   ├── highlight/            # Syntax highlighting (tree-sitter)
+│   ├── html/                 # HTML to terminal pseudographics renderer
 │   ├── i18n/                 # Internationalization (15 languages)
 │   ├── keyboard/             # Keyboard handling and layout translation
 │   ├── layout/               # Panel groups, split layout, fullscreen preset
 │   ├── logger/               # Logging system
 │   ├── lsp/                  # Language Server Protocol client
-│   ├── modal/                # Modal dialog implementations
+│   ├── mermaid/              # Mermaid parsing and text-pseudographics layout
+│   ├── modal/                # Modal dialog system
+│   ├── panel-agent/          # Coding agent panel (transcript, input, permission prompts)
+│   ├── panel-binary/         # Binary file viewer/editor panel (hex/ASCII)
+│   ├── panel-db/             # Database viewer panel
 │   ├── panel-diagnostics/    # LSP diagnostics panel
 │   ├── panel-editor/         # Text editor panel
 │   ├── panel-file-manager/   # File manager panel
 │   ├── panel-git-diff/       # Git diff viewer panel
 │   ├── panel-git-log/        # Git log panel
 │   ├── panel-git-status/     # Git status panel
-│   ├── panel-image/          # Image viewer panel
+│   ├── panel-html/           # Rendered HTML preview panel
+│   ├── panel-image/          # Image viewer panel (native graphics)
+│   ├── panel-markdown/       # Rendered Markdown preview panel
+│   ├── panel-mermaid/        # Mermaid diagram viewer panel (experimental)
 │   ├── panel-misc/           # Help, Journal, and References panels
 │   ├── panel-operations/     # Background operations panel
+│   ├── panel-outline/        # Outline panel
 │   ├── panel-terminal/       # Terminal emulator panel (PTY)
-│   ├── session/              # Session persistence
+│   ├── project/              # Saved project layouts
+│   ├── richtext/             # Rich-text layout engine (styled runs to wrapped lines)
 │   ├── state/                # Application state (batch, layout, operations, ui)
 │   ├── system-monitor/       # CPU/RAM/Disk monitoring
 │   ├── theme/                # Theme system and 38 built-in themes
-│   ├── ui/                   # UI utilities and path formatting
+│   ├── ui/                   # UI components and path formatting
 │   ├── ui-render/            # UI rendering (menu, status bar, panels)
-│   ├── unicode-width-fix/    # Unicode width corrections for East Asian characters
+│   ├── unicode-width-fix/    # Patched unicode-width (East Asian width corrections)
 │   ├── vfs/                  # Virtual filesystem (SFTP, FTP, SMB)
-│   └── watcher/              # File system event watcher
+│   ├── walk/                 # Project tree walking that honours .gitignore
+│   └── watcher/              # Filesystem and git watcher
 ├── doc/                       # Documentation
 │   ├── en/                   # English documentation
 │   ├── ru/                   # Russian documentation
 │   └── zh/                   # Chinese documentation
-└── packaging/                 # Distribution packaging (deb, rpm, AUR, Homebrew, Nix)
+├── packaging/                 # AUR PKGBUILDs, crates.io redirect stub
+└── flake.nix                  # Nix flake (package, dev shell)
 ```
 
 ## Key Components

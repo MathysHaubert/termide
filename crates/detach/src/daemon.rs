@@ -3,7 +3,7 @@
 //!
 //! The hosted termide is an ordinary termide — it is not aware of being
 //! multiplexed beyond re-entering its terminal modes when a client arrives.
-//! Everything that makes a instance survive a disconnect follows from the
+//! Everything that makes an instance survive a disconnect follows from the
 //! daemon outliving the client: the shells, LSP servers and watchers are the
 //! hosted process's children, so nothing has to be serialised or restored.
 
@@ -138,7 +138,7 @@ fn detach_from_terminal() -> Result<()> {
 ///
 /// Dropping the stream is not enough: `serve_connection` holds a second
 /// descriptor for the same socket, so the peer would see neither EOF nor an
-/// error and would hang attached to a instance that has already let go of it.
+/// error and would hang attached to an instance that has already let go of it.
 /// `shutdown` acts on the socket itself, so both ends agree.
 fn close_client(stream: Option<UnixStream>) {
     if let Some(stream) = stream {
@@ -356,7 +356,7 @@ fn run_daemon(
     }
     // The daemon must not hold the slave open: with it open, the PTY never
     // reports EOF when the hosted process exits and the pump would block for
-    // ever on a instance that is already over.
+    // ever on an instance that is already over.
     drop(pair.slave);
 
     let reader = pair
@@ -381,7 +381,7 @@ fn run_daemon(
     // Pump PTY output to whoever is attached. This thread runs even while
     // detached and discards what it reads: an unread master fills its buffer
     // within a page or two of output and would then block the hosted termide
-    // on write, freezing a instance that is supposed to keep working.
+    // on write, freezing an instance that is supposed to keep working.
     {
         let instance = Arc::clone(&instance);
         std::thread::spawn(move || pump_pty_output(instance, reader));
@@ -532,7 +532,7 @@ mod tests {
     /// Regression: an in-app detach must reach the client even though the
     /// daemon still holds a second descriptor for the same socket in
     /// `serve_connection`. Dropping the stream alone leaves the peer blocked
-    /// on a read for ever, attached to a instance that has released it.
+    /// on a read for ever, attached to an instance that has released it.
     #[test]
     fn closing_a_client_is_visible_to_the_peer_despite_a_duplicate_fd() {
         let (daemon_side, mut peer) = UnixStream::pair().unwrap();

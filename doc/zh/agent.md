@@ -202,7 +202,7 @@ mode = "configured" # ask | plan | edit | configured（默认）| all — 新会
 "**/.env*" = "deny"
 ```
 
-在模式中，`*` 代表任意文本，开头的 `**/` 可省略，因此 `**/.env*` 也匹配项目根目录中的 `.env`。shell 命令按部分匹配：`cargo build && rm -rf target` 需要两半都被允许，任一半被拒绝都会阻止整个命令。命令替换（`$(…)`、反引号）从不会被自动允许。内联脚本是一条命令，而不是其各行所代表的多条命令：带引号的脚本（包括转义引号）和 here-document 的正文（`python3 - <<'EOF'`）都是该命令的数据。
+在模式中，`*` 代表任意文本，开头的 `**/` 可省略，因此 `**/.env*` 也匹配项目根目录中的 `.env`。shell 命令按部分匹配：`cargo build && rm -rf target` 需要两半都被允许，任一半被拒绝都会阻止整个命令。shell 自身的关键字不算部分：在 `if [ -f x ]; then make; fi` 中，部分是 `[ -f x ]` 和 `make`，而 `for … in` 头部或结尾的 `fi`、`done` 根本不算部分。命令替换（`$(…)`、反引号）从不会被自动允许。内联脚本是一条命令，而不是其各行所代表的多条命令：带引号的脚本（包括转义引号）和 here-document 的正文（`python3 - <<'EOF'`）都是该命令的数据。
 
 命令的各部分在其运行的目录中判断：termide 会在整行中跟踪 `cd`、`pushd` 和 `popd`，通过路径指定的程序既按书写形式匹配，也按解析后的路径匹配——项目内为相对项目的路径，项目外为绝对路径——因此 `cd /tmp && ./venv/bin/pip install x` 会匹配 `/tmp/venv/bin/pip *`。卡片只询问没有规则或只读默认值能决定的部分，并在命令下方列出它们；本会话内或始终生效的回答会为每个部分记录一条规则。无法确定目录的部分（在 `cd $DIR`、`cd -` 或子 shell 之后）或运行了命令替换的部分会标记为“仅此一次”：不会为其记录规则；当没有任何部分可以记录规则时，卡片只提供允许一次和拒绝。
 
@@ -226,7 +226,7 @@ mode = "configured" # ask | plan | edit | configured（默认）| all — 新会
 
 ✓ 表示运行，? 表示询问，✗ 表示拒绝，“规则 / ?”表示遵循匹配的规则，没有规则时询问。无论哪种模式，规则的 `deny` 都会拒绝，其 `ask` 都会询问：各模式搁置的是配置的 `allow` 规则，而从不是拒绝规则。你在本会话中的回答在除 `all` 之外的所有模式中都有效。
 
-只读命令是一份只查看内容的简短列表（`ls`、`cat`、`rg`、`git status`、不带 `-delete` 或 `-exec` 的 `find`、`cd` 等）；重定向到文件会使其失去资格，而把一个流指向另一个流（`2>&1`）或 `/dev/null` 则不会。加载技能从不询问。
+只读命令是一份只查看内容的简短列表（`ls`、`cat`、`rg`、`git status`、`git log`、`find`、`cd` 等）；重定向到文件会使其失去资格，而把一个流指向另一个流（`2>&1`）或 `/dev/null` 则不会。让这类命令写入文件或运行其他程序的参数同样会使其失去资格：`env` 只有在不带要运行的命令时才算，`git branch` 和 `git remote` 只有在列出时才算，`find` 只有在不带 `-delete`、`-exec`、`-ok`、`-fprint` 或 `-fls` 时才算，而 `sort -o`、带输出文件的 `uniq`、`tree -o`/`-R`、`rg --pre` 和 `git diff --output` 会询问。加载技能从不询问。
 
 ### 计划模式
 
@@ -326,7 +326,7 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 模型收到的提示词由文件组装而成：模板 `ai/AGENTS.md` 加上由代理填充的占位符。TermIDE 中没有内置任何提示词文本；下面的模板作为数据文件（`crates/agent-core/assets/AGENTS.md`）提供，首次使用时写入配置层级，此后以该文件为准。项目或面板目录可以带有自己的 `.termide/ai/AGENTS.md`，它会取而代之：
 
 ```markdown
-You are a coding agent working inside termide, a terminal IDE. You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
+You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
 # Tools
 {{tools}}

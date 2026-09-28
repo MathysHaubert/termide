@@ -39,7 +39,7 @@ termide --attach my-project   # 接入指定的实例
 always_detachable = true
 ```
 
-或在设置（`Alt+P`）→ 常规中勾选**始终可分离会话（Unix）**。此后每个 `termide`
+或在设置（`Alt+P`）→ 常规中勾选**始终可分离实例（Unix）**。此后每个 `termide`
 都在自己的宿主中启动，`Alt+D` 在任何地方都可用。
 
 启用前值得了解：

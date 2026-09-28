@@ -103,53 +103,72 @@ TermIDE 使用 Cargo workspace，采用模块化 crate 架构：
 
 ```
 termide/
-├── src/                       # 二进制入口点
-│   ├── main.rs               # 应用初始化、终端设置
+├── src/                       # 二进制入口
+│   ├── completions.rs        # Shell 补全脚本（--completions）
+│   ├── main.rs               # CLI 解析、应用初始化、终端设置
 │   └── ui.rs                 # 顶层渲染桥接
 ├── crates/
-│   ├── app/                  # 应用核心、事件处理、面板管理
+│   ├── agent-acp/            # 通过 Agent Client Protocol（stdio）接入的外部智能体
+│   ├── agent-core/           # 与提供商无关的智能体核心：消息、工具、智能体循环
+│   ├── agent-hooks/          # 命令钩子：在工具调用时运行的外部程序
+│   ├── agent-mcp/            # MCP 客户端（来自服务器的工具）及 termide 自身的 MCP 服务器
+│   ├── agent-providers/      # 模型提供商（OpenAI 兼容的 chat completions）
+│   ├── agent-tools/          # 内置智能体工具：read、edit、write、bash
+│   ├── agent-web/            # 网络工具：fetch 和 web_search，经 HTTP 或本地 Chrome
+│   ├── app/                  # 应用编排器、事件处理、面板管理
 │   ├── app-core/             # 核心应用 trait（LayoutController、PanelProvider）
-│   ├── app-modal/            # 模态对话框处理
-│   ├── app-panel/            # 面板管理操作
-│   ├── app-session/          # 会话保存/恢复逻辑
-│   ├── app-watcher/          # 文件系统监视器集成
 │   ├── buffer/               # 文本缓冲区实现（基于 ropey）
 │   ├── clipboard/            # 系统剪贴板集成
 │   ├── config/               # 配置管理（TOML）
-│   ├── core/                 # 核心 Panel trait 和共享类型
-│   ├── file-ops/             # 文件操作（复制、移动、删除、上传、下载）
-│   ├── git/                  # Git 集成（状态、差异、日志）
-│   ├── highlight/            # 语法高亮（tree-sitter，22 种语言）
+│   ├── core/                 # 核心 Panel trait 与共享类型
+│   ├── db/                   # 数据库访问核心（SQLite、PostgreSQL、MySQL）
+│   ├── detach/               # 可分离（守护进程化）实例托管
+│   ├── fetch/                # 供查看器面板使用的最小化、受安全约束的 HTTP(S) GET
+│   ├── file-ops/             # 文件操作队列（复制、移动、删除、上传、下载）
+│   ├── git/                  # Git 集成（状态、diff、日志）
+│   ├── highlight/            # 语法高亮（tree-sitter）
+│   ├── html/                 # HTML 到终端伪图形的渲染器
 │   ├── i18n/                 # 国际化（15 种语言）
-│   ├── keyboard/             # 键盘处理和布局翻译
-│   ├── layout/               # 面板组、拆分布局、全屏预设
+│   ├── keyboard/             # 键盘处理与布局转换
+│   ├── layout/               # 面板组、分屏布局、全屏预设
 │   ├── logger/               # 日志系统
-│   ├── lsp/                  # 语言服务器协议客户端
-│   ├── modal/                # 模态对话框实现
+│   ├── lsp/                  # Language Server Protocol 客户端
+│   ├── mermaid/              # Mermaid 解析与文本伪图形布局
+│   ├── modal/                # 模态对话框系统
+│   ├── panel-agent/          # 编程智能体面板（对话记录、输入、权限提示）
+│   ├── panel-binary/         # 二进制文件查看/编辑面板（hex/ASCII）
+│   ├── panel-db/             # 数据库查看面板
 │   ├── panel-diagnostics/    # LSP 诊断面板
 │   ├── panel-editor/         # 文本编辑器面板
 │   ├── panel-file-manager/   # 文件管理器面板
-│   ├── panel-git-diff/       # Git 差异查看器面板
+│   ├── panel-git-diff/       # Git diff 查看面板
 │   ├── panel-git-log/        # Git 日志面板
 │   ├── panel-git-status/     # Git 状态面板
-│   ├── panel-image/          # 图片查看器面板
-│   ├── panel-misc/           # 欢迎界面和日志面板
+│   ├── panel-html/           # 渲染后的 HTML 预览面板
+│   ├── panel-image/          # 图片查看面板（原生图形）
+│   ├── panel-markdown/       # 渲染后的 Markdown 预览面板
+│   ├── panel-mermaid/        # Mermaid 图表查看面板（实验性）
+│   ├── panel-misc/           # 帮助、日志（Journal）与引用面板
 │   ├── panel-operations/     # 后台操作面板
+│   ├── panel-outline/        # 大纲面板
 │   ├── panel-terminal/       # 终端模拟器面板（PTY）
-│   ├── session/              # 会话持久化
-│   ├── state/                # 应用状态（批量、布局、操作、UI）
-│   ├── system-monitor/       # CPU/内存/磁盘监控
-│   ├── theme/                # 主题系统和 38 款内置主题
-│   ├── ui/                   # UI 工具和路径格式化
+│   ├── project/              # 已保存的项目布局
+│   ├── richtext/             # 富文本布局引擎（样式片段转为自动换行的行）
+│   ├── state/                # 应用状态（batch、layout、operations、ui）
+│   ├── system-monitor/       # CPU/RAM/磁盘监控
+│   ├── theme/                # 主题系统与 38 个内置主题
+│   ├── ui/                   # UI 组件与路径格式化
 │   ├── ui-render/            # UI 渲染（菜单、状态栏、面板）
-│   ├── unicode-width-fix/    # Unicode 宽度修正
+│   ├── unicode-width-fix/    # 修补版 unicode-width（东亚字符宽度修正）
 │   ├── vfs/                  # 虚拟文件系统（SFTP、FTP、SMB）
-│   └── watcher/              # 文件系统事件监视器
+│   ├── walk/                 # 遵循 .gitignore 的项目树遍历
+│   └── watcher/              # 文件系统与 git 监视器
 ├── doc/                       # 文档
 │   ├── en/                   # 英文文档
 │   ├── ru/                   # 俄文文档
 │   └── zh/                   # 中文文档
-└── packaging/                 # 分发打包（deb、rpm、AUR、Homebrew、Nix）
+├── packaging/                 # AUR PKGBUILD、crates.io 重定向占位包
+└── flake.nix                  # Nix flake（软件包、开发 shell）
 ```
 
 ## 关键组件

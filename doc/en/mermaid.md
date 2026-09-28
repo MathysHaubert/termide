@@ -68,4 +68,4 @@ Diagram kinds that are not yet laid out (e.g. `requirementDiagram`,
 - **`Ctrl+S`**, or the **`Save diagram as…`** menu entry — save the diagram
   source (`.mmd`) to a chosen path.
 
-The panel persists across sessions and reopens at the same file.
+The panel is saved with the project layout and reopens at the same file.

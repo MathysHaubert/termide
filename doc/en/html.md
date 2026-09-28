@@ -94,6 +94,6 @@ bounded — this is a reader, not a browser engine:
 Links inside a fetched page are followed **in place** (`Enter`/click), with
 relative links resolved against the page URL and `[`/`]` (or `Backspace`) for
 history; `O` opens a link in the real browser instead. URL-loaded views are not
-restored across sessions.
+restored with the project layout.
 
-A file-backed panel persists across sessions and reopens at the same file.
+A file-backed panel is saved with the project layout and reopens at the same file.

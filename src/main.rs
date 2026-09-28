@@ -95,8 +95,9 @@ struct Cli {
     agent: Option<String>,
 
     /// How a `--prompt` run reports: `text` (the answer on stdout, the
-    /// default) or `json` (one object with the answer, token usage, the tool
-    /// calls and the status).
+    /// default), `json` (one object with the answer, token usage, the tool
+    /// calls and the status) or `stream-json` (one JSON object per event as
+    /// it happens).
     #[arg(long, value_name = "FORMAT", requires = "prompt", value_parser = ["text", "json", "stream-json"], default_value = "text")]
     output: String,
 

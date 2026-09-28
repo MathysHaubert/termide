@@ -136,8 +136,7 @@ TermIDE 通过 ConPTY 在 Windows 10+ 上原生运行。建议使用 **Windows T
 2. 解压压缩包。
 3. 在 Windows Terminal 中运行 `termide.exe`。
 
-配置位于 `%APPDATA%\termide\`（配置、会话），日志位于
-`%LOCALAPPDATA%\termide\cache\`。
+配置、项目布局和日志均位于 `%APPDATA%\termide\`。
 
 或者在 **WSL/WSL2** 中，像在任意 Linux 上一样使用 Linux x86_64 构建
 （`termide-0.35.0-x86_64-unknown-linux-gnu.tar.gz`）。
@@ -337,16 +336,24 @@ termide [OPTIONS] [FILE]...
 选项:
   --log-level <LEVEL>  设置日志级别（trace、debug、info、warn、error）
   --no-lsp             禁用 LSP 语言服务器
-  --config <FILE>      使用自定义配置文件路径
+  --config <PATH>      使用自定义配置文件路径
   --diagnostics        运行启动前诊断并退出（无 UI）
-  --detached           启动一个在终端关闭后仍继续运行的可分离会话，并打印其 ID
+  --detached           启动一个在终端关闭后仍继续运行的可分离实例，并打印其 ID
                        （仅限 Unix）
-  --attach [<ID>]      接入某个可分离会话，省略时接入最近的一个
+  --attach [<ID>]      接入某个可分离实例，省略时接入最近的一个
+  -f, --force          与 --attach 连用：从已接入的客户端接管该实例，
+                       并使该客户端分离
+  --kill <ID>          结束某个可分离实例及其中所有 shell 和任务后退出；
+                       其中未保存的更改将丢失
   --list-instances     列出可分离实例并退出
   --completions <SHELL>
                        打印补全脚本（bash、zsh、fish）并退出
   --install-completions [<SHELL>]
                        为 $SHELL 或指定的 shell 安装补全脚本
+  --prompt <PROMPT>    不启动 UI 运行一次智能体任务，将回答打印到 stdout 后退出；
+                       `-` 表示从 stdin 读取提示
+  --agent <NAME>       与 --prompt 连用：使用的智能体定义
+  --output <FORMAT>    与 --prompt 连用：text（默认）、json 或 stream-json
   -h, --help           打印帮助
   -V, --version        打印版本
 ```
@@ -402,14 +409,14 @@ TermIDE 遵循 [XDG Base Directory 规范](https://specifications.freedesktop.or
 - macOS: `~/Library/Application Support/termide/projects/`
 - Windows: `%APPDATA%\termide\projects\`
 
-**日志文件位置：**
-- Linux/BSD: `~/.cache/termide/termide.log`（或 `$XDG_CACHE_HOME/termide/termide.log`）
-- macOS: `~/Library/Caches/termide/termide.log`
-- Windows: `%LOCALAPPDATA%\termide\cache\termide.log`
+**日志文件位置：** 每次运行都会在上述项目数据位置下对应项目的目录中写入各自的
+`session-<date>-<time>.log`；超过 24 小时的日志会被删除。设置 `logging.file_path`
+可改为使用单个固定文件。
 
 **书签位置：**
-- Linux/BSD: `~/.local/share/termide/bookmarks.toml`（或 `$XDG_DATA_HOME/termide/bookmarks.toml`）
+- Linux/BSD: `~/.config/termide/bookmarks.toml`（或 `$XDG_CONFIG_HOME/termide/bookmarks.toml`）
 - macOS: `~/Library/Application Support/termide/bookmarks.toml`
+- Windows: `%APPDATA%\termide\bookmarks.toml`
 
 ### 配置示例
 
@@ -421,7 +428,7 @@ vim_mode = false
 project_retention_days = 30
 bell_on_operation_complete = true
 icon_mode = "auto"  # auto, emoji, unicode
-always_detachable = false  # 会话在终端关闭后继续运行（仅限 Unix）
+always_detachable = false  # 实例在终端关闭后继续运行（仅限 Unix）
 resource_monitor_interval = 1000
 
 [editor]

@@ -117,10 +117,10 @@ panel. The transfer registers as an operation in the
 Same-host SFTP and FTP renames stay on the server: a move within one
 connection issues a remote-side rename, not download-then-upload.
 
-## Sessions
+## Projects
 
-A session that includes a remote file manager panel persists the URL
-just like a local path. On the next start TermIDE reconnects in the
+A project layout that includes a remote file manager panel persists the
+URL just like a local path. On the next start TermIDE reconnects in the
 background and shows the panel with a loading placeholder until the
 listing arrives — the rest of the UI is responsive immediately.
 

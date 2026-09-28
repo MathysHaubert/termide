@@ -64,4 +64,4 @@ The preview has a movable cursor and supports text selection:
   `O` opens the link externally; `[`/`]` are history back/forward. See the
   [HTML preview](html.md) for the link-open settings and fetch policy.
 
-The panel persists across sessions and reopens at the same file.
+The panel is saved with the project layout and reopens at the same file.
