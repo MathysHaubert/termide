@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Repository-wide pre-commit gate: the same fmt / machete / check / clippy /
-# test sequence that .github/workflows/ci.yml runs on every pull request, so a
-# commit that would fail CI fails here first.
+# Repository-wide pre-commit gate: the fmt / machete / clippy / test sequence
+# that .github/workflows/ci.yml runs on every pull request (its `cargo check`
+# is covered by clippy), so a commit that would fail CI fails here first.
 #
 # Versioned in the repository and activated with:
 #
@@ -42,7 +42,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # that is not what is being recorded. When the index and the working tree
 # agree — `git add -A` and commit, the common case — check in place and reuse
 # the warm target directory. When they differ, materialise the staged tree in
-# a throwaway worktree and check that instead.
+# a separate worktree under target/ and check that instead.
 # ---------------------------------------------------------------------------
 
 # Snapshot what is about to be committed while git's hook environment is still
@@ -60,36 +60,39 @@ fi
 # file, which is what "index file open failed: Not a directory" means.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX
 
-WORKTREE=""
-cleanup() {
-    if [ -n "$WORKTREE" ]; then
-        git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
-    fi
-}
-trap cleanup EXIT
-
 if [ -z "$STAGED_TREE" ]; then
     CHECK_DIR="$REPO_ROOT"
     SCOPE="working tree (identical to the index)"
 else
     # A dedicated worktree path and target directory so the staged-tree build
     # cache survives between partial commits instead of thrashing the main one.
+    #
+    # The worktree is kept and moved to each staged commit rather than created
+    # afresh: cargo tells a changed workspace crate by its sources' mtimes, so
+    # a new checkout — every file written anew — rebuilt all of them each time.
+    # A checkout in place rewrites only the files that differ.
     WORKTREE="$REPO_ROOT/target/pre-commit-worktree"
     staged_commit="$(git -C "$REPO_ROOT" commit-tree "$STAGED_TREE" -p HEAD \
         -m 'pre-commit: staged tree under test')"
-    git -C "$REPO_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
-    git -C "$REPO_ROOT" worktree add -q --detach "$WORKTREE" "$staged_commit"
+    # A `cargo clean` deletes the directory but leaves git's record of it.
+    git -C "$REPO_ROOT" worktree prune
+    if git -C "$WORKTREE" rev-parse --git-dir >/dev/null 2>&1; then
+        git -C "$WORKTREE" checkout -q --detach --force "$staged_commit"
+        git -C "$WORKTREE" clean -q -d --force
+    else
+        git -C "$REPO_ROOT" worktree add -q --detach "$WORKTREE" "$staged_commit"
+        printf 'pre-commit: partial commit — first run in %s builds from scratch.\n' \
+            "$(basename "$WORKTREE")"
+    fi
     CHECK_DIR="$WORKTREE"
     SCOPE="staged tree only (working tree has unstaged changes)"
     export CARGO_TARGET_DIR="$REPO_ROOT/target/pre-commit-target"
-    # This build is thrown away after the gate runs, so it carries no debug
-    # info: nothing steps through it, and the artefacts are the bulk of a
-    # target directory's size. Correctness, warnings and test results are
-    # unaffected; only a panic backtrace here would lose line numbers.
+    # This build is only for the gate, so it carries no debug info: nothing
+    # steps through it, and the artefacts are the bulk of a target directory's
+    # size. Correctness, warnings and test results are unaffected; only a panic
+    # backtrace here would lose line numbers.
     export CARGO_PROFILE_DEV_DEBUG=none
     export CARGO_PROFILE_TEST_DEBUG=none
-    printf 'pre-commit: partial commit — first run in %s builds from scratch.\n' \
-        "$(basename "$CARGO_TARGET_DIR")"
 fi
 
 printf 'pre-commit: checking %s\n' "$SCOPE"
@@ -117,7 +120,8 @@ else
     printf '  Install with: cargo install cargo-machete\n'
 fi
 
-run_step "cargo check --workspace --all-targets" cargo check --workspace --all-targets
+# No separate `cargo check`: clippy runs the full compiler checks itself, so a
+# check pass first would only analyse every crate twice.
 run_step "cargo clippy --workspace --all-targets -- -D warnings" \
     cargo clippy --workspace --all-targets -- -D warnings
 

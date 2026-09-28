@@ -96,9 +96,10 @@ The repository ships a pre-commit hook that runs the same gates as CI before
 each commit:
 
 - ✅ Code formatting check (`cargo fmt --check`)
-- ✅ Compilation check (`cargo check`)
-- ✅ Clippy lints (`cargo clippy -- -D warnings`)
-- ✅ Test suite (`cargo test`)
+- ✅ Unused dependency declarations (`cargo machete`, when installed)
+- ✅ Compilation and Clippy lints (`cargo clippy -- -D warnings`; CI's separate
+  `cargo check` is covered by it)
+- ✅ Test suite (`cargo nextest run`, or `cargo test` without nextest)
 
 The hook lives at `.githooks/pre-commit` and is versioned with the code, so it
 is present in every clone — but git only runs it once you point the repository
