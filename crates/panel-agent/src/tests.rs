@@ -9,7 +9,7 @@ use termide_agent_core::{
     QuestionAnswer, QuestionReply, Request, StopReason, StreamEvent, ToolCall, ToolContext,
     ToolDecision, ToolUpdate, Usage,
 };
-use termide_core::PanelConfig;
+use termide_core::{ConfirmAction, PanelConfig};
 
 use crate::pending::Pending;
 use crate::toolset::{Blocked, ToolsetGuard};

@@ -4,8 +4,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{mpsc, Arc, PoisonError, RwLock};
 
 use termide_agent_core::{
     Hooks, LateTools, Mode, PromptError, ToolCall, ToolContext, ToolDecision,
