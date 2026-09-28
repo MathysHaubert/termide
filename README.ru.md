@@ -8,7 +8,7 @@
 
 Терминальное рабочее место «всё в одном» для рабочей машины и серверов: редактор кода с LSP, двухпанельный файловый менеджер с SFTP/FTP, терминал, git, просмотр баз данных и агент для кода — в одном статическом бинарнике на Rust без настройки.
 
-**[Сайт](https://termide.github.io)** | **[Документация](doc/ru/README.md)** | **[Релизы](https://github.com/termide/termide/releases)** | **[Скриншоты](https://ibb.co/album/nPX6p6)**
+**[Сайт](https://termide.github.io)** | **[Документация](doc/ru/README.md)** | **[Релизы](https://github.com/termide/termide/releases)** | **[Скриншоты](https://termide.github.io/ru/#screenshots)**
 
 <p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — редактор, файловый менеджер, терминал и просмотрщики в одном TUI" width="900"></p>
 

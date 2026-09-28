@@ -8,7 +8,7 @@
 
 一站式终端工作台，适用于你的工作站和服务器：带 LSP 的代码编辑器、支持 SFTP/FTP 的双栏文件管理器、终端、git、数据库查看器和编程智能体 —— 全部集成在一个零配置、使用 Rust 编写的静态二进制文件中。
 
-**[网站](https://termide.github.io)** | **[文档](doc/zh/README.md)** | **[版本发布](https://github.com/termide/termide/releases)** | **[截图](https://ibb.co/album/nPX6p6)**
+**[网站](https://termide.github.io)** | **[文档](doc/zh/README.md)** | **[版本发布](https://github.com/termide/termide/releases)** | **[截图](https://termide.github.io/zh/#screenshots)**
 
 <p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — 编辑器、文件管理器、终端和查看器合为一个 TUI" width="900"></p>
 

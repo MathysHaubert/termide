@@ -8,7 +8,7 @@
 
 An all-in-one terminal workspace for your workstation and your servers: code editor with LSP, dual-pane file manager with SFTP/FTP, terminal, git, database viewer and a coding agent — one zero-config static binary written in Rust.
 
-**[Website](https://termide.github.io)** | **[Documentation](doc/en/README.md)** | **[Releases](https://github.com/termide/termide/releases)** | **[Screenshots](https://ibb.co/album/nPX6p6)**
+**[Website](https://termide.github.io)** | **[Documentation](doc/en/README.md)** | **[Releases](https://github.com/termide/termide/releases)** | **[Screenshots](https://termide.github.io/#screenshots)**
 
 <p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — editor, file manager, terminal and viewers in one TUI" width="900"></p>
 

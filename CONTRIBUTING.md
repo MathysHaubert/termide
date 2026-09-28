@@ -399,9 +399,10 @@ string = "#a6e3a1"
 
 ### Submitting a Theme
 
-1. Add your theme file to `themes/` directory
+1. Add your theme file to the `crates/theme/themes/` directory
 2. Test it thoroughly
-3. (Optional) Add a screenshot to `assets/screenshots/your-theme.png`
+3. (Optional) Render its preview with `tools/screenshots/run.sh themes` and copy
+   `tools/screenshots/out/themes/your-theme.png` to `assets/screenshots/themes/`
 4. Update the theme list in `README.md`
 5. Submit a pull request with the title: `feat: add [theme name] theme`
 
