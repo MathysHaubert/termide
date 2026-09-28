@@ -106,7 +106,7 @@ pub const BOOKMARKS_MENU_INDEX: usize = 0;
 /// Index of Commands menu item
 pub const COMMANDS_MENU_INDEX: usize = 1;
 
-/// Index of Sessions menu item
+/// Index of Projects menu item
 pub const PROJECTS_MENU_INDEX: usize = 2;
 
 /// Index of the AI menu item

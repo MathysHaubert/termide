@@ -277,7 +277,7 @@ impl App {
             crate::app::agent_panel::restore_agent_panel(&settings, cwd, Some(path), None)
         {
             self.add_panel(Box::new(panel));
-            self.auto_save_session();
+            self.auto_save_layout();
         }
         Ok(())
     }

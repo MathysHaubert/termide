@@ -91,12 +91,12 @@ pub enum PendingAction {
     PrevPanel,
     /// Quit application (with confirmation if there are unsaved changes)
     QuitApplication,
-    /// Switch to another session
-    SwitchSession,
-    /// Create new session in specified directory
-    NewSession,
-    /// Delete the sessions of one or more projects (with confirmation)
-    DeleteSession {
+    /// Switch to another project
+    SwitchProject,
+    /// Create a new project in specified directory
+    NewProject,
+    /// Delete the layouts of one or more projects (with confirmation)
+    DeleteProject {
         paths: Vec<PathBuf>,
         /// Projects menu selections to reopen afterwards (`None`: return to
         /// the project switcher).
@@ -129,7 +129,7 @@ pub enum PendingAction {
         /// Selected index in parent bookmarks submenu to restore on return
         selected: usize,
     },
-    /// Change root path of current session
+    /// Change root path of the current project
     ChangeRootPath,
     /// Open Git Status panel
     OpenGitStatus,

@@ -54,7 +54,7 @@ impl App {
             return self.handle_modal_key(key);
         }
 
-        // If Sessions submenu is open, handle its navigation
+        // If Projects submenu is open, handle its navigation
         if self.state.ui.projects_submenu.open {
             return self.handle_projects_submenu_key(key);
         }

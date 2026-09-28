@@ -303,7 +303,7 @@ Handles interactive modal dialogs:
   - `settings/fields.rs` — declarative field data (`FieldType`, `FieldDescriptor`, `ContentRow`, helpers `fields_for_tab`, `get_field_value`, `toggle_field`, `cycle_enum_*`)
   - `settings/kb.rs` — keybinding tables and macros (`kb_get!`/`kb_set!`, `KB_SECTIONS`, `kb_binding_names`, `get/set_kb_value`, `format_key_event`)
 - **Progress** — progress bar for long-running operations
-- **Commit** / **Conflict** / **RenamePattern** / **Sessions** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — specialised dialogs for individual operations
+- **Commit** / **Conflict** / **RenamePattern** / **Projects** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — specialised dialogs for individual operations
 
 Shared helpers live in `crates/modal/src/base.rs` (`render_modal_block`, `render_modal_frame`, `button_style`, the `CursorNavigation` trait).
 
@@ -599,7 +599,7 @@ lives.
 | FileManager per-entry git status      | `crates/panel-file-manager/src/git_status.rs`                   | `check_git_status_async`; `apply_git_statuses` reapplies if dir read raced ahead   |
 | Git status / log panel refresh        | `crates/panel-git-status/src/lib.rs`, `panel-git-log/src/lib.rs`| `poll_refresh` in each panel's `tick`                                              |
 | Git submodule discovery (RepoManager) | `crates/git/src/repo_manager.rs` (`spawn_submodule_walk`)       | `RepoManager::poll` from git panel `tick`                                          |
-| Session restore — panels in parallel  | `crates/app/src/layout_session.rs` (`construct_panel` per panel)| Joined synchronously after spawn so the slowest panel still gates the first frame  |
+| Layout restore — panels in parallel   | `crates/app/src/layout_store.rs` (`construct_panel` per panel)| Joined synchronously after spawn so the slowest panel still gates the first frame  |
 | Watcher repo registration             | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` in app main loop; inotify installs chunked at `INSTALL_CHUNK`/tick, FSEvents (macOS) one recursive root watch with `.gitignore` filtering on delivery |
 | Directory size walk (wide-view)       | `crates/panel-file-manager/src/utils.rs` (`shared_dir_size_cache`) | Per-frame `try_recv` against shared cache; budget enforced per walk             |
 

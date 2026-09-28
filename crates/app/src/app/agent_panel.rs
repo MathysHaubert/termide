@@ -61,7 +61,7 @@ impl App {
             None,
         ));
         self.add_panel(Box::new(panel));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 }

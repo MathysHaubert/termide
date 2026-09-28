@@ -62,7 +62,7 @@ impl App {
             self.close_help_panels();
             self.add_panel(Box::new(FileManager::new_with_path(path)));
             self.state.needs_watcher_registration = true;
-            self.auto_save_session();
+            self.auto_save_layout();
             return Ok(());
         }
 

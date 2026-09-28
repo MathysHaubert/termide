@@ -1,4 +1,4 @@
-//! Sessions menu actions — session switching, directory switcher.
+//! Projects menu actions — project switching, directory switcher.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -14,21 +14,21 @@ use termide_ui_render::{
 };
 
 impl App {
-    /// Open sessions modal to switch between projects
+    /// Open the projects modal to switch between projects
     pub(in crate::app) fn handle_open_projects_modal(&mut self) -> Result<()> {
         use termide_modal::{ProjectItem, ProjectsModal};
         use termide_project::{format_relative_time, list_all_projects};
 
         let t = i18n::t();
 
-        // Get all sessions
-        let sessions = list_all_projects().unwrap_or_default();
+        // Get all projects
+        let projects = list_all_projects().unwrap_or_default();
 
         // Get current project path
         let current_project = std::env::current_dir().unwrap_or_default();
 
-        // Convert to SessionItems
-        let items: Vec<ProjectItem> = sessions
+        // Convert to ProjectItems
+        let items: Vec<ProjectItem> = projects
             .into_iter()
             .map(|info| {
                 let is_current = info.project_path == current_project;
@@ -45,14 +45,14 @@ impl App {
             })
             .collect();
 
-        // Only show modal if there are other sessions
+        // Only show modal if there are other projects
         if items.iter().any(|item| !item.is_current) {
-            // Find index of current session to position cursor there
+            // Find index of the current project to position cursor there
             let current_idx = items.iter().position(|item| item.is_current).unwrap_or(0);
             let modal = ProjectsModal::new(t.projects_title(), items).with_cursor(current_idx);
             self.state.set_pending_action(
-                PendingAction::SwitchSession,
-                ActiveModal::Sessions(Box::new(modal)),
+                PendingAction::SwitchProject,
+                ActiveModal::Projects(Box::new(modal)),
             );
         }
 
@@ -174,7 +174,7 @@ impl App {
     }
 
     // =========================================================================
-    // Sessions submenu handling
+    // Projects submenu handling
     // =========================================================================
 
     /// Handle keyboard event in the Projects menu. Keys act on the deepest
@@ -230,7 +230,7 @@ impl App {
                 let mut selection = vec![self.state.ui.projects_submenu.selected];
                 selection.extend_from_slice(&self.state.ui.projects_nested);
                 self.state.close_menu();
-                self.confirm_delete_session(deletable, dir.as_deref(), Some(selection));
+                self.confirm_delete_project(deletable, dir.as_deref(), Some(selection));
             }
             SubmenuNavAction::Delete => {}
             SubmenuNavAction::Rename | SubmenuNavAction::Edit | SubmenuNavAction::None => {}
@@ -245,7 +245,7 @@ impl App {
         let screen = self.screen_rect();
         self.state.ui.menu_open = true;
         self.state.ui.selected_menu_item = Some(termide_ui_render::PROJECTS_MENU_INDEX);
-        self.state.open_sessions_submenu();
+        self.state.open_projects_submenu();
         self.state.restore_projects_selection(selection, screen);
     }
 
@@ -272,7 +272,7 @@ impl App {
             ProjectsTarget::Project(path) => {
                 self.state.close_menu();
                 if path != self.project_root {
-                    self.switch_to_session(path)?;
+                    self.switch_to_project(path)?;
                 }
             }
             ProjectsTarget::Action(PROJECTS_SUBMENU_NEW) => {
@@ -292,7 +292,7 @@ impl App {
         Ok(())
     }
 
-    /// Open directory picker for creating new session
+    /// Open directory picker for creating a new project
     pub(in crate::app) fn handle_new_project(&mut self) -> Result<()> {
         use termide_modal::DirectoryPickerModal;
 
@@ -306,14 +306,14 @@ impl App {
             t.directory_picker_create().to_string(),
         );
         self.state.set_pending_action(
-            PendingAction::NewSession,
+            PendingAction::NewProject,
             ActiveModal::DirectoryPicker(Box::new(modal)),
         );
 
         Ok(())
     }
 
-    /// Open directory picker for changing root path of current session
+    /// Open directory picker for changing root path of the current project
     pub(in crate::app) fn handle_change_root_path(&mut self) -> Result<()> {
         use termide_modal::DirectoryPickerModal;
 

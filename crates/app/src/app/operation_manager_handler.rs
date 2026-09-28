@@ -151,7 +151,7 @@ impl App {
                                             }
 
                                             self.add_panel(Box::new(editor));
-                                            self.auto_save_session();
+                                            self.auto_save_layout();
 
                                             let filename = pending_download
                                                 .remote_path

@@ -307,7 +307,7 @@ pub struct UiState {
     pub drag: DragState,
     /// Divider drag state for in-group panel resize (vertical).
     pub vdrag: VerticalDividerDragState,
-    /// Sessions submenu state
+    /// Projects submenu state
     pub projects_submenu: SubmenuState,
     /// Selected row of each open project-tree submenu, outermost first.
     pub projects_nested: Vec<usize>,
@@ -356,7 +356,7 @@ pub struct UiState {
 }
 
 impl UiState {
-    /// Close all main-level submenus (sessions, tools, options, commands, bookmarks)
+    /// Close all main-level submenus (projects, tools, options, commands, bookmarks)
     /// and their nested submenus. Use before opening a specific submenu.
     pub fn close_all_submenus(&mut self) {
         self.projects_submenu.close();

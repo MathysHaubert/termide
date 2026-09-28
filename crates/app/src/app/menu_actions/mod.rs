@@ -147,7 +147,7 @@ impl App {
         if let Some(menu_index) = self.state.ui.selected_menu_item {
             match menu_index {
                 PROJECTS_MENU_INDEX => {
-                    self.state.open_sessions_submenu();
+                    self.state.open_projects_submenu();
                 }
                 WINDOWS_MENU_INDEX => {
                     self.state.open_tools_submenu();
@@ -292,7 +292,7 @@ impl App {
     /// Execute action for selected Options submenu item
     pub(in crate::app) fn execute_submenu_action(&mut self) -> Result<()> {
         // Dispatch on the item's key, not its position: the Detach entry is
-        // only present in a detachable session, so a positional match would
+        // only present in a detachable instance, so a positional match would
         // fire Quit where Detach was chosen.
         let items = termide_ui_render::get_options_items(
             self.detach_available(),

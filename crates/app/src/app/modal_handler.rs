@@ -143,7 +143,7 @@ impl App {
                                 self.reopen_bookmarks_menu(None, is_project, selected);
                                 return Ok(());
                             }
-                            PendingAction::DeleteSession {
+                            PendingAction::DeleteProject {
                                 menu: Some(selection),
                                 ..
                             } => {
@@ -479,15 +479,15 @@ impl App {
                         }
                     }
                 }
-                PendingAction::SwitchSession => {
-                    self.handle_switch_session(value)?;
+                PendingAction::SwitchProject => {
+                    self.handle_switch_project(value)?;
                 }
-                PendingAction::NewSession => {
+                PendingAction::NewProject => {
                     self.handle_new_project_result(value)?;
                 }
-                PendingAction::DeleteSession { paths, menu } => {
+                PendingAction::DeleteProject { paths, menu } => {
                     if value.downcast_ref::<bool>().copied().unwrap_or(false) {
-                        self.handle_delete_session(&paths, menu)?;
+                        self.handle_delete_project(&paths, menu)?;
                     }
                 }
                 PendingAction::DeleteBookmark {

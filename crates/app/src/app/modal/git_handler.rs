@@ -121,7 +121,7 @@ impl App {
                                 repo_path.to_path_buf(),
                             );
                         self.add_panel(Box::new(git_status_panel));
-                        self.auto_save_session();
+                        self.auto_save_layout();
                     }
                     "stage" => {
                         if let Err(e) = termide_git::stage_file(repo_path, file_path) {

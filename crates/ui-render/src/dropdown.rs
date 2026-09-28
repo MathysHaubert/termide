@@ -385,22 +385,22 @@ impl<'a> Dropdown<'a> {
     }
 }
 
-/// Get sessions submenu items
+/// Get projects submenu items
 pub fn get_projects_items(kb: Option<&termide_config::GlobalKeybindings>) -> Vec<DropdownItem> {
     let t = i18n::t();
     let shortcut = |key: &str| kb.and_then(|kb| menu_shortcut(kb, key));
     vec![
         DropdownItem::new(t.projects_new(), "new_project").with_shortcut(shortcut("new_project")),
-        DropdownItem::new(t.projects_switch(), "switch_session")
-            .with_shortcut(shortcut("switch_session")),
+        DropdownItem::new(t.projects_switch(), "switch_project")
+            .with_shortcut(shortcut("switch_project")),
         DropdownItem::new(t.projects_change_root(), "change_root"),
     ]
 }
 
-/// Number of items in Sessions submenu
+/// Number of items in Projects submenu
 pub const PROJECTS_SUBMENU_ITEM_COUNT: usize = 3;
 
-/// Index of Sessions submenu items
+/// Index of Projects submenu items
 pub const PROJECTS_SUBMENU_NEW: usize = 0;
 pub const PROJECTS_SUBMENU_SWITCH: usize = 1;
 pub const PROJECTS_SUBMENU_CHANGE_ROOT: usize = 2;
@@ -535,9 +535,9 @@ pub fn menu_shortcut(kb: &termide_config::GlobalKeybindings, key: &str) -> Optio
         "help" => &kb.open_help,
         "detach_instance" => &kb.detach_instance,
         "quit" => &kb.quit,
-        // Sessions
+        // Projects
         "new_project" => &kb.new_project,
-        "switch_session" => &kb.open_projects,
+        "switch_project" => &kb.open_projects,
         // Tools / Windows
         "terminal" => &kb.new_terminal,
         "files" => &kb.new_file_manager,
@@ -568,7 +568,7 @@ pub fn menu_shortcut(kb: &termide_config::GlobalKeybindings, key: &str) -> Optio
 
 /// Get options submenu items.
 ///
-/// `can_detach` says whether this termide is hosted in a detachable session.
+/// `can_detach` says whether this termide is hosted in a detachable instance.
 /// When it is not, the Detach entry is left out entirely rather than shown and
 /// refused: a menu item that normally does nothing teaches users to distrust
 /// the menu.
@@ -586,7 +586,7 @@ pub fn get_options_items(
         DropdownItem::new(t.options_help(), "help").with_shortcut(shortcut("help")),
     ];
     // Detaching sits next to Quit because it is the other way of leaving the
-    // session — the one that keeps it running.
+    // instance — the one that keeps it running.
     if can_detach {
         items.push(
             DropdownItem::new(t.detach_instance(), "detach_instance")
@@ -1088,7 +1088,7 @@ mod options_menu_tests {
     }
 
     #[test]
-    fn detach_is_offered_only_when_the_session_can_detach() {
+    fn detach_is_offered_only_when_the_instance_can_detach() {
         assert_eq!(
             keys(true),
             vec![
@@ -1222,9 +1222,9 @@ mod menu_shortcut_tests {
     fn every_menu_annotates_the_entries_that_have_bindings() {
         let kb = defaults();
 
-        let sessions = get_projects_items(Some(&kb));
+        let projects = get_projects_items(Some(&kb));
         assert_eq!(
-            sessions
+            projects
                 .iter()
                 .find(|i| i.key == "new_project")
                 .unwrap()

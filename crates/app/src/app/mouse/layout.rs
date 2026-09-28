@@ -82,8 +82,8 @@ impl App {
         self.state.ui.drag.end();
         self.state.needs_redraw = true;
 
-        // Save session with new widths
-        self.auto_save_session();
+        // Save the layout with new widths
+        self.auto_save_layout();
 
         Ok(())
     }
@@ -158,7 +158,7 @@ impl App {
                 if let Some(group) = self.layout_manager.panel_groups.get_mut(group_idx) {
                     group.resize_panel_divider(upper_panel_idx, delta, area_height);
                 }
-                self.auto_save_session();
+                self.auto_save_layout();
             }
         }
         self.state.ui.vdrag.end();

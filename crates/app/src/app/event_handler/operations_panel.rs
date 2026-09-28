@@ -214,7 +214,7 @@ impl App {
         // Uses WidthPreference::PreferNarrow from OperationsPanel
         let panel = Box::new(OperationsPanel::new());
         self.add_panel_without_focus(panel);
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 

@@ -231,7 +231,7 @@ mod tests {
     // the `.term` handover file, so every instance that ever ran left one
     // behind — for ever, since pruning goes through this same function.
     #[test]
-    fn remove_deletes_every_file_a_session_owns() {
+    fn remove_deletes_every_file_an_instance_owns() {
         let id = "test-remove-all-files";
         let paths = [
             paths::socket_path(id).unwrap(),

@@ -300,9 +300,9 @@ pub enum AppCommand {
     /// Force quit without confirmation
     ForceQuit,
 
-    // === Session ===
-    /// Save current session
-    SaveSession,
+    // === Project layout ===
+    /// Save the current project layout
+    SaveLayout,
 
     // === Panel events ===
     /// Forward a panel event

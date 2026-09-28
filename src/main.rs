@@ -374,14 +374,14 @@ fn main() -> Result<()> {
         config.general.theme = "norton-commander".to_string();
     }
 
-    // `general.always_detachable`: put this session in a host of its own and
+    // `general.always_detachable`: put this instance in a host of its own and
     // attach to it, so that it is the host — not this process — that dies with
     // the terminal. Must happen before anything spawns a thread, because the
     // host is created by fork.
     //
     // Skipped with file arguments: `git commit` and friends wait for the editor
     // to exit, and a detach would tell them the edit finished when it had not.
-    // Skipped inside a session for the obvious reason.
+    // Skipped inside a hosted instance for the obvious reason.
     #[cfg(unix)]
     if config.general.always_detachable
         && cli.files.is_empty()
@@ -456,11 +456,11 @@ fn main() -> Result<()> {
 
     // Alternate screen, mouse, focus and paste reporting, plus the keyboard
     // enhancement flags. Shared with the reattach path so a client that
-    // connects to a detached session gets exactly these modes and no other.
+    // connects to a detached instance gets exactly these modes and no other.
     termide_core::enter_terminal_modes(&keyboard_caps, Some(&title))?;
 
     // Whether `⏱️`-style emoji take one column or two is the host terminal's
-    // call, and the frame diff must agree with it. A hosted session has the
+    // call, and the frame diff must agree with it. A hosted instance has the
     // daemon at the other end of its PTY, which answers no query: there the
     // attach client probes its own terminal and hands the answer over.
     #[cfg(unix)]
@@ -474,7 +474,7 @@ fn main() -> Result<()> {
     };
     let vs16_wide = termide_core::adopt_variation_selector_width(vs16_probe.flatten());
 
-    // In a detached session, the daemon signals us when a client attaches.
+    // In a detached instance, the daemon signals us when a client attaches.
     // A no-op otherwise.
     #[cfg(unix)]
     if let Err(e) = termide_detach::install_reattach_handler() {
@@ -504,7 +504,7 @@ fn main() -> Result<()> {
             if vs16_wide { "two columns" } else { "one column" },
             termide_core::VS16_WIDTH_ENV
         ),
-        None => log::info!("Hosted session: VS16 width comes from the attach client"),
+        None => log::info!("Hosted instance: VS16 width comes from the attach client"),
     }
     // — these end up in the Journal panel where users actually look.
     for msg in config_load_warnings {
@@ -516,19 +516,21 @@ fn main() -> Result<()> {
 
     // With explicit file arguments, behave like a plain $EDITOR invocation:
     // open just those files in a clean view and don't touch the project's
-    // session (restoring or overwriting it when editing e.g. a commit message
-    // would be surprising and could clobber the real session).
+    // layout (restoring or overwriting it when editing e.g. a commit message
+    // would be surprising and could clobber the real layout).
     if cli.files.is_empty() {
-        // Try to load session, fallback to default layout on error
-        if let Err(e) = app.load_session() {
-            // Session file doesn't exist or is corrupted - use default layout.
-            // Surface the reason in the Journal so a corrupted session is
+        // Try to load the project layout, fallback to default layout on error
+        if let Err(e) = app.load_layout() {
+            // Layout file doesn't exist or is corrupted - use default layout.
+            // Surface the reason in the Journal so a corrupted layout is
             // diagnosable instead of silently snapping to defaults.
-            log::warn!("Could not load session ({e}); starting with the default layout.");
+            log::warn!(
+                "Could not load the project layout ({e}); starting with the default layout."
+            );
             app.setup_default_layout();
         }
     } else {
-        app.set_session_persistence(false);
+        app.set_layout_persistence(false);
         for path in cli.files {
             if let Err(e) = app.open_cli_path(path.clone()) {
                 log::error!("Failed to open '{}' from CLI: {e}", path.display());
@@ -684,7 +686,7 @@ mod completion_tests {
     }
 
     /// Every script accepts the shells `--completions` accepts, and each one
-    /// asks termide for the session list rather than guessing ids.
+    /// asks termide for the instance list rather than guessing ids.
     #[test]
     fn completion_scripts_agree_with_the_cli() {
         for (shell, script) in SCRIPTS {

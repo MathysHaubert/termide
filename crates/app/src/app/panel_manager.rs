@@ -21,12 +21,12 @@ impl App {
 
                 // Check if editor has a temporary unsaved buffer file
                 if let Some(filename) = editor.unsaved_buffer_file() {
-                    // Get session directory and delete the temporary file
-                    if let Ok(session_dir) =
+                    // Get the project directory and delete the temporary file
+                    if let Ok(project_dir) =
                         termide_project::ProjectLayout::get_project_dir(&self.project_root)
                     {
                         if let Err(e) =
-                            termide_project::delete_unsaved_buffer(&session_dir, filename)
+                            termide_project::delete_unsaved_buffer(&project_dir, filename)
                         {
                             log::warn!("Failed to delete unsaved buffer file: {}", e);
                         }
@@ -70,7 +70,7 @@ impl App {
 
         // Close active panel (LayoutManager handles active panel tracking)
         let _ = self.layout_manager.close_active_panel(terminal_width);
-        self.auto_save_session();
+        self.auto_save_layout();
 
         // Re-sync outline panel after editor close
         self.resync_outline_after_close();
@@ -85,7 +85,7 @@ impl App {
             // In $EDITOR mode (launched with file arguments), closing the last
             // panel returns control to the launching tool (git, crontab, ...)
             // like nano/vim would, instead of leaving an empty shell behind.
-            if !self.persist_session {
+            if !self.persist_layout {
                 self.state.quit();
                 return;
             }
@@ -185,9 +185,9 @@ impl App {
     }
 
     /// Paths the git panels search for repositories: every panel working
-    /// directory plus the session root.
+    /// directory plus the project root.
     ///
-    /// The session root is included because panel directories alone lose it as
+    /// The project root is included because panel directories alone lose it as
     /// soon as every panel navigates elsewhere — the repository termide was
     /// started in would then vanish from the repo dropdown.
     pub(super) fn collect_repo_search_paths(&self) -> Vec<PathBuf> {

@@ -78,7 +78,7 @@ impl App {
 
         // Add panel to layout
         self.add_panel(Box::new(fm));
-        self.auto_save_session();
+        self.auto_save_layout();
 
         Ok(())
     }

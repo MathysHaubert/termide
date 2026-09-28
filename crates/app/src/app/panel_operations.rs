@@ -164,7 +164,7 @@ impl App {
                 .redistribute_widths_proportionally(terminal_width);
         }
 
-        self.auto_save_session();
+        self.auto_save_layout();
     }
 
     /// Close all Help panels (called before opening new panel)
@@ -231,7 +231,7 @@ impl App {
             }
         }
 
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -255,7 +255,7 @@ impl App {
             }
         }
 
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -354,32 +354,32 @@ impl App {
                 self.layout_manager.panel_groups[group_idx].width =
                     Some(corrected_width.clamp(min_width as u16, 300));
             }
-            self.auto_save_session();
+            self.auto_save_layout();
         }
         Ok(())
     }
 
-    /// Handle switch session modal result
-    pub(super) fn handle_switch_session(&mut self, value: Box<dyn std::any::Any>) -> Result<()> {
+    /// Handle the projects modal result
+    pub(super) fn handle_switch_project(&mut self, value: Box<dyn std::any::Any>) -> Result<()> {
         use termide_modal::ProjectAction;
 
         if let Some(action) = value.downcast_ref::<ProjectAction>() {
             match action {
                 ProjectAction::Switch(path) => {
-                    self.switch_to_session(path.clone())?;
+                    self.switch_to_project(path.clone())?;
                 }
                 ProjectAction::Delete(path) => {
-                    self.confirm_delete_session(vec![path.clone()], None, None)
+                    self.confirm_delete_project(vec![path.clone()], None, None)
                 }
             }
         }
         Ok(())
     }
 
-    /// Switch to a different session
-    pub(super) fn switch_to_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
-        // 1. Save current session
-        self.auto_save_session();
+    /// Switch to a different project
+    pub(super) fn switch_to_project(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+        // 1. Save the current layout
+        self.auto_save_layout();
 
         // 2. Change working directory
         std::env::set_current_dir(&new_project_root)?;
@@ -398,8 +398,8 @@ impl App {
         self.state.cache.commands_registry = None;
         self.state.cache.hotkey_table = None;
 
-        // 4. Load new session
-        self.load_session()?;
+        // 4. Load the new project's layout
+        self.load_layout()?;
 
         // 5. Update terminal title to reflect new project root
         self.update_terminal_title();
@@ -407,11 +407,10 @@ impl App {
         Ok(())
     }
 
-    /// Handle confirmed session deletion
     /// Ask before deleting the stored state of the projects at `paths`.
     /// `dir` names the menu directory they were picked from, if any; `menu`
-    /// is where to return afterwards, see `PendingAction::DeleteSession`.
-    pub(super) fn confirm_delete_session(
+    /// is where to return afterwards, see `PendingAction::DeleteProject`.
+    pub(super) fn confirm_delete_project(
         &mut self,
         paths: Vec<std::path::PathBuf>,
         dir: Option<&str>,
@@ -432,66 +431,66 @@ impl App {
         };
         let modal = termide_modal::ConfirmModal::new(title, message);
         self.state.set_pending_action(
-            PendingAction::DeleteSession { paths, menu },
+            PendingAction::DeleteProject { paths, menu },
             ActiveModal::Confirm(Box::new(modal)),
         );
     }
 
-    pub(super) fn handle_delete_session(
+    pub(super) fn handle_delete_project(
         &mut self,
         paths: &[std::path::PathBuf],
         menu: Option<Vec<usize>>,
     ) -> Result<()> {
         for path in paths {
             if let Err(e) = termide_project::ProjectLayout::delete_layout(path) {
-                log::error!("Failed to delete session for {:?}: {}", path, e);
+                log::error!("Failed to delete project layout for {:?}: {}", path, e);
                 // Keep the error on screen instead of reopening over it.
                 self.show_error_modal(i18n::t().projects_delete_failed_fmt(&e.to_string()));
                 return Ok(());
             }
-            log::info!("Deleted session for {:?}", path);
+            log::info!("Deleted project layout for {:?}", path);
         }
         match menu {
             Some(selection) => self.reopen_projects_menu(&selection),
-            // Reopen sessions modal with updated list
+            // Reopen the projects modal with updated list
             None => self.handle_open_projects_modal()?,
         }
         Ok(())
     }
 
-    /// Handle new session modal result - create/switch to session in selected directory
+    /// Handle new project modal result - create/switch to a project in selected directory
     pub(super) fn handle_new_project_result(
         &mut self,
         value: Box<dyn std::any::Any>,
     ) -> Result<()> {
         if let Some(project_path) = value.downcast_ref::<std::path::PathBuf>() {
-            self.create_new_session(project_path.clone())?;
+            self.create_new_project(project_path.clone())?;
         }
         Ok(())
     }
 
-    /// Create a new session in the specified directory
-    /// If a session already exists, it will be cleared (reset to default panels)
-    fn create_new_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+    /// Create a new project in the specified directory
+    /// If it already has a saved layout, that is cleared (reset to default panels)
+    fn create_new_project(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
         use termide_panel_file_manager::FileManager;
         use termide_project::ProjectLayout;
 
-        // 1. Save current session before switching
-        self.auto_save_session();
+        // 1. Save the current layout before switching
+        self.auto_save_layout();
 
-        // 2. Clear any existing session in the target directory
-        if let Ok(session_dir) = ProjectLayout::get_project_dir(&new_project_root) {
-            // Remove session file if it exists (this clears the session)
-            let session_file = session_dir.join("session.toml");
-            if session_file.exists() {
-                if let Err(e) = std::fs::remove_file(&session_file) {
+        // 2. Clear any existing layout of the target directory
+        if let Ok(project_dir) = ProjectLayout::get_project_dir(&new_project_root) {
+            // Remove the layout file if it exists (this clears the layout)
+            let layout_file = project_dir.join("session.toml");
+            if layout_file.exists() {
+                if let Err(e) = std::fs::remove_file(&layout_file) {
                     log::error!(
-                        "Failed to remove session file {}: {}",
-                        session_file.display(),
+                        "Failed to remove layout file {}: {}",
+                        layout_file.display(),
                         e
                     );
                 } else {
-                    log::info!("Cleared existing session in: {:?}", new_project_root);
+                    log::info!("Cleared existing layout in: {:?}", new_project_root);
                 }
             }
         }
@@ -506,7 +505,7 @@ impl App {
         self.state.project_bookmarks =
             termide_config::BookmarksConfig::load_from_project(&self.project_root);
 
-        // Invalidate project-root-dependent caches (see switch_to_session).
+        // Invalidate project-root-dependent caches (see switch_to_project).
         self.state.cache.commands_registry = None;
         self.state.cache.hotkey_table = None;
 
@@ -517,8 +516,8 @@ impl App {
         self.add_panel(Box::new(fm1));
         self.add_panel(Box::new(fm2));
 
-        // 6. Save the new session
-        self.auto_save_session();
+        // 6. Save the new layout
+        self.auto_save_layout();
 
         // 7. Update terminal title to reflect new project root
         self.update_terminal_title();
@@ -539,19 +538,19 @@ impl App {
         }
     }
 
-    /// Handle change root path modal result - move session to new directory
+    /// Handle change root path modal result - move the project to a new directory
     pub(super) fn handle_change_root_path_result(
         &mut self,
         value: Box<dyn std::any::Any>,
     ) -> Result<()> {
         if let Some(new_path) = value.downcast_ref::<std::path::PathBuf>() {
-            self.move_session_to(new_path.clone())?;
+            self.move_project_to(new_path.clone())?;
         }
         Ok(())
     }
 
-    /// Move current session to a new directory
-    fn move_session_to(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+    /// Move the current project's stored state to a new directory
+    fn move_project_to(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
         use termide_project::ProjectLayout;
 
         let old_project_root = self.project_root.clone();
@@ -561,31 +560,31 @@ impl App {
             return Ok(());
         }
 
-        // 1. Save current session
-        self.auto_save_session();
+        // 1. Save the current layout
+        self.auto_save_layout();
 
-        // 2. Copy all session data to new location (including unsaved buffers)
-        if let Ok(old_session_dir) = ProjectLayout::get_project_dir(&old_project_root) {
-            if let Ok(new_session_dir) = ProjectLayout::get_project_dir(&new_project_root) {
-                // Create new session directory if needed
-                if let Err(e) = std::fs::create_dir_all(&new_session_dir) {
+        // 2. Copy all project data to new location (including unsaved buffers)
+        if let Ok(old_project_dir) = ProjectLayout::get_project_dir(&old_project_root) {
+            if let Ok(new_project_dir) = ProjectLayout::get_project_dir(&new_project_root) {
+                // Create the new project directory if needed
+                if let Err(e) = std::fs::create_dir_all(&new_project_dir) {
                     log::error!(
-                        "Failed to create session directory {}: {}",
-                        new_session_dir.display(),
+                        "Failed to create project directory {}: {}",
+                        new_project_dir.display(),
                         e
                     );
                 }
 
-                // Copy all files from old session directory
-                if let Ok(entries) = std::fs::read_dir(&old_session_dir) {
+                // Copy all files from the old project directory
+                if let Ok(entries) = std::fs::read_dir(&old_project_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() {
                             if let Some(filename) = path.file_name() {
-                                let new_path = new_session_dir.join(filename);
+                                let new_path = new_project_dir.join(filename);
                                 if let Err(e) = std::fs::copy(&path, &new_path) {
                                     log::error!(
-                                        "Failed to copy session file {} -> {}: {}",
+                                        "Failed to copy project file {} -> {}: {}",
                                         path.display(),
                                         new_path.display(),
                                         e
@@ -596,11 +595,11 @@ impl App {
                     }
                 }
 
-                // Remove old session directory
-                if let Err(e) = std::fs::remove_dir_all(&old_session_dir) {
+                // Remove the old project directory
+                if let Err(e) = std::fs::remove_dir_all(&old_project_dir) {
                     log::warn!(
-                        "Failed to remove old session directory {}: {}",
-                        old_session_dir.display(),
+                        "Failed to remove old project directory {}: {}",
+                        old_project_dir.display(),
                         e
                     );
                 }
@@ -610,7 +609,7 @@ impl App {
         // 3. Change working directory
         std::env::set_current_dir(&new_project_root)?;
         log::info!(
-            "Moved session from {:?} to {:?}",
+            "Moved project from {:?} to {:?}",
             old_project_root,
             new_project_root
         );
@@ -621,12 +620,12 @@ impl App {
         self.state.project_bookmarks =
             termide_config::BookmarksConfig::load_from_project(&self.project_root);
 
-        // Invalidate project-root-dependent caches (see switch_to_session).
+        // Invalidate project-root-dependent caches (see switch_to_project).
         self.state.cache.commands_registry = None;
         self.state.cache.hotkey_table = None;
 
-        // 5. Save session in new location
-        self.auto_save_session();
+        // 5. Save the layout in the new location
+        self.auto_save_layout();
 
         let t = termide_i18n::t();
         self.state.set_info(t.project_moved().to_string());
@@ -640,7 +639,7 @@ impl App {
     /// - Creating the editor with configuration
     /// - Initializing LSP for the editor
     /// - Adding the panel to layout
-    /// - Auto-saving session
+    /// - Auto-saving the layout
     ///
     /// Returns Ok(()) on success, or sets an error message and returns Err on failure.
     /// Use this instead of duplicating Editor::open_file_with_config patterns.
@@ -662,7 +661,7 @@ impl App {
 
                 self.add_panel(Box::new(editor_panel));
                 self.notify_outline_file_opened();
-                self.auto_save_session();
+                self.auto_save_layout();
 
                 let t = i18n::t();
                 self.state.set_info(t.editor_file_opened(&filename));
@@ -701,7 +700,7 @@ impl App {
 
                 self.add_panel(Box::new(editor_panel));
                 self.notify_outline_file_opened();
-                self.auto_save_session();
+                self.auto_save_layout();
 
                 let t = i18n::t();
                 self.state.set_info(t.editor_file_opened(&filename));

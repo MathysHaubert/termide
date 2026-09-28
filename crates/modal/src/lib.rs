@@ -102,8 +102,8 @@ pub enum ActiveModal {
     RenamePattern(Box<RenamePatternModal>),
     /// Editable select modal (combobox)
     EditableSelect(Box<EditableSelectModal>),
-    /// Sessions selection modal
-    Sessions(Box<ProjectsModal>),
+    /// Projects selection modal
+    Projects(Box<ProjectsModal>),
     /// Directory picker modal
     DirectoryPicker(Box<DirectoryPickerModal>),
     /// Save As modal with executable checkbox
@@ -152,7 +152,7 @@ macro_rules! dispatch_modal {
             ActiveModal::InfoAction(m) => m.$method($($arg),*),
             ActiveModal::RenamePattern(m) => m.$method($($arg),*),
             ActiveModal::EditableSelect(m) => m.$method($($arg),*),
-            ActiveModal::Sessions(m) => m.$method($($arg),*),
+            ActiveModal::Projects(m) => m.$method($($arg),*),
             ActiveModal::DirectoryPicker(m) => m.$method($($arg),*),
             ActiveModal::SaveAs(m) => m.$method($($arg),*),
             ActiveModal::DirectorySwitcher(m) => m.$method($($arg),*),
@@ -183,7 +183,7 @@ macro_rules! dispatch_modal_erased {
             ActiveModal::InfoAction(m) => m.$method($($arg),*)?.map(erase_modal_result),
             ActiveModal::RenamePattern(m) => m.$method($($arg),*)?.map(erase_modal_result),
             ActiveModal::EditableSelect(m) => m.$method($($arg),*)?.map(erase_modal_result),
-            ActiveModal::Sessions(m) => m.$method($($arg),*)?.map(erase_modal_result),
+            ActiveModal::Projects(m) => m.$method($($arg),*)?.map(erase_modal_result),
             ActiveModal::DirectoryPicker(m) => m.$method($($arg),*)?.map(erase_modal_result),
             ActiveModal::SaveAs(m) => m.$method($($arg),*)?.map(erase_modal_result),
             ActiveModal::DirectorySwitcher(m) => m.$method($($arg),*)?.map(erase_modal_result),

@@ -176,7 +176,7 @@ impl App {
     /// Handle click on the Projects menu or one of its open directory
     /// submenus. Deeper levels are drawn on top, so they are tested first.
     /// Returns true if click was handled
-    pub(in crate::app) fn handle_sessions_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
+    pub(in crate::app) fn handle_projects_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
         let screen = self.screen_rect();
         let levels = self.state.projects_menu_levels(screen);
         let hit = levels.iter().enumerate().rev().find_map(|(depth, level)| {

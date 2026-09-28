@@ -371,8 +371,8 @@ impl App {
 
     /// Handle quit request with confirmation if needed
     pub(super) fn handle_quit_request(&mut self) -> Result<()> {
-        // Always save session before quit
-        self.auto_save_session();
+        // Always save the layout before quit
+        self.auto_save_layout();
 
         if self.has_panels_requiring_confirmation() {
             let t = i18n::t();
@@ -387,20 +387,20 @@ impl App {
         Ok(())
     }
 
-    /// Check if session should be saved and save if needed
-    fn check_and_save_session(&mut self) {
-        if self.state.should_save_session() {
-            self.auto_save_session();
-            self.state.update_last_session_save();
+    /// Check if the layout should be saved and save if needed
+    fn check_and_save_layout(&mut self) {
+        if self.state.should_save_layout() {
+            self.auto_save_layout();
+            self.state.update_last_layout_save();
         }
     }
 
     /// Handle the result of a layout-manager operation: on success save the
-    /// session, on failure surface the error in a modal prefixed with the
+    /// layout, on failure surface the error in a modal prefixed with the
     /// supplied label.
     pub(in crate::app) fn handle_layout_op(&mut self, label: &str, result: Result<()>) {
         match result {
-            Ok(()) => self.auto_save_session(),
+            Ok(()) => self.auto_save_layout(),
             Err(e) => self.show_error_modal(format!("{}: {}", label, e)),
         }
     }
@@ -416,30 +416,30 @@ impl App {
 
     /// Run a navigation op that changes focus, flanked by the standard
     /// pre/post bookkeeping (close completion popup, notify outline, save
-    /// session).
+    /// layout).
     fn with_navigation(&mut self, op: impl FnOnce(&mut termide_layout::LayoutManager)) {
         self.close_completion_popup_before_focus_change();
         op(&mut self.layout_manager);
         self.notify_outline_file_opened();
-        self.check_and_save_session();
+        self.check_and_save_layout();
     }
 
-    /// Navigate to previous group with session save
+    /// Navigate to previous group with layout save
     fn navigate_to_prev_group(&mut self) {
         self.with_navigation(|lm| lm.prev_group());
     }
 
-    /// Navigate to next group with session save
+    /// Navigate to next group with layout save
     fn navigate_to_next_group(&mut self) {
         self.with_navigation(|lm| lm.next_group());
     }
 
-    /// Navigate to previous panel in group with session save
+    /// Navigate to previous panel in group with layout save
     fn navigate_to_prev_panel_in_group(&mut self) {
         self.with_navigation(|lm| lm.prev_panel_in_group());
     }
 
-    /// Navigate to next panel in group with session save
+    /// Navigate to next panel in group with layout save
     fn navigate_to_next_panel_in_group(&mut self) {
         self.with_navigation(|lm| lm.next_panel_in_group());
     }

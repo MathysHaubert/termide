@@ -114,7 +114,7 @@ impl App {
                     Ok(mut terminal) => {
                         let _ = terminal.send_command(&command_terminal_command(command));
                         self.add_panel(Box::new(terminal));
-                        self.auto_save_session();
+                        self.auto_save_layout();
                     }
                     Err(e) => {
                         log::error!(

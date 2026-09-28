@@ -1,4 +1,4 @@
-//! Sessions selection modal dialog.
+//! Projects selection modal dialog.
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
@@ -18,16 +18,16 @@ use termide_theme::Theme;
 
 use crate::{calculate_modal_width, centered_rect_with_size, Modal, ModalResult, ModalWidthConfig};
 
-/// Action returned by the sessions modal
+/// Action returned by the projects modal
 #[derive(Debug, Clone)]
 pub enum ProjectAction {
-    /// Switch to the selected session
+    /// Switch to the selected project
     Switch(PathBuf),
-    /// Request deletion of the selected session
+    /// Request deletion of the selected project's layout
     Delete(PathBuf),
 }
 
-/// Item representing a session in the list
+/// Item representing a project in the list
 #[derive(Debug, Clone)]
 pub struct ProjectItem {
     /// Original project path
@@ -36,11 +36,11 @@ pub struct ProjectItem {
     pub display_path: String,
     /// Relative time since last modification (e.g., "2 hours ago")
     pub relative_time: String,
-    /// Whether this is the current session
+    /// Whether this is the current project
     pub is_current: bool,
 }
 
-/// Sessions selection modal window
+/// Projects selection modal window
 #[derive(Debug)]
 pub struct ProjectsModal {
     title: String,
@@ -59,7 +59,7 @@ const MAX_VISIBLE_ITEMS: usize = 6;
 const FILTER_ROWS: u16 = 3;
 
 impl ProjectsModal {
-    /// Create a new sessions modal
+    /// Create a new projects modal
     pub fn new(title: impl Into<String>, items: Vec<ProjectItem>) -> Self {
         let filtered_indices = (0..items.len()).collect();
         Self {
@@ -73,7 +73,7 @@ impl ProjectsModal {
         }
     }
 
-    /// Set initial cursor position (for selecting current session)
+    /// Set initial cursor position (for selecting the current project)
     pub fn with_cursor(mut self, index: usize) -> Self {
         // filtered_indices starts as 0..items.len(), so cursor == item index
         self.cursor = index.min(self.filtered_indices.len().saturating_sub(1));
@@ -154,7 +154,7 @@ impl ProjectsModal {
             termide_ui::ensure_offset_visible(self.scroll_offset, self.cursor, MAX_VISIBLE_ITEMS);
     }
 
-    /// Get the selected session from filtered list
+    /// Get the selected project from filtered list
     fn get_selected(&self) -> Option<&ProjectItem> {
         self.filtered_indices
             .get(self.cursor)
@@ -216,7 +216,7 @@ impl Modal for ProjectsModal {
                 .set_style(Style::default().fg(theme.accented_bg));
         }
 
-        // --- Session list (below filter + separator) ---
+        // --- Project list (below filter + separator) ---
         let list_area = Rect {
             x: inner.x,
             y: inner.y + FILTER_ROWS,
@@ -334,7 +334,7 @@ impl Modal for ProjectsModal {
                 }
             }
 
-            // Delete session (Delete or F8)
+            // Delete project layout (Delete or F8)
             KeyCode::Delete | KeyCode::F(8) => {
                 if let Some(item) = self.get_selected() {
                     if !item.is_current {

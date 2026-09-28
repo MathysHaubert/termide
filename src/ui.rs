@@ -32,7 +32,7 @@ fn render_dropdowns_and_modals(
 ) {
     let theme = state.theme;
 
-    // Render Sessions submenu if open
+    // Render Projects submenu if open
     if state.ui.menu_open
         && state.ui.selected_menu_item == Some(PROJECTS_MENU_INDEX)
         && state.ui.projects_submenu.open

@@ -106,12 +106,12 @@ pub struct AppState {
     pub resource_modal_kind: Option<ResourceModalKind>,
     /// Last time resource modal was refreshed
     pub last_resource_modal_refresh: Option<std::time::Instant>,
-    /// Last time session was saved (for debouncing autosave)
-    pub last_session_save: Option<std::time::Instant>,
+    /// Last time the layout was saved (for debouncing autosave)
+    pub last_layout_save: Option<std::time::Instant>,
     /// Flag indicating UI needs to be redrawn (for CPU optimization)
     pub needs_redraw: bool,
 
-    /// Whether this termide is hosted in a detachable session.
+    /// Whether this termide is hosted in a detachable instance.
     ///
     /// Decided once at startup — a process cannot become detachable later —
     /// and read by the menu, so that rendering, clicking and key handling all
@@ -248,7 +248,7 @@ impl AppState {
             last_resource_update: std::time::Instant::now(),
             resource_modal_kind: None,
             last_resource_modal_refresh: None,
-            last_session_save: None,
+            last_layout_save: None,
             needs_redraw: true,
             detach_available: false, // Initial draw needed
             last_spinner_update: None,
@@ -339,8 +339,8 @@ impl AppState {
         self.ui.options_submenu.open();
     }
 
-    /// Open Sessions submenu
-    pub fn open_sessions_submenu(&mut self) {
+    /// Open Projects submenu
+    pub fn open_projects_submenu(&mut self) {
         self.ui.close_all_submenus();
         self.ui.projects_submenu.open();
         self.load_projects_tree();
@@ -667,20 +667,20 @@ impl AppState {
         config
     }
 
-    /// Check if enough time has passed since last session save (debounce check)
-    /// Returns true if we should save the session
-    pub fn should_save_session(&self) -> bool {
+    /// Check if enough time has passed since the last layout save (debounce check)
+    /// Returns true if we should save the layout
+    pub fn should_save_layout(&self) -> bool {
         const DEBOUNCE_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
 
-        match self.last_session_save {
+        match self.last_layout_save {
             None => true, // Never saved before
             Some(last_save) => last_save.elapsed() >= DEBOUNCE_DURATION,
         }
     }
 
-    /// Update last session save timestamp
-    pub fn update_last_session_save(&mut self) {
-        self.last_session_save = Some(std::time::Instant::now());
+    /// Update last layout save timestamp
+    pub fn update_last_layout_save(&mut self) {
+        self.last_layout_save = Some(std::time::Instant::now());
     }
 
     /// Save bookmarks to data directory

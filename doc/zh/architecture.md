@@ -302,7 +302,7 @@ while !state.should_quit {
   - `settings/fields.rs` — 声明性字段数据（`FieldType`、`FieldDescriptor`、`ContentRow`，以及辅助函数 `fields_for_tab`、`get_field_value`、`toggle_field`、`cycle_enum_*`）
   - `settings/kb.rs` — 键绑定表和宏（`kb_get!`/`kb_set!`、`KB_SECTIONS`、`kb_binding_names`、`get/set_kb_value`、`format_key_event`）
 - **Progress** — 长时间操作的进度条
-- **Commit** / **Conflict** / **RenamePattern** / **Sessions** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — 针对具体场景的专用对话框
+- **Commit** / **Conflict** / **RenamePattern** / **Projects** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — 针对具体场景的专用对话框
 
 共用工具集中在 `crates/modal/src/base.rs`（`render_modal_block`、`render_modal_frame`、`button_style`、`CursorNavigation` trait）。
 
@@ -594,7 +594,7 @@ crates/i18n/
 | FileManager 每条目 git 状态      | `crates/panel-file-manager/src/git_status.rs`                   | `check_git_status_async`；若目录读取抢先，`apply_git_statuses` 会重新应用      |
 | Git 状态/日志面板刷新            | `crates/panel-git-status/src/lib.rs`、`panel-git-log/src/lib.rs`| 各面板 `tick` 中的 `poll_refresh`                                             |
 | Git 子模块发现（RepoManager）    | `crates/git/src/repo_manager.rs` (`spawn_submodule_walk`)       | git 面板 `tick` 中的 `RepoManager::poll`                                       |
-| 会话恢复——并行构建面板           | `crates/app/src/layout_session.rs`（每面板 `construct_panel`）  | 启动后同步 join，因此最慢的面板仍决定首帧                                     |
+| 布局恢复——并行构建面板           | `crates/app/src/layout_store.rs`（每面板 `construct_panel`）  | 启动后同步 join，因此最慢的面板仍决定首帧                                     |
 | 监视器仓库注册                   | `crates/watcher/src/lib.rs` (`watch_repository`)                | 主循环中的 `poll_pending`；inotify 每帧按 `INSTALL_CHUNK` 分块安装，FSEvents（macOS）为单个递归根监视，投递时按 `.gitignore` 过滤 |
 | 目录大小遍历（宽视图）           | `crates/panel-file-manager/src/utils.rs` (`shared_dir_size_cache`) | 对共享缓存逐帧 `try_recv`；每次遍历有预算限制                              |
 

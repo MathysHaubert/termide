@@ -76,7 +76,7 @@ impl App {
 
                 self.add_panel(Box::new(editor_panel));
                 self.notify_outline_file_opened();
-                self.auto_save_session();
+                self.auto_save_layout();
                 self.state.set_info(t.editor_file_opened(filename));
             }
             Err(e) => {
@@ -108,7 +108,7 @@ impl App {
                 // Send command to execute the file
                 let _ = terminal.send_command(&command);
                 self.add_panel(Box::new(terminal));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => {
                 log::error!("Failed to create terminal for '{}': {}", filename, e);
@@ -129,7 +129,7 @@ impl App {
             Ok(mut terminal) => {
                 let _ = terminal.send_command(&command);
                 self.add_panel(Box::new(terminal));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => {
                 log::error!("Failed to create terminal for command '{}': {}", command, e);
@@ -160,7 +160,7 @@ impl App {
             Ok(panel) => {
                 self.layout_manager.replace_active_panel(Box::new(panel));
                 self.state.needs_redraw = true;
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open binary file: {e}")),
         }
@@ -198,7 +198,7 @@ impl App {
                 self.layout_manager.replace_active_panel(Box::new(editor));
                 self.notify_outline_file_opened();
                 self.state.needs_redraw = true;
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open file: {e}")),
         }
@@ -216,7 +216,7 @@ impl App {
         match MarkdownPanel::new(file_path) {
             Ok(panel) => {
                 self.add_panel(Box::new(panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open markdown file: {e}")),
         }
@@ -230,7 +230,7 @@ impl App {
             Ok(panel) => {
                 self.layout_manager.replace_active_panel(Box::new(panel));
                 self.state.needs_redraw = true;
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open markdown file: {e}")),
         }
@@ -247,7 +247,7 @@ impl App {
         match MermaidPanel::new(file_path) {
             Ok(panel) => {
                 self.add_panel(Box::new(panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open diagram file: {e}")),
         }
@@ -261,7 +261,7 @@ impl App {
             Ok(panel) => {
                 self.layout_manager.replace_active_panel(Box::new(panel));
                 self.state.needs_redraw = true;
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open diagram file: {e}")),
         }
@@ -294,7 +294,7 @@ impl App {
         match HtmlPanel::new(file_path) {
             Ok(panel) => {
                 self.add_panel(Box::new(panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open HTML file: {e}")),
         }
@@ -308,7 +308,7 @@ impl App {
             Ok(panel) => {
                 self.layout_manager.replace_active_panel(Box::new(panel));
                 self.state.needs_redraw = true;
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open HTML file: {e}")),
         }
@@ -332,7 +332,7 @@ impl App {
         match BinaryPanel::new(file_path) {
             Ok(panel) => {
                 self.add_panel(Box::new(panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => {
                 self.show_error_modal(format!("Failed to open binary file: {e}"));
@@ -349,7 +349,7 @@ impl App {
         match BinaryPanel::new_editable(file_path) {
             Ok(panel) => {
                 self.add_panel(Box::new(panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             Err(e) => self.show_error_modal(format!("Failed to open binary file: {e}")),
         }
@@ -393,7 +393,7 @@ impl App {
             match ImagePanel::new(file_path.clone()) {
                 Ok(panel) => {
                     self.add_panel_without_focus(Box::new(panel));
-                    self.auto_save_session();
+                    self.auto_save_layout();
                     return Ok(());
                 }
                 Err(e) => {

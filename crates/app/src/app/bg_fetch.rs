@@ -84,7 +84,7 @@ impl App {
                 return;
             }
         }
-        self.auto_save_session();
+        self.auto_save_layout();
     }
 
     /// Cache fetched image bytes to a temp file and open them in the image

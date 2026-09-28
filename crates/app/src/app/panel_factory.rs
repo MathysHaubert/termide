@@ -44,7 +44,7 @@ impl App {
 
         if let Ok(terminal_panel) = result {
             self.add_panel(Box::new(terminal_panel));
-            self.auto_save_session();
+            self.auto_save_layout();
         }
         Ok(())
     }
@@ -85,7 +85,7 @@ impl App {
         };
 
         self.add_panel(Box::new(fm_panel));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -104,7 +104,7 @@ impl App {
 
         let editor_panel = Editor::with_config(config);
         self.add_panel(Box::new(editor_panel));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -119,7 +119,7 @@ impl App {
         self.close_help_panels();
         let journal_panel = Journal::new(self.state.theme);
         self.add_panel(Box::new(journal_panel));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -146,7 +146,7 @@ impl App {
     pub(super) fn handle_new_help(&mut self) -> Result<()> {
         let help = Help::new(&self.state.config);
         self.add_panel(Box::new(help));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -272,7 +272,7 @@ impl App {
         }
         // On first open: populate from any available editor
         self.populate_outline_from_any_editor();
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -291,7 +291,7 @@ impl App {
 
             self.add_panel(Box::new(diagnostics_panel));
         }
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -306,7 +306,7 @@ impl App {
         let paths = self.collect_repo_search_paths();
         let git_status_panel = termide_panel_git_status::GitStatusPanel::new(&paths);
         self.add_panel(Box::new(git_status_panel));
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 
@@ -319,7 +319,7 @@ impl App {
             let git_log_panel = termide_panel_git_log::GitLogPanel::new(&paths);
             self.add_panel(Box::new(git_log_panel));
         }
-        self.auto_save_session();
+        self.auto_save_layout();
         Ok(())
     }
 }

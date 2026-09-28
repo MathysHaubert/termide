@@ -49,7 +49,7 @@ mod operation_manager_handler;
 mod panel_factory;
 mod panel_manager;
 mod panel_operations;
-mod session;
+mod project_layout;
 mod watcher;
 mod workspace_edit;
 
@@ -58,7 +58,7 @@ pub struct App {
     state: AppState,
     layout_manager: LayoutManager,
     event_handler: EventHandler,
-    /// Project root directory (used for per-project session storage)
+    /// Project root directory (used for per-project layout storage)
     project_root: std::path::PathBuf,
     /// Last seen editor edit_version (for debounced outline sync).
     outline_last_version: u64,
@@ -75,10 +75,10 @@ pub struct App {
     /// downstream see canonical keys while text-input and PTY paths
     /// keep the original raw event.
     normalizer: termide_keyboard::KeyNormalizer,
-    /// Whether the session is persisted. Disabled when termide is launched
+    /// Whether the project layout is persisted. Disabled when termide is launched
     /// with explicit file arguments ($EDITOR mode), so editing a commit
-    /// message or crontab never restores or overwrites the project session.
-    persist_session: bool,
+    /// message or crontab never restores or overwrites the project layout.
+    persist_layout: bool,
     /// Terminal capabilities this process was started with. Kept so that a
     /// reattach can re-enter exactly the modes startup entered.
     keyboard_caps: termide_keyboard::KeyboardCaps,
@@ -108,8 +108,8 @@ impl App {
         state.project_root = project_root.clone();
         state.project_bookmarks = termide_config::BookmarksConfig::load_from_project(&project_root);
 
-        // Initialize logger in session directory (before other initializations that log)
-        // Use config override if specified, otherwise use session directory with unique filename
+        // Initialize logger in the project directory (before other initializations that log)
+        // Use config override if specified, otherwise use the project directory with unique filename
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
@@ -144,10 +144,10 @@ impl App {
             }
         }
 
-        // Clean up old sessions (configurable retention period)
+        // Clean up old project layouts (configurable retention period)
         let retention_days = state.config.general.project_retention_days;
         if let Err(e) = termide_project::cleanup_old_projects(&project_root, retention_days) {
-            log::warn!("Failed to cleanup old sessions: {}", e);
+            log::warn!("Failed to cleanup old project layouts: {}", e);
         }
 
         Self {
@@ -164,7 +164,7 @@ impl App {
             command_palette_actions: None,
             normalizer: termide_keyboard::KeyNormalizer::default(),
             keyboard_caps: termide_keyboard::KeyboardCaps::default(),
-            persist_session: true,
+            persist_layout: true,
             last_focus_sig: None,
             settings_model_fetch: None,
         }
@@ -193,7 +193,7 @@ impl App {
         let project_root = std::env::current_dir()
             .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")));
 
-        // Initialize logger in session directory
+        // Initialize logger in the project directory
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
@@ -227,10 +227,10 @@ impl App {
             }
         }
 
-        // Clean up old sessions
+        // Clean up old project layouts
         let retention_days = state.config.general.project_retention_days;
         if let Err(e) = termide_project::cleanup_old_projects(&project_root, retention_days) {
-            log::warn!("Failed to cleanup old sessions: {}", e);
+            log::warn!("Failed to cleanup old project layouts: {}", e);
         }
 
         // Warn about same-section conflicts and bindings that need
@@ -252,20 +252,20 @@ impl App {
             command_palette_actions: None,
             normalizer: termide_keyboard::KeyNormalizer::new(caps),
             keyboard_caps: caps,
-            persist_session: true,
+            persist_layout: true,
             last_focus_sig: None,
             settings_model_fetch: None,
         }
     }
 
     /// Re-establish the terminal after a client attached to this detached
-    /// session.
+    /// instance.
     ///
     /// The client's terminal is a different terminal than the one this process
     /// started on: it has none of the modes switched on, its screen is blank,
     /// and it may not even be the same kind of terminal. Everything that was
     /// negotiated at startup is negotiated again here, against the terminal
-    /// that is actually looking at the session now.
+    /// that is actually looking at the instance now.
     #[cfg(unix)]
     pub(super) fn handle_reattach(&mut self) {
         // The client reports what its terminal is and what it can do. Both
@@ -312,7 +312,7 @@ impl App {
     }
 
     /// Whether this termide can be detached from — that is, whether it is
-    /// hosted in a detachable session at all.
+    /// hosted in a detachable instance at all.
     ///
     /// A process already bound to the terminal's PTY cannot be moved into
     /// another one, so detaching is only ever possible when the host was
@@ -333,10 +333,10 @@ impl App {
         }
     }
 
-    /// Detach this session from its client, leaving everything running.
+    /// Detach this instance from its client, leaving everything running.
     ///
     /// Reports through the status line rather than failing: outside a detached
-    /// session the action is meaningless, and the user needs to be told that
+    /// instance the action is meaningless, and the user needs to be told that
     /// rather than left wondering why nothing happened.
     pub(super) fn handle_detach_instance(&mut self) {
         let t = termide_i18n::t();
@@ -358,11 +358,11 @@ impl App {
             .set_info(t.detach_not_detached_instance().to_string());
     }
 
-    /// Enable or disable session persistence. Disabled for `$EDITOR`-style
-    /// launches (explicit file arguments) so the project session is neither
+    /// Enable or disable project layout persistence. Disabled for `$EDITOR`-style
+    /// launches (explicit file arguments) so the project layout is neither
     /// restored nor overwritten.
-    pub fn set_session_persistence(&mut self, enabled: bool) {
-        self.persist_session = enabled;
+    pub fn set_layout_persistence(&mut self, enabled: bool) {
+        self.persist_layout = enabled;
     }
 
     /// Open a file path in a new editor panel, creating the file (and parent
@@ -747,10 +747,10 @@ impl App {
                 }
                 Event::FocusLost => {
                     self.notify_active_panel_host_focus(false);
-                    // Save session on focus loss (with debounce)
-                    if self.state.should_save_session() {
-                        self.auto_save_session();
-                        self.state.update_last_session_save();
+                    // Save the layout on focus loss (with debounce)
+                    if self.state.should_save_layout() {
+                        self.auto_save_layout();
+                        self.state.update_last_layout_save();
                     }
                 }
                 Event::FocusGained => {
@@ -779,7 +779,7 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::Tick => {
-                    // A client attaching to a detached session raises a flag
+                    // A client attaching to a detached instance raises a flag
                     // from a signal handler; this is where it is acted on.
                     // `clear()` is what makes the repaint whole: the new
                     // client's screen is blank, but ratatui still believes the
@@ -1017,7 +1017,7 @@ impl App {
             let terminal_width = self.state.terminal.width;
 
             let _ = self.layout_manager.close_active_panel(terminal_width);
-            self.auto_save_session();
+            self.auto_save_layout();
         }
 
         Ok(())

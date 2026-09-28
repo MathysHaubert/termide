@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Detached (daemonised) session hosting for termide"
+description = "Detached (daemonised) instance hosting for termide"
 
 [dependencies]
 anyhow.workspace = true

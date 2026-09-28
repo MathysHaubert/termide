@@ -567,7 +567,7 @@ impl App {
         self.close_help_panels();
         let panel = termide_panel_db::DbPanel::new(url, String::new());
         self.add_panel(Box::new(panel));
-        self.auto_save_session();
+        self.auto_save_layout();
     }
 
     /// Open a local SQLite file in the database viewer, deriving a
@@ -610,7 +610,7 @@ impl App {
                 self.close_help_panels();
                 let fm_panel = FileManager::new_with_path(PathBuf::from(path));
                 self.add_panel(Box::new(fm_panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             BookmarkType::TextFile => {
                 // Rendered types open in the viewer; everything else in the editor.
@@ -653,7 +653,7 @@ impl App {
                 let mut fm_panel = FileManager::new();
                 let _ = fm_panel.navigate_to_url(path);
                 self.add_panel(Box::new(fm_panel));
-                self.auto_save_session();
+                self.auto_save_layout();
             }
             BookmarkType::SshConnection => {
                 // Open SSH connection in terminal
@@ -701,7 +701,7 @@ impl App {
                 match Terminal::new_with_command(term_height, term_width, &ssh_cmd) {
                     Ok(terminal) => {
                         self.add_panel(Box::new(terminal));
-                        self.auto_save_session();
+                        self.auto_save_layout();
                     }
                     Err(e) => {
                         log::error!("Failed to create SSH terminal: {}", e);
@@ -720,7 +720,7 @@ impl App {
                     self.close_help_panels();
                     let fm_panel = FileManager::new_with_path(p);
                     self.add_panel(Box::new(fm_panel));
-                    self.auto_save_session();
+                    self.auto_save_layout();
                 } else if p.is_file() {
                     let _ = self.open_editor_for_file(p);
                 }

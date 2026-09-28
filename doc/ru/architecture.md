@@ -302,7 +302,7 @@ while !state.should_quit {
   - `settings/fields.rs` — декларативные данные полей (`FieldType`, `FieldDescriptor`, `ContentRow`, функции `fields_for_tab`, `get_field_value`, `toggle_field`, `cycle_enum_*`)
   - `settings/kb.rs` — макросы и таблицы keybindings (`kb_get!`/`kb_set!`, `KB_SECTIONS`, `kb_binding_names`, `get/set_kb_value`, `format_key_event`)
 - **Progress** — progress-bar для длительных операций
-- **Commit** / **Conflict** / **RenamePattern** / **Sessions** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — специализированные диалоги для отдельных операций
+- **Commit** / **Conflict** / **RenamePattern** / **Projects** / **DirectoryPicker** / **SaveAs** / **BookmarkAdd** / **Calendar** / **CommandPalette** / **ScriptCreate** — специализированные диалоги для отдельных операций
 
 Общие утилиты вынесены в `crates/modal/src/base.rs` (`render_modal_block`, `render_modal_frame`, `button_style`, `CursorNavigation` trait).
 
@@ -597,7 +597,7 @@ crates/i18n/
 | Git-статус по записям FileManager           | `crates/panel-file-manager/src/git_status.rs`                   | `check_git_status_async`; `apply_git_statuses` переприменяет, если чтение опередило    |
 | Обновление панелей Git status / log         | `crates/panel-git-status/src/lib.rs`, `panel-git-log/src/lib.rs`| `poll_refresh` в `tick` каждой панели                                                  |
 | Поиск сабмодулей (RepoManager)              | `crates/git/src/repo_manager.rs` (`spawn_submodule_walk`)       | `RepoManager::poll` из `tick` git-панели                                               |
-| Восстановление сессии — панели параллельно  | `crates/app/src/layout_session.rs` (`construct_panel` на панель)| Джойнятся синхронно после запуска, так что самая медленная панель гейтит первый кадр   |
+| Восстановление раскладки — панели параллельно | `crates/app/src/layout_store.rs` (`construct_panel` на панель)| Джойнятся синхронно после запуска, так что самая медленная панель гейтит первый кадр   |
 | Регистрация репозиториев вотчером           | `crates/watcher/src/lib.rs` (`watch_repository`)                | `poll_pending` в главном цикле; inotify ставится чанками по `INSTALL_CHUNK` за тик, FSEvents (macOS) — один рекурсивный вотч на корень с фильтрацией по `.gitignore` при доставке |
 | Обход размера каталогов (широкий вид)        | `crates/panel-file-manager/src/utils.rs` (`shared_dir_size_cache`) | Покадровый `try_recv` к общему кэшу; бюджет ограничен на каждый обход                |
 

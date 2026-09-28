@@ -65,7 +65,7 @@ impl App {
                         {
                             group.resize_panel_divider(src.panel_idx - 1, delta, area_height);
                         }
-                        self.auto_save_session();
+                        self.auto_save_layout();
                     }
                 }
             }
