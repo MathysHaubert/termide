@@ -10,6 +10,7 @@ pub const VERSION: &str = env!("TERMIDE_VERSION");
 
 pub mod command;
 pub mod event;
+pub mod graphics_cells;
 pub mod hotkey_table;
 pub mod key_chord;
 pub mod panel;
@@ -24,6 +25,7 @@ pub use event::{
     ChecklistItem, ConfirmAction, ConflictResolution, Event, EventHandler, GitOperationType,
     InputAction, PanelEvent, ReferenceLocation, SelectAction, SplitDirection, VimPanelDirection,
 };
+pub use graphics_cells::GraphicsCells;
 pub use hotkey_table::HotkeyTable;
 pub use key_chord::KeyChord;
 pub use panel::{

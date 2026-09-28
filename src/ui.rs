@@ -427,11 +427,16 @@ pub fn render_layout_with_accordion(
     // Render status bar for active panel
     render_status_bar_for_active(frame, main_chunks[2], state, layout_manager);
 
+    let graphics = termide_core::GraphicsCells::capture(frame.buffer_mut());
+
     // Render drag overlay (ghost + drop-zone highlight) on top of panels
     render_drag_overlay(frame, state, layout_manager, main_chunks[1]);
 
     // Render dropdowns and modals
     render_dropdowns_and_modals(frame, state, layout_manager);
+
+    // An image under an overlay is repainted once the overlay goes away.
+    graphics.hold_overdrawn_anchors(frame.buffer_mut());
 }
 
 /// Render the panel drag overlay: a bright highlight for the drop zone and
