@@ -1,6 +1,7 @@
 //! Repo/branch selector dropdown filtering for the Git Status Panel.
 
 use termide_git::{self as git};
+use termide_ui::fuzzy::{rank, Query};
 
 use crate::GitStatusPanel;
 
@@ -8,17 +9,8 @@ impl GitStatusPanel {
     /// Return indices into `self.branches` that match the current filter.
     /// When the filter is empty, returns all indices.
     pub(crate) fn filtered_branch_indices(&self) -> Vec<usize> {
-        if self.branch_filter.is_empty() {
-            (0..self.branches.len()).collect()
-        } else {
-            let f = self.branch_filter.to_lowercase();
-            self.branches
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| b.to_lowercase().contains(&f))
-                .map(|(i, _)| i)
-                .collect()
-        }
+        let mut query = Query::fuzzy_path(&self.branch_filter);
+        rank(self.branches.iter().map(|b| query.score(b)))
     }
 
     /// Index into `self.branches` of the branch the panel shows.
@@ -50,17 +42,8 @@ impl GitStatusPanel {
     /// Return indices into repo list that match the current filter.
     pub(crate) fn filtered_repo_indices(&self) -> Vec<usize> {
         let repos = self.repo_manager.repos();
-        if self.repo_filter.is_empty() {
-            (0..repos.len()).collect()
-        } else {
-            let f = self.repo_filter.to_lowercase();
-            repos
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| git::get_repo_name(p).to_lowercase().contains(&f))
-                .map(|(i, _)| i)
-                .collect()
-        }
+        let mut query = Query::fuzzy_path(&self.repo_filter);
+        rank(repos.iter().map(|p| query.score(&git::get_repo_name(p))))
     }
 
     /// Reset the repo filter state.

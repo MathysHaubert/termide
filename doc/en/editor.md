@@ -376,7 +376,7 @@ TermIDE includes built-in LSP support for intelligent code assistance. When a la
 | `Enter`           | Accept selected completion                 |
 | `Escape`          | Close completion popup                     |
 | `↑` / `↓`         | Navigate through suggestions               |
-| Type characters   | Filter suggestions by typing               |
+| Type characters   | Filter suggestions, fuzzily (`fo` finds `function_one`) |
 
 **Auto-completion:** When enabled (default), completion popup appears automatically:
 - After typing identifier characters (letters, numbers, `_`)

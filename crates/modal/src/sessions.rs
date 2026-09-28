@@ -105,18 +105,14 @@ impl ProjectsModal {
 
     /// Recompute filtered_indices from current filter value
     fn apply_filter(&mut self) {
-        let f = self.filter.to_lowercase();
-        if f.is_empty() {
-            self.filtered_indices = (0..self.items.len()).collect();
-        } else {
-            self.filtered_indices = self
-                .items
+        // Fuzzy on the path, best match first; an empty filter keeps the
+        // list's own order.
+        let mut query = termide_ui::fuzzy::Query::fuzzy_path(&self.filter);
+        self.filtered_indices = termide_ui::fuzzy::rank(
+            self.items
                 .iter()
-                .enumerate()
-                .filter(|(_, item)| item.display_path.to_lowercase().contains(&f))
-                .map(|(i, _)| i)
-                .collect();
-        }
+                .map(|item| query.score(&item.display_path)),
+        );
         self.cursor = self
             .cursor
             .min(self.filtered_indices.len().saturating_sub(1));

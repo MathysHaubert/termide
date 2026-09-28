@@ -98,22 +98,11 @@ impl CompletionPopup {
 
     /// Apply filter to items.
     fn apply_filter(&mut self) {
-        if self.filter.is_empty() {
-            self.filtered_indices = (0..self.items.len()).collect();
-        } else {
-            let filter_lower = self.filter.to_lowercase();
-            self.filtered_indices = self
-                .items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| {
-                    let label_lower = item.label.to_lowercase();
-                    // Substring match: filter must appear as contiguous substring
-                    label_lower.contains(&filter_lower)
-                })
-                .map(|(idx, _)| idx)
-                .collect();
-        }
+        // Fuzzy, best match first (`fo` finds `function_one`); an empty
+        // filter keeps the server's order.
+        let mut query = termide_ui::fuzzy::Query::fuzzy(&self.filter);
+        self.filtered_indices =
+            termide_ui::fuzzy::rank(self.items.iter().map(|item| query.score(&item.label)));
 
         // Reset selection if it's out of bounds
         if self.selected >= self.filtered_indices.len() {
@@ -437,6 +426,10 @@ mod tests {
         assert_eq!(popup.item_count(), 2);
 
         popup.set_filter("var");
+        assert_eq!(popup.item_count(), 1);
+
+        // The letters need not be adjacent.
+        popup.set_filter("ftwo");
         assert_eq!(popup.item_count(), 1);
 
         popup.set_filter("");
