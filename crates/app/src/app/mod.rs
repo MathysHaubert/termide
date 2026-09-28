@@ -746,6 +746,7 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::FocusLost => {
+                    self.state.terminal.focused = false;
                     self.notify_active_panel_host_focus(false);
                     // Save the layout on focus loss (with debounce)
                     if self.state.should_save_layout() {
@@ -754,6 +755,7 @@ impl App {
                     }
                 }
                 Event::FocusGained => {
+                    self.state.terminal.focused = true;
                     self.notify_active_panel_host_focus(true);
                     // Redraw on focus gain to refresh display
                     self.state.needs_redraw = true;
@@ -854,9 +856,18 @@ impl App {
             // Single combined loop: terminal output + panel tick + FM spinner
             let mut all_panel_events = Vec::new();
             let area_height = self.panel_area_height();
-            for (panel, is_visible) in self
+            // The panel the user is looking at, if the window has focus: its
+            // requests for attention are already answered.
+            let watched = self
+                .state
+                .terminal
+                .focused
+                .then(|| self.layout_manager.active_panel_position())
+                .flatten();
+            for (position, (panel, is_visible)) in self
                 .layout_manager
                 .iter_all_panels_with_visibility_mut(area_height)
+                .enumerate()
             {
                 // Terminal output check (always needed, even during idle)
                 // PTY must be drained to avoid buffer deadlock
@@ -868,7 +879,12 @@ impl App {
 
                 // Always call tick() — stale panels drain async
                 // results internally and return early
-                let events = panel.tick();
+                let mut events = panel.tick();
+                if watched == Some(position) {
+                    events.retain(|event| {
+                        !matches!(event, termide_core::PanelEvent::RequestAttention)
+                    });
+                }
                 if !events.is_empty() {
                     self.state.needs_redraw = true;
                     all_panel_events.extend(events);

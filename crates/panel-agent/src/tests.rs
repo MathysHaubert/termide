@@ -736,6 +736,59 @@ fn a_finished_run_asks_for_attention_until_the_panel_is_shown_focused() {
     assert!(!panel.needs_attention());
 }
 
+fn rings(events: &[PanelEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, PanelEvent::RequestAttention))
+}
+
+/// A run that started `secs` ago ends now.
+fn end_run_of(panel: &mut AgentPanel, secs: u64) {
+    panel.apply(AgentEvent::AgentStart);
+    panel.run_start = Some(Instant::now() - Duration::from_secs(secs));
+    panel.apply(AgentEvent::AgentEnd);
+}
+
+#[test]
+fn only_a_long_run_rings_when_it_ends() {
+    let mut panel = AgentPanel::new(setup(vec![]));
+    end_run_of(&mut panel, 1);
+    assert!(panel.needs_attention());
+    assert!(!rings(&panel.tick()));
+    end_run_of(&mut panel, 60);
+    assert!(rings(&panel.tick()));
+}
+
+#[test]
+fn a_run_the_user_stopped_rings_no_bell() {
+    let mut panel = AgentPanel::new(setup(vec![]));
+    panel.apply(AgentEvent::AgentStart);
+    panel.run_start = Some(Instant::now() - Duration::from_secs(60));
+    panel.stop_requested = true;
+    panel.apply(AgentEvent::AgentEnd);
+    assert!(!rings(&panel.tick()));
+}
+
+#[test]
+fn the_bell_rings_once_until_the_user_sees_the_panel() {
+    let mut panel = AgentPanel::new(setup(vec![]));
+    end_run_of(&mut panel, 60);
+    assert!(rings(&panel.tick()));
+    // Unseen, the next wait does not ring again.
+    end_run_of(&mut panel, 60);
+    assert!(!rings(&panel.tick()));
+    // Shown focused in an unfocused window still counts as unseen.
+    panel.handle_command(PanelCommand::SetHostFocus { focused: false });
+    render_buf(&mut panel, 40, 12);
+    end_run_of(&mut panel, 60);
+    assert!(!rings(&panel.tick()));
+    // Seen: the next wait rings.
+    panel.handle_command(PanelCommand::SetHostFocus { focused: true });
+    render_buf(&mut panel, 40, 12);
+    end_run_of(&mut panel, 60);
+    assert!(rings(&panel.tick()));
+}
+
 #[test]
 fn typing_enter_runs_a_turn_and_renders_it() {
     let mut panel = panel(vec![reply("Hello from the model")]);
@@ -2218,6 +2271,8 @@ fn permission_prompt_is_answered_in_the_panel() {
                 e,
                 PanelEvent::SetStatusMessage { message, .. } if message.contains("git push")
             )));
+            // The call waits on the user, so the panel asks for the bell.
+            assert!(rings(&events));
             break;
         }
         assert!(Instant::now() < deadline);

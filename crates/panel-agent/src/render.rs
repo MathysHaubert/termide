@@ -418,6 +418,11 @@ impl AgentPanel {
         // Shown focused, whatever waited is now in front of the user.
         if ctx.is_focused {
             self.attention = false;
+            // Seen only if the window is in front too; until then the bell
+            // already rung stands.
+            if self.host_focused {
+                self.rung = false;
+            }
         }
 
         let input_rows = self.input_rows(area.height, area.width);

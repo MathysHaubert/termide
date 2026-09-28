@@ -22,6 +22,7 @@ connection = "local"               # the one new sessions start on; else the fir
 max_tokens_per_turn = 0            # default: no limit, the model decides
 prefer_reasoning = true            # default; send reasoning_effort to models that support it
 fold_blocks = "immediately"        # immediately (default) | on-finish | never
+bell_on_attention = true           # default; ring the bell when a panel out of sight waits for you
 
 [ai.connections.local]
 provider = "openai_compatible"     # openai_compatible (default), anthropic_compatible, claude_code, codex, gemini_cli
@@ -554,7 +555,11 @@ name the pattern they record (`cargo build *`, a site, a path). `↑`/`↓` and
 (or `Enter`) confirms it, so a stray click cannot answer; `Esc` stops the run.
 The status line announces the question too, so a panel that is not in focus
 does not ask unseen; the header of such a panel turns the warning color until
-the panel is focused, and so does it when a run ends. "In this project" appends the rule to
+the panel is focused, and so does it when a run ends. Unless the panel is the one
+in front of you in a focused terminal window, the question also rings the
+terminal bell, and so does the end of a run that took ten seconds or more (not
+one you stopped); it rings once until you look at the panel, and
+`bell_on_attention = false` under `[ai]` silences it. "In this project" appends the rule to
 `.termide/config.toml` in the project, "everywhere" to the global
 configuration; answers for the session live until the panel closes.
 

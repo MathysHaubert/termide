@@ -595,6 +595,12 @@ pub struct AgentPanel {
     /// A run ended or a question arrived since the panel was last rendered
     /// focused; its header is highlighted while it is unfocused.
     attention: bool,
+    /// The panel asked for the bell since the user last saw it, so a second
+    /// wait does not ring again.
+    rung: bool,
+    /// The terminal window has focus, as last reported while this panel was
+    /// the active one.
+    host_focused: bool,
     /// The current run stopped at a `/pause` (its closing line says so).
     run_paused: bool,
     /// A `/pause` was asked for and the run has not reached a step boundary
@@ -836,6 +842,8 @@ impl AgentPanel {
             run_start: None,
             run_failed: false,
             attention: false,
+            rung: false,
+            host_focused: true,
             run_paused: false,
             pause_requested: false,
             stop_requested: false,
@@ -1366,6 +1374,10 @@ impl Panel for AgentPanel {
             PanelCommand::Confirmed { action } if action == DELETE_SESSION_ACTION => {
                 self.perform_delete_session();
                 CommandResult::Handled(true)
+            }
+            PanelCommand::SetHostFocus { focused } => {
+                self.host_focused = focused;
+                CommandResult::None
             }
             PanelCommand::GetScrollBars => CommandResult::ScrollBars(self.scrollbars),
             PanelCommand::SetScrollOffset { axis, offset } => {

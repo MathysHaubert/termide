@@ -150,6 +150,10 @@ impl App {
                 self.show_error_modal(message);
             }
 
+            PanelEvent::RequestAttention => {
+                self.state.attention_bell();
+            }
+
             PanelEvent::SetStatusMessage { message, is_error } => {
                 if is_error {
                     self.show_error_modal(message);

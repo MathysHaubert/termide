@@ -128,6 +128,11 @@ pub struct AiSettings {
     /// The web tools (`fetch`, `web_search`).
     #[serde(default)]
     pub web: WebSettings,
+
+    /// Ring the terminal bell when an agent panel waits for the user out of
+    /// sight: a permission or question card, or a long run that finished.
+    #[serde(default = "agent_defaults::bell_on_attention")]
+    pub bell_on_attention: bool,
 }
 
 /// One connection to a model: the wire protocol or CLI agent, where it
@@ -351,6 +356,7 @@ impl Default for AiSettings {
             compaction: termide_agent_core::CompactionPolicy::default(),
             fold_blocks: FoldBlocks::default(),
             web: WebSettings::default(),
+            bell_on_attention: agent_defaults::bell_on_attention(),
         }
     }
 }
@@ -722,6 +728,9 @@ mod agent_defaults {
         0
     }
     pub fn reasoning() -> bool {
+        true
+    }
+    pub fn bell_on_attention() -> bool {
         true
     }
 }
@@ -1106,6 +1115,7 @@ mod ai_settings_tests {
     fn new_sessions_reason_and_follow_the_configured_rules() {
         let defaults = AiSettings::default();
         assert!(defaults.prefer_reasoning);
+        assert!(defaults.bell_on_attention);
         assert_eq!(
             defaults.permissions.mode,
             termide_agent_core::Mode::Configured

@@ -247,6 +247,18 @@ impl LayoutManager {
             .and_then(|group| group.expanded_panel())
     }
 
+    /// Where the active panel falls in the order of
+    /// [`iter_all_panels_mut`](Self::iter_all_panels_mut).
+    pub fn active_panel_position(&self) -> Option<usize> {
+        let group = self.panel_groups.get(self.focus)?;
+        group.expanded_panel()?;
+        let before: usize = self.panel_groups[..self.focus]
+            .iter()
+            .map(PanelGroup::len)
+            .sum();
+        Some(before + group.expanded_index())
+    }
+
     /// Get active group index.
     pub fn active_group_index(&self) -> Option<usize> {
         Some(self.focus)
@@ -796,6 +808,29 @@ mod tests {
     fn test_active_panel_with_no_panels() {
         let lm = LayoutManager::new();
         assert!(lm.active_panel().is_none());
+    }
+
+    #[test]
+    fn active_panel_position_counts_the_panels_of_earlier_groups() {
+        let mut lm = LayoutManager::new();
+        assert_eq!(lm.active_panel_position(), None);
+        let config = make_config(80);
+        // Two panels stacked in one group, then a third in a group of its own.
+        lm.add_panel(panel("a"), &config, 100);
+        lm.add_panel(panel("b"), &config, 100);
+        lm.add_panel(panel("c"), &config, 400);
+        assert_eq!((lm.group_count(), lm.panel_count()), (2, 3));
+        let names = |lm: &mut LayoutManager| {
+            lm.iter_all_panels_mut()
+                .map(|p| p.name())
+                .collect::<Vec<_>>()
+        };
+        let position = lm.active_panel_position().unwrap();
+        assert_eq!(position, 2);
+        assert_eq!(names(&mut lm)[position], lm.active_panel().unwrap().name());
+        lm.set_focus(0);
+        let position = lm.active_panel_position().unwrap();
+        assert_eq!(names(&mut lm)[position], lm.active_panel().unwrap().name());
     }
 
     #[test]

@@ -550,6 +550,11 @@ pub enum PanelEvent {
     /// Show error message
     ShowError(String),
 
+    /// The panel waits for the user (a question to answer, long work
+    /// finished) and asks to be noticed: the app rings the terminal bell,
+    /// unless the panel is the active one in a focused terminal window.
+    RequestAttention,
+
     /// Show confirmation dialog
     ShowConfirm {
         message: String,

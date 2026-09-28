@@ -14,7 +14,22 @@ use termide_ui::ChoiceForm;
 use crate::pending::Pending;
 use crate::{millis, now_hms, Activity, AgentPanel, Item, NoticeKind, Phase};
 
+/// A finished run shorter than this rings no bell: the user is most likely
+/// still there, and a bell on every quick answer would be noise.
+const LONG_RUN: Duration = Duration::from_secs(10);
+
 impl AgentPanel {
+    /// Wait for the user: highlight the header and, when `ring`, ask the app
+    /// for the bell, once until the user has seen the panel. The app drops
+    /// the request when the panel is in front of the user.
+    pub(crate) fn raise_attention(&mut self, ring: bool) {
+        self.attention = true;
+        if ring && !self.rung {
+            self.rung = true;
+            self.pending_events.push(PanelEvent::RequestAttention);
+        }
+    }
+
     /// Note streamed output: enter the generating phase on the first token,
     /// then count characters for the live token estimate and speed.
     pub(crate) fn note_generation(&mut self, chars: usize) {
@@ -62,7 +77,11 @@ impl AgentPanel {
             AgentEvent::AgentEnd => {
                 self.busy = false;
                 self.activity = None;
-                self.attention = true;
+                // A stop was the user's own doing, so they are there.
+                let long = self
+                    .run_start
+                    .is_some_and(|start| start.elapsed() >= LONG_RUN);
+                self.raise_attention(long && !self.stop_requested);
                 if self.run_paused {
                     // The run waits at a pause: its line ticks the pause's
                     // length (no time of day), and the run's own clock stays
@@ -349,7 +368,7 @@ impl AgentPanel {
                     .with_detail(text.clone())
                     .with_cancel(t.agent_handoff_dismiss());
                     self.pending = Some(Pending::Handoff { form, brief: text });
-                    self.attention = true;
+                    self.raise_attention(true);
                 }
                 Err(error) => self.notice(
                     termide_i18n::t().agent_notice_handoff_failed_fmt(&error.to_string()),

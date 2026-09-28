@@ -205,7 +205,7 @@ impl AgentPanel {
                 form,
                 answers,
             });
-            self.attention = true;
+            self.raise_attention(true);
             // The question pauses the running call until it is answered.
             let before = self.running_tool_wait();
             self.permission_wait = Some((Instant::now(), before));
@@ -252,7 +252,7 @@ impl AgentPanel {
                 answers: Vec::new(),
                 form,
             });
-            self.attention = true;
+            self.raise_attention(true);
             let before = self.running_tool_wait();
             self.permission_wait = Some((Instant::now(), before));
             self.transcript.set_tool_wait(before, true);

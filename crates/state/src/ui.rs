@@ -391,6 +391,9 @@ pub struct TerminalState {
     pub width: u16,
     /// Terminal height
     pub height: u16,
+    /// The terminal window has keyboard focus, as its focus reports say.
+    /// Starts true: a terminal that sends no reports is taken as focused.
+    pub focused: bool,
 }
 
 impl Default for TerminalState {
@@ -398,6 +401,7 @@ impl Default for TerminalState {
         Self {
             width: 80,
             height: 24,
+            focused: true,
         }
     }
 }

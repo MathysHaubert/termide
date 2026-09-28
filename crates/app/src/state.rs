@@ -655,6 +655,15 @@ impl AppState {
         }
     }
 
+    /// Ring the terminal bell for an agent panel that waits for the user,
+    /// if enabled in config
+    pub fn attention_bell(&self) {
+        if self.config.ai.bell_on_attention {
+            print!("\x07");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+    }
+
     /// Create EditorConfig with settings from global config
     pub fn editor_config(&self) -> EditorConfig {
         let mut config = EditorConfig::default();
