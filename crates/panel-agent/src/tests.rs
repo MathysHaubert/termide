@@ -789,14 +789,17 @@ fn title_follows_the_first_prompt() {
     settle(&mut fresh);
     assert_eq!(fresh.title(), "Agent: make the timeout configurable");
 
-    // A long prompt is cut with an ellipsis.
+    // A long prompt is kept whole: the header cuts its end to the panel's
+    // width, so a wide panel shows as much of it as fits.
     let mut wordy = panel(vec![reply("ok")]);
     type_text(&mut wordy, &"word ".repeat(30));
     wordy.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
     settle(&mut wordy);
-    let title = wordy.title();
-    assert!(title.ends_with('…'), "{title}");
-    assert_eq!(title.chars().count(), "Agent: ".len() + MAX_TITLE_CHARS);
+    assert_eq!(
+        wordy.title(),
+        format!("Agent: {}", "word ".repeat(30).trim_end())
+    );
+    assert_eq!(wordy.title_cut(), TitleCut::End);
 }
 
 #[test]

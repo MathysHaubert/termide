@@ -144,7 +144,8 @@ terminal, the agent works in the directory of the panel that had focus when
 you opened it (a file manager's directory, an editor's file), or in the project
 root. The panel title is your first request, so several agent panels stay
 apart at a glance; before you ask anything it shows the working directory
-instead. Give a session a name of your own through the panel's `[≡]` menu →
+instead. A title too long for the panel loses its end, so a wider panel shows
+more of it. Give a session a name of your own through the panel's `[≡]` menu →
 **Rename session**, and the title shows that name from then on.
 
 A fresh session greets you with a banner: a small logo on the left and, on the

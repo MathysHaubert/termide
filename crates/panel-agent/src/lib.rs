@@ -39,7 +39,7 @@ use termide_agent_core::{
 use termide_config::Config;
 use termide_core::{
     CommandResult, InputAction, KeyChord, Panel, PanelCommand, PanelEvent, RenderContext,
-    ScrollAxis, ScrollBars, SelectAction, StatusSegment, ThemeColors, WidthPreference,
+    ScrollAxis, ScrollBars, SelectAction, StatusSegment, ThemeColors, TitleCut, WidthPreference,
 };
 use termide_theme::Theme;
 use termide_ui::{ClickTracker, CompletionList, InputBar};
@@ -938,7 +938,7 @@ impl Drop for AgentPanel {
     }
 }
 
-/// Longest prompt shown in the panel title before it is cut.
+/// Longest text shown in a picker entry (the rollback steps) before it is cut.
 const MAX_TITLE_CHARS: usize = 60;
 
 /// Local wall-clock time as `HH:MM:SS`, for a transcript block's byline.
@@ -956,9 +956,14 @@ fn capitalize(name: &str) -> String {
     }
 }
 
-/// First line of `text`, collapsed to one line and cut with an ellipsis.
+/// `text` collapsed to one line, runs of whitespace becoming one space.
+fn single_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `text` collapsed to one line and cut with an ellipsis.
 fn truncate_title(text: &str) -> String {
-    let single_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let single_line = single_line(text);
     if single_line.chars().count() <= MAX_TITLE_CHARS {
         return single_line;
     }
@@ -1025,9 +1030,8 @@ impl Panel for AgentPanel {
     /// `Agent: <name>` for a named conversation, else `Agent: <first
     /// prompt>`, else `Agent: <working directory>`. The `Agent` label is
     /// replaced by a custom agent's own name (capitalized), so parallel panels
-    /// running different agents are told apart. The renderer shortens further
-    /// from the left when the panel is narrow, so only a long name or prompt is
-    /// cut here.
+    /// running different agents are told apart. Nothing is cut here: the
+    /// header cuts the end to the panel's width, keeping the label.
     fn title(&self) -> String {
         let t = termide_i18n::t();
         let label = if self.agent == DEFAULT_AGENT {
@@ -1039,18 +1043,22 @@ impl Panel for AgentPanel {
             .session
             .as_ref()
             .and_then(Session::name)
-            .map(truncate_title);
+            .map(single_line);
         let subject = named
             .or_else(|| {
                 self.transcript.items().iter().find_map(|item| match item {
                     Item::User { text, command, .. } => {
-                        Some(truncate_title(command.as_ref().unwrap_or(text)))
+                        Some(single_line(command.as_ref().unwrap_or(text)))
                     }
                     _ => None,
                 })
             })
             .unwrap_or_else(|| self.cwd.to_string_lossy().into_owned());
         format!("{label}: {subject}")
+    }
+
+    fn title_cut(&self) -> TitleCut {
+        TitleCut::End
     }
 
     fn needs_attention(&self) -> bool {

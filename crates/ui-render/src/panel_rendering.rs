@@ -21,11 +21,11 @@ const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦'
 /// When truncating a title like "⠋ main.rs (indexing)", this function ensures:
 /// - Spinner at the start is always preserved
 /// - Status in parentheses at the end is always preserved
-/// - Main text in the middle is truncated with "…" from the left
+/// - Main text in the middle is truncated with "…" at the end `cut` names
 ///
 /// Returns the truncated title that fits within `max_width`.
 /// Returns a borrowed slice when no truncation is needed, avoiding allocation.
-fn smart_truncate_title(title: &str, max_width: usize) -> Cow<'_, str> {
+fn smart_truncate_title(title: &str, max_width: usize, cut: TitleCut) -> Cow<'_, str> {
     let title_width = title.width();
     if title_width <= max_width {
         return Cow::Borrowed(title);
@@ -87,46 +87,58 @@ fn smart_truncate_title(title: &str, max_width: usize) -> Cow<'_, str> {
     // Available width for main text (with "…" if needed)
     let available_for_main = max_width - fixed_width;
 
-    let main_width = main_text.width();
-    let truncated_main = if main_width <= available_for_main {
-        main_text
-    } else if available_for_main > 1 {
-        // Need to truncate main text, keep right part with "…"
-        let target_width = available_for_main - 1; // Reserve 1 for "…"
-        let main_chars: Vec<char> = main_text.chars().collect();
-        let mut start_idx = 0;
-        let mut current_width = main_width;
-
-        // Remove chars from start until we fit
-        while current_width > target_width && start_idx < main_chars.len() {
-            current_width -= main_chars[start_idx].width().unwrap_or(0);
-            start_idx += 1;
-        }
-
-        format!("…{}", main_chars[start_idx..].iter().collect::<String>())
-    } else if available_for_main > 0 {
-        // Very narrow, just take what we can from the end
-        let main_chars: Vec<char> = main_text.chars().collect();
-        let mut chars_rev = Vec::new();
-        let mut width = 0;
-        for ch in main_chars.iter().rev() {
-            let ch_width = ch.width().unwrap_or(0);
-            if width + ch_width > available_for_main {
-                break;
-            }
-            chars_rev.push(*ch);
-            width += ch_width;
-        }
-        chars_rev.iter().rev().collect()
-    } else {
-        String::new()
-    };
+    let truncated_main = cut_to_width(&main_text, available_for_main, cut);
 
     Cow::Owned(format!("{}{}{}", spinner, truncated_main, status))
 }
 
+/// `text` cut to `max_width` cells at the end `cut` names, with "…" marking
+/// the cut when there is room for it.
+fn cut_to_width(text: &str, max_width: usize, cut: TitleCut) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    // Reserve one cell for "…" unless that would leave nothing of the text.
+    let (budget, ellipsis) = if max_width > 1 {
+        (max_width - 1, "…")
+    } else {
+        (max_width, "")
+    };
+    let mut kept = Vec::new();
+    let mut width = 0;
+    let mut take = |ch: char| {
+        let ch_width = ch.width().unwrap_or(0);
+        if width + ch_width > budget {
+            return false;
+        }
+        kept.push(ch);
+        width += ch_width;
+        true
+    };
+    match cut {
+        TitleCut::Start => {
+            for ch in text.chars().rev() {
+                if !take(ch) {
+                    break;
+                }
+            }
+            kept.reverse();
+            format!("{ellipsis}{}", kept.iter().collect::<String>())
+        }
+        TitleCut::End => {
+            for ch in text.chars() {
+                if !take(ch) {
+                    break;
+                }
+            }
+            let kept: String = kept.iter().collect();
+            format!("{}{ellipsis}", kept.trim_end())
+        }
+    }
+}
+
 use termide_config::Config;
-use termide_core::{use_emoji_icons, Panel, PanelConfig, RenderContext, ThemeColors};
+use termide_core::{use_emoji_icons, Panel, PanelConfig, RenderContext, ThemeColors, TitleCut};
 
 /// Get emoji icon for a panel type.
 ///
@@ -164,32 +176,35 @@ mod tests {
 
     #[test]
     fn test_truncate_short_title_unchanged() {
-        assert_eq!(smart_truncate_title("main.rs", 20), "main.rs");
+        assert_eq!(
+            smart_truncate_title("main.rs", 20, TitleCut::Start),
+            "main.rs"
+        );
     }
 
     #[test]
     fn test_truncate_empty_title() {
-        assert_eq!(smart_truncate_title("", 10), "");
+        assert_eq!(smart_truncate_title("", 10, TitleCut::Start), "");
     }
 
     #[test]
     fn test_truncate_exact_fit() {
         let title = "abcde";
-        assert_eq!(smart_truncate_title(title, 5), "abcde");
+        assert_eq!(smart_truncate_title(title, 5, TitleCut::Start), "abcde");
     }
 
     #[test]
     fn test_truncate_with_spinner_prefix() {
         // Spinner char + space + title
         let title = "\u{280b} main.rs";
-        let result = smart_truncate_title(title, 50);
+        let result = smart_truncate_title(title, 50, TitleCut::Start);
         assert_eq!(result, title);
     }
 
     #[test]
     fn test_truncate_with_status_suffix() {
         let title = "main.rs (indexing)";
-        let result = smart_truncate_title(title, 50);
+        let result = smart_truncate_title(title, 50, TitleCut::Start);
         assert_eq!(result, title);
     }
 
@@ -197,7 +212,7 @@ mod tests {
     fn test_truncate_preserves_spinner_and_status() {
         // When title is too long, spinner and status should survive
         let title = "\u{280b} very_long_filename_that_needs_truncation.rs (indexing)";
-        let result = smart_truncate_title(title, 30);
+        let result = smart_truncate_title(title, 30, TitleCut::Start);
         // Spinner should be at start
         assert!(result.starts_with('\u{280b}'));
         // Status should be at end
@@ -207,15 +222,34 @@ mod tests {
     #[test]
     fn test_truncate_long_title_gets_ellipsis() {
         let title = "a_very_long_filename_that_exceeds_width.rs";
-        let result = smart_truncate_title(title, 15);
+        let result = smart_truncate_title(title, 15, TitleCut::Start);
         assert!(result.contains('…'));
         assert!(result.len() <= title.len());
     }
 
     #[test]
+    fn a_title_cut_at_the_end_keeps_its_beginning() {
+        let title = "Agent: make the timeout configurable";
+        assert_eq!(
+            smart_truncate_title(title, 20, TitleCut::End),
+            "Agent: make the tim…"
+        );
+        assert_eq!(
+            smart_truncate_title(title, 20, TitleCut::Start),
+            "…imeout configurable"
+        );
+        // A spinner and a status survive a cut at the end too.
+        let busy = "\u{280b} Agent: make the timeout configurable (3)";
+        let result = smart_truncate_title(busy, 20, TitleCut::End);
+        assert!(result.starts_with("\u{280b} Agent"), "{result}");
+        assert!(result.ends_with("… (3)"), "{result}");
+        assert!(result.width() <= 20);
+    }
+
+    #[test]
     fn test_truncate_very_narrow_width() {
         let title = "main.rs";
-        let result = smart_truncate_title(title, 3);
+        let result = smart_truncate_title(title, 3, TitleCut::Start);
         // Should not panic, should produce something <= 3 chars wide
         assert!(result.width() <= 3);
     }
@@ -223,7 +257,7 @@ mod tests {
     #[test]
     fn test_truncate_width_1() {
         let title = "main.rs";
-        let result = smart_truncate_title(title, 1);
+        let result = smart_truncate_title(title, 1, TitleCut::Start);
         assert!(result.width() <= 1);
     }
 
@@ -231,7 +265,7 @@ mod tests {
     fn test_truncate_unicode_cjk() {
         // CJK chars are typically 2 cells wide
         let title = "\u{4f60}\u{597d}\u{4e16}\u{754c}"; // "你好世界"
-        let result = smart_truncate_title(title, 4);
+        let result = smart_truncate_title(title, 4, TitleCut::Start);
         // Should fit within 4 cells (2 CJK chars)
         assert!(result.width() <= 4);
     }
@@ -280,7 +314,7 @@ mod tests {
     fn test_truncate_only_status_no_main() {
         // Edge case: title that's mostly status
         let title = "x (very long status message here)";
-        let result = smart_truncate_title(title, 10);
+        let result = smart_truncate_title(title, 10, TitleCut::Start);
         // Should not panic
         assert!(result.width() <= 10);
     }
@@ -442,7 +476,7 @@ pub fn render_collapsed_panel(
 
     // Reserve 2 chars for padding spaces around title
     let content_width = available_width.saturating_sub(2);
-    let truncated_title = smart_truncate_title(&title, content_width);
+    let truncated_title = smart_truncate_title(&title, content_width, panel.title_cut());
     let display_title = format!(" {} ", truncated_title);
     let title_width = display_title.width();
 
@@ -489,7 +523,7 @@ pub fn render_expanded_panel(
     let buttons_width = buttons_text.width();
     // Available width: panel width - 2 (borders) - buttons - 1 (trailing space)
     let available_for_title = (area.width as usize).saturating_sub(2 + buttons_width + 1);
-    let truncated_title = smart_truncate_title(&title, available_for_title);
+    let truncated_title = smart_truncate_title(&title, available_for_title, panel.title_cut());
     let title_line = panel.colorize_title(&truncated_title, title_style);
     let mut title_spans = vec![Span::styled(buttons_text, title_style)];
     title_spans.extend(title_line.spans);

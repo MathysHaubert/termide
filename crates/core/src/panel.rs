@@ -187,6 +187,18 @@ pub enum WidthPreference {
     NoPreference,
 }
 
+/// Which end of a panel title the header drops when the title does not fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TitleCut {
+    /// Drop the beginning and keep the end, as for a path whose last
+    /// component matters most.
+    #[default]
+    Start,
+    /// Drop the end and keep the beginning, as for a label followed by text
+    /// that reads from the left.
+    End,
+}
+
 /// How a panel wants its height inside a stacked column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightMode {
@@ -474,6 +486,12 @@ pub trait Panel: Any {
     /// this holds; the panel clears it once it renders focused.
     fn needs_attention(&self) -> bool {
         false
+    }
+
+    /// Which end of the title the header drops when the panel is too narrow
+    /// for it. The spinner prefix and the `(status)` suffix survive either way.
+    fn title_cut(&self) -> TitleCut {
+        TitleCut::Start
     }
 
     /// Colorize the truncated title for the panel header.
