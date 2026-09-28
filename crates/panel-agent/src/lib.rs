@@ -10,13 +10,14 @@ mod events;
 mod pending;
 mod select;
 mod slash;
+mod toolset;
 mod transcript;
 
 use std::any::Any;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -31,14 +32,14 @@ use termide_agent_core::{
     HandoffPrompt, Hooks, HostTools, LateTools, LoggedMessage, Message, Mode, ModeHandle,
     ModelInfo, ModelSpec, PermissionEnvelope, PermissionHooks, PermissionRules, PersistRule,
     PersistScope, PlanGuard, PlanPrompt, PromptError, PromptTemplate, Provider, QuestionEnvelope,
-    Session, SessionSummary, SkillInfo, Timing, Tool, ToolCall, ToolContext, ToolDecision,
-    ToolRegistry, ToolResultMessage, UserMessage, DEFAULT_AGENT,
+    Session, SessionSummary, SkillInfo, Timing, Tool, ToolRegistry, ToolResultMessage, UserMessage,
+    DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
-    ChecklistItem, CommandResult, ConfirmAction, InputAction, KeyChord, Panel, PanelCommand,
-    PanelEvent, RenderContext, ScrollAxis, ScrollBars, SegmentKind, SelectAction, StatusSegment,
-    ThemeColors, WidthPreference,
+    CommandResult, ConfirmAction, InputAction, KeyChord, Panel, PanelCommand, PanelEvent,
+    RenderContext, ScrollAxis, ScrollBars, SegmentKind, SelectAction, StatusSegment, ThemeColors,
+    WidthPreference,
 };
 use termide_theme::Theme;
 use termide_ui::textarea::TextArea;
@@ -48,6 +49,7 @@ use termide_ui::{
 };
 
 use crate::pending::Pending;
+use crate::toolset::{Blocked, ToolsetGuard, TOOLSET_ACTION};
 
 pub use transcript::{FoldMode, Item, NoticeKind, Transcript};
 
@@ -321,36 +323,6 @@ enum Phase {
     Tool,
     /// The conversation is being compacted.
     Compact,
-}
-
-/// What the session switched off but the model still has in its context,
-/// shared with the guard that refuses it.
-type Blocked = Arc<RwLock<BTreeSet<String>>>;
-
-/// The checklist of the session's tools, skills and MCP tools.
-const TOOLSET_ACTION: &str = "agent_toolset";
-
-/// Refuses what the session switched off while it is still in the model's
-/// context: a tool by its name, a skill by the name the `skill` tool loads.
-struct ToolsetGuard {
-    blocked: Blocked,
-}
-
-impl Hooks for ToolsetGuard {
-    fn before_tool_call(&mut self, call: &ToolCall, _ctx: &ToolContext) -> ToolDecision {
-        let blocked = self.blocked.read().unwrap_or_else(PoisonError::into_inner);
-        let skill = (call.name == "skill")
-            .then(|| call.arguments.get("name").and_then(|v| v.as_str()))
-            .flatten()
-            .map(|name| format!("skill:{name}"));
-        if blocked.contains(&call.name) || skill.is_some_and(|key| blocked.contains(&key)) {
-            return ToolDecision::Block {
-                reason: "The user switched this off for the session; do not call it again."
-                    .to_string(),
-            };
-        }
-        ToolDecision::Allow
-    }
 }
 
 /// A run control on the prompt box's top border.
@@ -1935,17 +1907,6 @@ impl AgentPanel {
         rules
     }
 
-    /// The system prompt as the agent receives it, written next to the
-    /// session logs (or to the temp directory without them) so it can be
-    /// opened in a viewer.
-    fn write_system_prompt(&self) -> std::io::Result<PathBuf> {
-        let dir = self.session_dir.clone().unwrap_or_else(std::env::temp_dir);
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join("system-prompt.md");
-        std::fs::write(&path, self.effective_system_prompt())?;
-        Ok(path)
-    }
-
     /// Offer the endpoint's models. The list is fetched off the UI thread
     /// and the picker opens from `tick()` when it arrives; an endpoint that
     /// cannot list models falls back to a typed id.
@@ -2083,261 +2044,6 @@ impl AgentPanel {
             ),
             is_error: false,
         }
-    }
-
-    /// The prompt the worker runs on: the agent's, plus the plan-mode
-    /// instructions while that mode is on.
-    fn effective_system_prompt(&self) -> String {
-        if self.mode.get() == Mode::Plan {
-            self.plan_prompt.apply(&self.system_prompt)
-        } else {
-            self.system_prompt.clone()
-        }
-    }
-
-    /// Hand the worker the current effective prompt. During a run the
-    /// update is refused; it is retried when the run ends.
-    fn sync_system_prompt(&mut self) {
-        let prompt = self.effective_system_prompt();
-        match self
-            .runtime
-            .update(Box::new(move |agent| agent.set_system_prompt(prompt)))
-        {
-            Ok(()) => self.prompt_stale = false,
-            Err(PromptError::Busy) => self.prompt_stale = true,
-            // An external agent has no prompt of ours to update.
-            Err(_) => self.prompt_stale = false,
-        }
-    }
-
-    /// Refuse what is switched off but still in the model's context.
-    fn sync_blocked(&self) {
-        *self.blocked.write().unwrap_or_else(PoisonError::into_inner) = self
-            .toolset_off
-            .difference(&self.context_off)
-            .cloned()
-            .collect();
-    }
-
-    /// Rebuild the prompt and the registry without what the session switched
-    /// off, so it leaves the model's context. Only worth it where the prompt
-    /// cache is lost anyway (before the first request, after a compaction,
-    /// on an agent or model switch): elsewhere it would cost the cache.
-    /// During a run it waits for the run to end.
-    fn refresh_context(&mut self) {
-        if self.external {
-            return;
-        }
-        if self.is_busy() {
-            self.context_stale = true;
-            return;
-        }
-        let Some(profile) = self.catalog.resolve_without(&self.agent, &self.toolset_off) else {
-            return;
-        };
-        let mut tools = profile.tools;
-        // The MCP tools that already arrived stay, save those switched off;
-        // the profile's own subscription is not taken, so they do not arrive
-        // (and announce themselves) twice.
-        for (_, tool) in &self.mcp_arrived {
-            if !self.toolset_off.contains(tool.name()) {
-                tools.insert(Arc::clone(tool));
-            }
-        }
-        let prompt = if self.mode.get() == Mode::Plan {
-            self.plan_prompt.apply(&profile.system_prompt)
-        } else {
-            profile.system_prompt.clone()
-        };
-        let worker_tools = tools.clone();
-        match self.runtime.update(Box::new(move |agent| {
-            agent.set_system_prompt(prompt);
-            *agent.tools_mut() = worker_tools;
-        })) {
-            Ok(()) => {
-                self.system_prompt = profile.system_prompt;
-                self.tools = tools;
-                self.waiting_tools.clear();
-                self.context_off = self.toolset_off.clone();
-                self.context_stale = false;
-                self.sync_blocked();
-            }
-            Err(PromptError::Busy) => self.context_stale = true,
-            // A stopped worker takes no change; the panel keeps showing what
-            // the agent really has, and the journal says why.
-            Err(error) => log::warn!("The agent's tools and prompt were not updated: {error}"),
-        }
-    }
-
-    /// The checklist of what the session may use: the built-in tools, the
-    /// skills, each MCP server's tools. Before the first request anything
-    /// toggles freely; after it, what is in the context toggles between
-    /// allowed and refused, and what is out of it stays out.
-    fn toolset_items(&self) -> Vec<ChecklistItem> {
-        let t = termide_i18n::t();
-        let fresh = self.is_fresh();
-        let item = |key: String, label: String, group: String| {
-            let off = self.toolset_off.contains(&key);
-            let in_context = !self.context_off.contains(&key);
-            let enabled = fresh || in_context;
-            let note = if !enabled {
-                t.agent_toolset_note_new_session()
-            } else if off && !fresh {
-                t.agent_toolset_note_refused()
-            } else {
-                ""
-            };
-            ChecklistItem {
-                key,
-                label,
-                group,
-                checked: !off,
-                enabled,
-                note: note.to_string(),
-            }
-        };
-        let mut items: Vec<ChecklistItem> = self
-            .offered_tools
-            .iter()
-            // The skill loader goes with the skills, which have their own items.
-            .filter(|name| name.as_str() != "skill")
-            .map(|name| {
-                item(
-                    name.clone(),
-                    name.clone(),
-                    t.agent_toolset_builtin().to_string(),
-                )
-            })
-            .collect();
-        items.extend(self.offered_skills.iter().map(|name| {
-            item(
-                format!("skill:{name}"),
-                name.clone(),
-                t.agent_toolset_skills().to_string(),
-            )
-        }));
-        items.extend(self.mcp_arrived.iter().map(|(server, tool)| {
-            item(
-                tool.name().to_string(),
-                tool.name().to_string(),
-                t.agent_toolset_mcp_fmt(server),
-            )
-        }));
-        items
-    }
-
-    /// Apply the checklist: what is left unchecked is switched off. Before
-    /// the first request that takes it out of the context at once; later it
-    /// is refused until a compaction takes it out.
-    fn apply_toolset(&mut self, checked: &[String]) {
-        let fresh = self.is_fresh();
-        let mut off = self.toolset_off.clone();
-        for item in self.toolset_items() {
-            if !item.enabled {
-                continue;
-            }
-            if checked.contains(&item.key) {
-                off.remove(&item.key);
-            } else {
-                off.insert(item.key);
-            }
-        }
-        if off == self.toolset_off {
-            return;
-        }
-        self.toolset_off = off;
-        if let Some(session) = &mut self.session {
-            let disabled: Vec<String> = self.toolset_off.iter().cloned().collect();
-            if let Err(error) = session.append_toolset(&disabled) {
-                log::warn!("agent session write failed: {error}");
-            }
-        }
-        if fresh {
-            self.refresh_context();
-        } else {
-            self.sync_blocked();
-        }
-    }
-
-    /// `on/all` of what the session offers, for the banner and the chip.
-    fn toolset_counts(&self) -> (usize, usize) {
-        let all = self
-            .offered_tools
-            .iter()
-            .filter(|name| name.as_str() != "skill")
-            .count()
-            + self.offered_skills.len()
-            + self.mcp_arrived.len();
-        let off = self.toolset_off.len();
-        (all.saturating_sub(off), all)
-    }
-
-    /// Take in tools that finished connecting and hand them to the worker as
-    /// soon as it is between runs. `true` when something was shown.
-    fn poll_late_tools(&mut self) -> bool {
-        let mut arrivals = Vec::new();
-        let mut disconnected = false;
-        if let Some(rx) = &self.late_tools {
-            loop {
-                match rx.try_recv() {
-                    Ok(event) => arrivals.push(event),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        disconnected = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if disconnected {
-            self.late_tools = None;
-        }
-        let changed = !arrivals.is_empty();
-        for event in arrivals {
-            match event {
-                LateTools::Ready { source, tools } => {
-                    self.notice(
-                        termide_i18n::t().agent_notice_mcp_connected_fmt(&source, tools.len()),
-                        NoticeKind::Info,
-                    );
-                    // Every one is listed in the checklist; one switched off
-                    // stays out of the registry, and so out of the context.
-                    for tool in tools {
-                        let name = tool.name().to_string();
-                        self.mcp_arrived.push((source.clone(), Arc::clone(&tool)));
-                        if self.toolset_off.contains(&name) {
-                            self.context_off.insert(name);
-                        } else {
-                            self.waiting_tools.push(tool);
-                        }
-                    }
-                    self.sync_blocked();
-                }
-                LateTools::Failed { source, error } => {
-                    self.notice(
-                        termide_i18n::t().agent_notice_mcp_error_fmt(&source, &error.to_string()),
-                        NoticeKind::Warn,
-                    );
-                }
-            }
-        }
-        if !self.waiting_tools.is_empty() && !self.is_busy() {
-            let batch = std::mem::take(&mut self.waiting_tools);
-            let for_worker = batch.clone();
-            match self.runtime.update(Box::new(move |agent| {
-                for tool in for_worker {
-                    agent.tools_mut().insert(tool);
-                }
-            })) {
-                Ok(()) => {
-                    for tool in batch {
-                        self.tools.insert(tool);
-                    }
-                }
-                Err(_) => self.waiting_tools = batch,
-            }
-        }
-        changed
     }
 
     /// Offer the prompt templates; choosing one puts `/<name> ` into the
