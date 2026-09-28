@@ -162,8 +162,8 @@ pub struct AgentPanelSetup {
     pub hooks: Option<HooksFactory>,
     /// An external agent to drive instead of the built-in loop.
     pub backend: Option<BackendFactory>,
-    /// The CLI agent (Claude Code, Codex) the connection drives over
-    /// ACP, if it names one; it wins over an agent definition's own backend.
+    /// The CLI agent (Claude Code, Codex, Gemini CLI) the connection drives
+    /// over ACP, if it names one; it wins over an agent definition's own backend.
     pub provider_backend: Option<BackendFactory>,
     /// The connections a session can switch to; `None` offers none.
     pub connections: Option<Arc<dyn ConnectionCatalog>>,
@@ -490,7 +490,7 @@ pub struct AgentPanel {
     /// picker are worth showing); latched once known.
     acp_has_models: bool,
     /// A model to pre-select on an external CLI agent (from `[ai].model` for a
-    /// `claude_code`/`codex` provider), applied once its models are known.
+    /// `claude_code`/`codex`/`gemini_cli` provider), applied once its models are known.
     /// Taken (set to `None`) after the one-shot attempt.
     pending_preferred_model: Option<String>,
     /// Background `list_models` call, polled from `tick()`.
@@ -978,6 +978,7 @@ fn provider_label(kind: &str) -> &str {
         "anthropic_compatible" => "Anthropic Compatible",
         "claude_code" => "Claude Code",
         "codex" => "Codex",
+        "gemini_cli" => "Gemini CLI",
         other => other,
     }
 }

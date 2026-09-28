@@ -595,6 +595,7 @@ impl Translation for RuntimeTranslation {
         settings_ai_model_auto,
         settings_ai_connection_hint_claude_code,
         settings_ai_connection_hint_codex,
+        settings_ai_connection_hint_gemini_cli,
         settings_ai_connection_name,
         settings_ai_connection_default,
         settings_ai_connection_name_taken,

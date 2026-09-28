@@ -332,15 +332,16 @@ impl Backend for AcpRuntime {
     }
 
     /// Claude Code's calls of termide's tools, and its permission requests,
-    /// are judged here; Codex's modes are mapped from the panel's. Another
-    /// agent answers to its own configuration.
+    /// are judged here; Codex's and Gemini CLI's modes are mapped from the
+    /// panel's. Another agent answers to its own configuration.
     fn follows_mode(&self) -> bool {
         self.shared.flavor != AcpFlavor::Generic
     }
 
     fn set_mode(&self, mode: Mode) {
-        // The hooks read the shared handle; Codex is told, off the UI thread.
-        if self.shared.flavor == AcpFlavor::Codex {
+        // The hooks read the shared handle; Codex and Gemini CLI are told, off
+        // the UI thread.
+        if matches!(self.shared.flavor, AcpFlavor::Codex | AcpFlavor::GeminiCli) {
             let shared = Arc::clone(&self.shared);
             std::thread::spawn(move || shared.apply_mode(mode));
         }
@@ -445,7 +446,7 @@ impl Shared {
         };
         let ready = matches!(conn, Conn::Ready { .. });
         *self.conn.lock().unwrap_or_else(PoisonError::into_inner) = conn;
-        if ready && self.flavor == AcpFlavor::Codex {
+        if ready && matches!(self.flavor, AcpFlavor::Codex | AcpFlavor::GeminiCli) {
             self.apply_mode(self.mode.get());
         }
         self.kick();
@@ -496,15 +497,19 @@ impl Shared {
         params
     }
 
-    /// Put Codex in the modes that match the panel's `mode`: its approval
-    /// preset, and its plan collaboration mode for `plan`. `ask` and
-    /// `configured` have it ask about everything, so termide's rules and the
-    /// user decide.
+    /// Put the agent in the modes that match the panel's `mode`: Codex's
+    /// approval preset, and its plan collaboration mode for `plan`; Gemini
+    /// CLI's approval mode. `ask` and `configured` have it ask, so termide's
+    /// rules and the user decide.
     fn apply_mode(&self, mode: Mode) {
         let session_id = match &*self.conn.lock().unwrap_or_else(PoisonError::into_inner) {
             Conn::Ready { session_id } => session_id.clone(),
             _ => return,
         };
+        if self.flavor == AcpFlavor::GeminiCli {
+            self.apply_gemini_mode(&session_id, mode);
+            return;
+        }
         let (approval, collaboration) = codex_modes(mode);
         for (config_id, value) in [("mode", approval), ("collaboration_mode", collaboration)] {
             let set = self.request(
@@ -518,6 +523,28 @@ impl Shared {
                     self.name
                 );
             }
+        }
+    }
+
+    /// Gemini CLI's approval mode for `mode`. Its `plan` mode exists only
+    /// when the user enabled it in Gemini's settings; without it the panel's
+    /// plan mode falls back to `default`, where Gemini asks before editing and
+    /// termide refuses the edit.
+    fn apply_gemini_mode(&self, session_id: &str, mode: Mode) {
+        let set = |value: &str| {
+            self.request(
+                "session/set_mode",
+                json!({ "sessionId": session_id, "modeId": value }),
+                Duration::from_secs(30),
+            )
+        };
+        let value = gemini_mode(mode);
+        let mut outcome = set(value);
+        if outcome.is_err() && value == "plan" {
+            outcome = set("default");
+        }
+        if let Err(error) = outcome {
+            log::warn!("acp {}: cannot set mode {value}: {error}", self.name);
         }
     }
 
@@ -1124,6 +1151,16 @@ fn codex_modes(mode: Mode) -> (&'static str, &'static str) {
     }
 }
 
+/// Gemini CLI's approval mode for the panel's `mode`.
+fn gemini_mode(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Ask | Mode::Configured => "default",
+        Mode::Plan => "plan",
+        Mode::Edit => "autoEdit",
+        Mode::All => "yolo",
+    }
+}
+
 /// A `session/request_permission` `toolCall` as a termide [`ToolCall`], its
 /// ACP `kind` translated to the tool name the permission rules speak so the
 /// same logic judges it: `execute` becomes `bash` (the command placed under
@@ -1718,6 +1755,33 @@ mod tests {
         seen_where(&seen, option("mode", "agent-full-access"));
         runtime.set_mode(Mode::Plan);
         seen_where(&seen, option("collaboration_mode", "plan"));
+    }
+
+    #[test]
+    fn gemini_cli_is_put_in_the_mode_that_matches_the_panels() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, seen) = recording_agent(
+            dir.path().to_path_buf(),
+            AcpFlavor::GeminiCli,
+            None,
+            ModeHandle::new(Mode::Configured),
+        );
+        let mode = |value: &'static str| {
+            move |m: &Value| m["method"] == "session/set_mode" && m["params"]["modeId"] == value
+        };
+        // At start: it asks, so termide decides.
+        seen_where(&seen, mode("default"));
+        let new = seen_where(&seen, |m| m["method"] == "session/new").remove(0);
+        assert!(
+            new["params"].get("_meta").is_none(),
+            "Gemini CLI keeps its prompt"
+        );
+        runtime.set_mode(Mode::Edit);
+        seen_where(&seen, mode("autoEdit"));
+        runtime.set_mode(Mode::All);
+        seen_where(&seen, mode("yolo"));
+        runtime.set_mode(Mode::Plan);
+        seen_where(&seen, mode("plan"));
     }
 
     #[test]

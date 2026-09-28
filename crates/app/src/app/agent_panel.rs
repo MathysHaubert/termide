@@ -748,7 +748,7 @@ fn agent_setup(
         rules.mode = mode;
     }
 
-    // A CLI-adapter provider (Claude Code, Codex) is an explicit choice of
+    // A CLI-adapter provider (Claude Code, Codex, Gemini CLI) is an explicit choice of
     // backend, so it drives its own ACP adapter — over any `[acp]` the agent
     // definition might carry. Otherwise the agent's own backend (if any) wins.
     let provider_backend = cli_provider_backend(&provider_kind, &agent);
@@ -797,19 +797,31 @@ fn agent_setup(
     }
 }
 
-/// The ACP backend for a CLI-adapter provider (`claude_code`, `codex`): the
-/// panel drives the tool's own ACP adapter, which signs in with the user's CLI
+/// The ACP backend for a CLI-adapter provider (`claude_code`, `codex`,
+/// `gemini_cli`): the panel drives the tool's own ACP adapter (Gemini CLI
+/// speaks ACP itself), which signs in with the user's CLI
 /// login (a subscription or an API key — the adapter's concern, not ours).
 /// `None` for any other provider, so the built-in loop is used.
 fn cli_provider_backend(provider: &str, agent: &str) -> Option<BackendFactory> {
     // Claude Code takes termide's prompt and tools in place of its own; Codex
-    // keeps its own and has termide's permission mode mapped onto its modes.
-    let (package, flavor) = match provider {
+    // and Gemini CLI keep their own and have termide's permission mode mapped
+    // onto their modes.
+    let (package, flag, flavor) = match provider {
         "claude_code" => (
             "@agentclientprotocol/claude-agent-acp@latest",
+            None,
             AcpFlavor::ClaudeCode,
         ),
-        "codex" => ("@agentclientprotocol/codex-acp@latest", AcpFlavor::Codex),
+        "codex" => (
+            "@agentclientprotocol/codex-acp@latest",
+            None,
+            AcpFlavor::Codex,
+        ),
+        "gemini_cli" => (
+            "@google/gemini-cli@latest",
+            Some("--acp"),
+            AcpFlavor::GeminiCli,
+        ),
         _ => return None,
     };
     // The adapters ship on npm; `npx -y` fetches on first use. `@latest`,
@@ -819,7 +831,11 @@ fn cli_provider_backend(provider: &str, agent: &str) -> Option<BackendFactory> {
     // and pick a compatible provider instead.
     let config = AcpConfig {
         command: "npx".to_string(),
-        args: vec!["-y".to_string(), package.to_string()],
+        args: ["-y", package]
+            .into_iter()
+            .chain(flag)
+            .map(str::to_string)
+            .collect(),
         env: std::collections::BTreeMap::new(),
         timeout_secs: 120,
         flavor,
@@ -862,7 +878,7 @@ fn build_provider(
         // A CLI-adapter provider runs over ACP; the built-in model provider is
         // unused, but something must be returned. A quiet OpenAI-compatible
         // placeholder avoids the "unknown provider" warning below.
-        "claude_code" | "codex" => Arc::new(
+        "claude_code" | "codex" | "gemini_cli" => Arc::new(
             OpenAiCompatProvider::new("agent", settings.base_url.clone()).with_api_key(api_key),
         ),
         "anthropic_compatible" | "anthropic" => {
@@ -1113,6 +1129,7 @@ mod tests {
         // wire-protocol provider uses the built-in loop (no backend override).
         assert!(cli_provider_backend("claude_code", "default").is_some());
         assert!(cli_provider_backend("codex", "default").is_some());
+        assert!(cli_provider_backend("gemini_cli", "default").is_some());
         assert!(cli_provider_backend("openai_compatible", "default").is_none());
         assert!(cli_provider_backend("anthropic_compatible", "default").is_none());
     }

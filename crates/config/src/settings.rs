@@ -141,7 +141,7 @@ pub struct AiSettings {
 pub struct Connection {
     /// `openai_compatible` (omlx, llama.cpp, OpenAI, OpenRouter and most
     /// gateways), `anthropic_compatible` (the Messages API), or a CLI agent
-    /// driven over ACP: `claude_code`, `codex`.
+    /// driven over ACP: `claude_code`, `codex`, `gemini_cli`.
     #[serde(default = "agent_defaults::provider")]
     pub provider: String,
     /// Base URL including the API prefix, e.g. `http://127.0.0.1:10000/v1`.
@@ -332,12 +332,12 @@ pub fn permission_modes() -> Vec<&'static str> {
 }
 
 /// Whether an AI provider value names a CLI agent driven over ACP (Claude
-/// Code, Codex) rather than a wire protocol the built-in loop speaks. Such a
+/// Code, Codex, Gemini CLI) rather than a wire protocol the built-in loop speaks. Such a
 /// provider brings its own endpoint, model and auth, so the endpoint/model/key
 /// settings do not apply to it.
 #[must_use]
 pub fn is_cli_provider(provider: &str) -> bool {
-    matches!(provider, "claude_code" | "codex")
+    matches!(provider, "claude_code" | "codex" | "gemini_cli")
 }
 
 impl Default for AiSettings {

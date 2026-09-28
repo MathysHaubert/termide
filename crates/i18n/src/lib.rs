@@ -821,6 +821,8 @@ pub trait Translation: Send + Sync {
     fn settings_ai_connection_hint_claude_code(&self) -> &str;
     /// Settings modal: what a Codex connection runs differently.
     fn settings_ai_connection_hint_codex(&self) -> &str;
+    /// Settings modal: what a Gemini CLI connection runs differently.
+    fn settings_ai_connection_hint_gemini_cli(&self) -> &str;
     /// Settings modal: the connection's name field.
     fn settings_ai_connection_name(&self) -> &str;
     /// Settings modal: the switch that makes a connection the default, the

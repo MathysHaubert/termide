@@ -339,18 +339,20 @@ pub(super) fn provider_label(value: &str) -> String {
         "openai_compatible" | "openai" => "OpenAI compatible".to_string(),
         "claude_code" => "Claude Code".to_string(),
         "codex" => "Codex".to_string(),
+        "gemini_cli" => "Gemini CLI".to_string(),
         other => other.to_string(),
     }
 }
 
 /// The AI provider values offered in the dropdown, and their labels, sorted by
-/// label. `claude_code` and `codex` drive the matching CLI over ACP (they own
+/// label. `claude_code`, `codex` and `gemini_cli` drive the matching CLI over ACP (they own
 /// their own model, endpoint and auth), so they are named after the tool, not
 /// "subscription" — the CLI may sign in with a subscription or an API key.
-pub(super) const PROVIDER_VALUES: [&str; 4] = [
+pub(super) const PROVIDER_VALUES: [&str; 5] = [
     "anthropic_compatible",
     "claude_code",
     "codex",
+    "gemini_cli",
     "openai_compatible",
 ];
 

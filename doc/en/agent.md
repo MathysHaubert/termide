@@ -24,7 +24,7 @@ prefer_reasoning = true            # default; send reasoning_effort to models th
 fold_blocks = "immediately"        # immediately (default) | on-finish | never
 
 [ai.connections.local]
-provider = "openai_compatible"     # openai_compatible (default), anthropic_compatible, claude_code, codex
+provider = "openai_compatible"     # openai_compatible (default), anthropic_compatible, claude_code, codex, gemini_cli
 base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"  # left out: the provider's first model
 # api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
@@ -85,8 +85,8 @@ save from the settings modal writes it in the new shape.
 The banner's `connection` line and the status bar's **Connection** chip switch
 the session to another connection: its endpoint and its model replace the ones
 in use, the agent restarts on the same log and carries the conversation over,
-and delegated tasks follow. A CLI agent (`claude_code`, `codex`) does not take
-over a conversation, so a switch to or from one works only before the first
+and delegated tasks follow. A CLI agent (`claude_code`, `codex`, `gemini_cli`) does
+not take over a conversation, so a switch to or from one works only before the first
 request. The session log records the connection, so a reopened session
 reconnects to it while it is still in the config, and to the one new sessions
 start on otherwise.
@@ -100,11 +100,12 @@ built in; set it only for a gateway) and point `api_key_env` at your
 `ANTHROPIC_API_KEY`; `prefer_reasoning = true` then turns on extended thinking. The
 **Model** chip lists the endpoint's models for each.
 
-`provider = "claude_code"` and `provider = "codex"` are different in kind: instead
-of the built-in loop talking to a model endpoint, the panel drives that tool's
-own CLI as an [external agent](#external-agents) over ACP
-(`@agentclientprotocol/claude-agent-acp` / `@agentclientprotocol/codex-acp`, the
-latest release, run through
+`provider = "claude_code"`, `provider = "codex"` and `provider = "gemini_cli"`
+are different in kind: instead of the built-in loop talking to a model
+endpoint, the panel drives that tool's own CLI as an
+[external agent](#external-agents) over ACP
+(`@agentclientprotocol/claude-agent-acp` / `@agentclientprotocol/codex-acp`
+/ `@google/gemini-cli --acp`, the latest release, run through
 `npx`). The CLI owns the endpoint and the sign-in — its own subscription or
 API key — so the connection's `base_url`, `api_key_env` and context window do
 not apply; the settings modal hides them for these providers and clears them
@@ -112,7 +113,9 @@ from the file. `model` is
 kept: it is the model **pre-selected** on the agent — applied over ACP once the
 session starts — and at runtime the **Model** chip lists and switches the
 agent's own models. The
-tool must be installed and signed in first (`npx` on `PATH`).
+tool must be installed and signed in first (`npx` on `PATH`); termide does
+not run a sign-in itself, so start Gemini CLI once on its own
+(`npx @google/gemini-cli`) and choose how it signs in.
 
 termide takes these agents as far as they let it, so a session runs the same
 whichever connection it is on:
@@ -127,11 +130,16 @@ whichever connection it is on:
   modes that match the panel's (`ask` and `configured`: ask for approval,
   `plan`: that plus its plan collaboration mode, `edit`: approve for me,
   `all`: full access) and decides what it asks.
+- **Gemini CLI** keeps its own system prompt and tools too; termide sets its
+  approval mode to match the panel's (`ask` and `configured`: `default`, which
+  asks before edits and commands, `plan`: `plan`, or `default` where Gemini's
+  plan mode is off, `edit`: `autoEdit`, `all`: `yolo`) and decides what it
+  asks.
 
-Both keep their own conversation loop: they compact their context themselves,
+All three keep their own conversation loop: they compact their context themselves,
 a run cannot pause between steps, and there is no prefill or generation
 timing (token totals show when the agent reports them, as Claude Code does).
-The **Mode** chip works for both. The settings modal says the same under a
+The **Mode** chip works for all three. The settings modal says the same under a
 connection's page.
 
 ## Using the panel
@@ -278,8 +286,8 @@ while the agent works; once a pause is asked for, `[▶]` takes the place of
 `[‖]` and withdraws it (so does clicking its notice in the state strip, or
 `/continue`); while paused, `[▶]` continues the run, as does clicking the pause line or
 `/continue`, and `[■]` gives the paused run up (the calls it left unrun are
-closed by the next request). Claude Code and Codex run their own loop, which
-cannot stop between steps: they show `[■]` alone, and `/pause` says so. The
+closed by the next request). Claude Code, Codex and Gemini CLI run their own
+loop, which cannot stop between steps: they show `[■]` alone, and `/pause` says so. The
 controls take the panel border's accent color at rest; `[▶]` is green. Once `[■]` (or `Esc`) is pressed,
 a stop cannot be taken back: until the run has actually stopped, only a red
 `[■]` stays, and pressing it again does nothing.
@@ -364,7 +372,7 @@ are cut, never these. The totals are `↑` the prompt tokens billed in full (the
 uncached input and what was written to the prompt cache), `↻` those the cache
 served, shown once there are any, and `↓` the output: `↑2.1k ↻48k ↓900`. The
 window is the tokens used of it with a fill bar, `35k/262k ▰▰▱▱▱▱▱▱`; for
-Claude Code and Codex both come from what the agent reports, and the window
+Claude Code, Codex and Gemini CLI both come from what the agent reports, and the window
 shows once it has.
 Agent, mode, reasoning, connection and model are buttons, and the same entries sit in the
 `[≡]` menu. Clicking **Reasoning** asks the model to reason (extended thinking

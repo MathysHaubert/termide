@@ -47,6 +47,9 @@ pub enum AcpFlavor {
     /// Codex's adapter: it keeps its prompt and tools, and termide maps the
     /// permission mode onto Codex's modes.
     Codex,
+    /// Gemini CLI in its ACP mode: like Codex, it keeps its prompt and tools,
+    /// and termide maps the permission mode onto Gemini's approval modes.
+    GeminiCli,
 }
 
 fn default_timeout() -> u64 {

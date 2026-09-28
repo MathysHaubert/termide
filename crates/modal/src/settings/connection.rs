@@ -102,6 +102,7 @@ fn provider_slug(provider: &str) -> &str {
         "openai_compatible" => "openai",
         "anthropic_compatible" => "anthropic",
         "claude_code" => "claude-code",
+        "gemini_cli" => "gemini-cli",
         other => other,
     }
 }
@@ -294,13 +295,14 @@ impl SettingsModal {
     }
 
     /// What the open connection runs differently from a model termide talks
-    /// to directly: a CLI agent keeps its own conversation loop, and Codex its
-    /// prompt and tools too. `None` for an endpoint, which termide runs whole.
+    /// to directly: a CLI agent keeps its own conversation loop, and Codex and
+    /// Gemini CLI their prompt and tools too. `None` for an endpoint, which termide runs whole.
     pub(super) fn connection_hint(&self) -> Option<&'static str> {
         let t = i18n::t();
         match self.edited()?.provider.as_str() {
             "claude_code" => Some(t.settings_ai_connection_hint_claude_code()),
             "codex" => Some(t.settings_ai_connection_hint_codex()),
+            "gemini_cli" => Some(t.settings_ai_connection_hint_gemini_cli()),
             _ => None,
         }
     }
@@ -375,8 +377,8 @@ impl SettingsModal {
         match index {
             PROVIDER => {
                 // OpenAI/Anthropic compatible are wire protocols the built-in
-                // loop speaks (base_url picks the actual server); Claude Code
-                // and Codex drive their CLI over ACP. Listed by label.
+                // loop speaks (base_url picks the actual server); Claude Code,
+                // Codex and Gemini CLI drive their CLI over ACP. Listed by label.
                 let values: Vec<String> = PROVIDER_VALUES.iter().map(|s| s.to_string()).collect();
                 let labels = PROVIDER_VALUES.iter().map(|v| provider_label(v)).collect();
                 let current = values.iter().position(|v| *v == connection.provider);
