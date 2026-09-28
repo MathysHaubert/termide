@@ -1103,45 +1103,114 @@ fn without_harmless_redirections(part: &str) -> String {
     kept.join(" ")
 }
 
-/// Commands that only read state and cannot write files even with unusual
-/// flags; a redirection into a file disqualifies a command, while pointing
-/// one stream at another (`2>&1`) or at `/dev/null` does not.
+/// Commands that only read state; a redirection into a file disqualifies a
+/// command, while pointing one stream at another (`2>&1`) or at `/dev/null`
+/// does not. A command that can write a file or run another program through
+/// its arguments counts only when those arguments are absent.
 #[must_use]
 pub fn is_read_only_command(part: &str) -> bool {
     let part = without_harmless_redirections(part);
     if part.contains('>') || part.contains("<(") {
         return false;
     }
-    let mut words = part.split_whitespace();
-    let Some(head) = words.next() else {
+    let words: Vec<&str> = part.split_whitespace().collect();
+    let Some((&head, args)) = words.split_first() else {
         return false;
     };
-    // `cd`, `pushd` and `popd` only move the rest of the one command line.
-    const PLAIN: [&str; 33] = [
-        "ls", "cat", "head", "tail", "wc", "pwd", "echo", "rg", "grep", "egrep", "fgrep", "which",
-        "file", "stat", "tree", "du", "sort", "uniq", "cut", "tr", "basename", "dirname",
-        "realpath", "env", "printenv", "date", "whoami", "uname", "true", "false", "cd", "pushd",
-        "popd",
+    // Commands no argument turns into a write. `cd`, `pushd` and `popd`
+    // only move the rest of the one command line.
+    const PLAIN: [&str; 26] = [
+        "ls", "cat", "head", "tail", "wc", "pwd", "echo", "grep", "egrep", "fgrep", "which",
+        "stat", "du", "cut", "tr", "basename", "dirname", "realpath", "printenv", "whoami",
+        "uname", "true", "false", "cd", "pushd", "popd",
     ];
     if PLAIN.contains(&head) {
         return true;
     }
     match head {
-        "git" => matches!(
-            words.next(),
-            Some(
-                "status"
-                    | "diff"
-                    | "log"
-                    | "show"
-                    | "branch"
-                    | "blame"
-                    | "remote"
-                    | "rev-parse"
-                    | "ls-files"
-            )
-        ),
-        "find" => !part.contains("-delete") && !part.contains("-exec") && !part.contains("-ok"),
+        // `env <command>` runs that command.
+        "env" => args.is_empty(),
+        "date" => !args.iter().any(|a| *a == "-s" || a.starts_with("--set")),
+        "sort" => !has_short_flag(args, 'o') && !args.iter().any(|a| a.starts_with("--output")),
+        // `-o` writes the listing to a file, `-R` writes one per directory.
+        "tree" => !has_short_flag(args, 'o') && !has_short_flag(args, 'R'),
+        // A second operand is the file `uniq` writes to.
+        "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() <= 1,
+        // `--pre` runs a program on every file searched.
+        "rg" => !args
+            .iter()
+            .any(|a| *a == "--pre" || a.starts_with("--pre=")),
+        // `-C` compiles a magic file next to the source.
+        "file" => !args.iter().any(|a| *a == "-C" || *a == "--compile"),
+        "find" => !["-delete", "-exec", "-ok", "-fprint", "-fls"]
+            .iter()
+            .any(|action| part.contains(action)),
+        "git" => is_read_only_git(args),
+        _ => false,
+    }
+}
+
+/// Whether a short-option word such as `-ro` carries `flag`.
+fn has_short_flag(args: &[&str], flag: char) -> bool {
+    args.iter()
+        .any(|a| a.starts_with('-') && !a.starts_with("--") && a[1..].contains(flag))
+}
+
+/// `git` subcommands that only look: `branch` and `remote` count only when
+/// they list, since the same subcommands also delete, rename and rewire.
+fn is_read_only_git(args: &[&str]) -> bool {
+    let Some((&sub, rest)) = args.split_first() else {
+        return false;
+    };
+    match sub {
+        "status" | "blame" | "rev-parse" | "ls-files" => true,
+        "diff" | "log" | "show" => !rest.iter().any(|a| a.starts_with("--output")),
+        "branch" => {
+            const LISTING: [&str; 19] = [
+                "-a",
+                "--all",
+                "-r",
+                "--remotes",
+                "-v",
+                "-vv",
+                "--verbose",
+                "--show-current",
+                "--color",
+                "--no-color",
+                "--column",
+                "--no-column",
+                "-i",
+                "--ignore-case",
+                "--contains",
+                "--no-contains",
+                "--merged",
+                "--no-merged",
+                "--omit-empty",
+            ];
+            const LISTING_WITH_VALUE: [&str; 10] = [
+                "--sort=",
+                "--format=",
+                "--color=",
+                "--column=",
+                "--contains=",
+                "--no-contains=",
+                "--merged=",
+                "--no-merged=",
+                "--points-at=",
+                "--abbrev=",
+            ];
+            // Without `--list`, a bare name creates a branch; with it, a
+            // name is a pattern to list.
+            let list = rest.iter().any(|a| *a == "-l" || *a == "--list");
+            rest.iter().all(|a| {
+                *a == "-l"
+                    || *a == "--list"
+                    || LISTING.contains(a)
+                    || LISTING_WITH_VALUE.iter().any(|p| a.starts_with(p))
+                    || (list && !a.starts_with('-'))
+            })
+        }
+        "remote" => matches!(rest, [] | ["-v" | "--verbose"] | ["show" | "get-url", ..]),
         _ => false,
     }
 }
@@ -1382,6 +1451,13 @@ mod tests {
         assert_eq!(decide("find . -name '*.rs'"), Decision::Allow);
         assert_eq!(decide("find . -delete"), Decision::Ask);
         assert_eq!(decide("git log | head"), Decision::Allow);
+        assert_eq!(
+            decide("env rm -rf ."),
+            Decision::Ask,
+            "env runs its command"
+        );
+        assert_eq!(decide("git branch -D main"), Decision::Ask);
+        assert_eq!(decide("git branch -vv"), Decision::Allow);
     }
 
     #[test]
@@ -1505,6 +1581,70 @@ mod tests {
             assert!(is_read_only_command(look), "{look}");
         }
         for write in ["ls > out", "ls 2>err.txt", "echo x >> log", "cat x 2> err"] {
+            assert!(!is_read_only_command(write), "{write}");
+        }
+    }
+
+    /// The look-only list must not let through a command that writes or runs
+    /// another program through its arguments.
+    #[test]
+    fn arguments_that_write_or_run_disqualify_a_look_only_command() {
+        for look in [
+            "env",
+            "date",
+            "date +%F",
+            "sort -rn counts.txt",
+            "tree -L 2",
+            "uniq -c words.txt",
+            "rg TODO src",
+            "rg --pretty TODO",
+            "file README.md",
+            "find . -name '*.rs' -print",
+            "git status",
+            "git diff --stat",
+            "git log --oneline -5",
+            "git branch",
+            "git branch -a -vv",
+            "git branch --list 'feat/*'",
+            "git branch --merged",
+            "git branch --sort=-committerdate --format=%(refname:short)",
+            "git remote",
+            "git remote -v",
+            "git remote show origin",
+            "git remote get-url origin",
+        ] {
+            assert!(is_read_only_command(look), "{look}");
+        }
+        for write in [
+            "env rm -rf .",
+            "env FOO=1 sh -c 'rm -rf .'",
+            "date -s 12:00",
+            "date --set=12:00",
+            "sort -o out.txt in.txt",
+            "sort -ro out.txt in.txt",
+            "sort --output=out.txt in.txt",
+            "tree -o listing.txt",
+            "tree -R -H .",
+            "uniq in.txt out.txt",
+            "rg --pre ./run.sh TODO",
+            "rg --pre=./run.sh TODO",
+            "file -C -m magic",
+            "find . -fprint list.txt",
+            "find . -fls list.txt",
+            "find . -execdir rm {} +",
+            "git diff --output=patch.diff",
+            "git log --output=log.txt",
+            "git branch feature",
+            "git branch -D feature",
+            "git branch --delete feature",
+            "git branch -m old new",
+            "git branch --set-upstream-to=origin/main",
+            "git remote add fork https://example.com/fork.git",
+            "git remote remove origin",
+            "git remote set-url origin https://example.com/x.git",
+            "git remote prune origin",
+            "git -C /tmp status",
+        ] {
             assert!(!is_read_only_command(write), "{write}");
         }
     }

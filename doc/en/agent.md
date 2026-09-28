@@ -619,9 +619,14 @@ the modes set the configured `allow` rules aside, never the refusals. Your
 answers for the session count in every mode but `all`.
 
 The look-only commands are a short list that only look at things (`ls`,
-`cat`, `rg`, `git status`, `find` without `-delete` or `-exec`, `cd`, and
-similar); a redirection into a file disqualifies it, while pointing a stream
-at another (`2>&1`) or at `/dev/null` does not. Loading a skill never asks.
+`cat`, `rg`, `git status`, `git log`, `find`, `cd`, and similar); a
+redirection into a file disqualifies it, while pointing a stream at another
+(`2>&1`) or at `/dev/null` does not. So do the arguments with which such a
+command writes a file or runs another program: `env` counts only without a
+command to run, `git branch` and `git remote` only while they list,
+`find` only without `-delete`, `-exec`, `-ok`, `-fprint` or `-fls`, and
+`sort -o`, `uniq` with an output file, `tree -o`/`-R`, `rg --pre` and
+`git diff --output` ask. Loading a skill never asks.
 
 ### Plan mode
 
