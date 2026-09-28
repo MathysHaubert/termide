@@ -1,11 +1,12 @@
 use super::*;
-use crossterm::event::KeyEvent;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use termide_agent_core::PermissionPrompter;
+
+use crossterm::event::KeyEvent;
 use termide_agent_core::{
-    AssistantContent, AssistantMessage, Request, StopReason, ToolCall, Usage,
+    AgentEvent, AssistantContent, AssistantMessage, PermissionPrompter, Request, StopReason,
+    StreamEvent, ToolCall, ToolUpdate, Usage,
 };
 use termide_core::PanelConfig;
 
