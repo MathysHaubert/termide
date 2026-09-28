@@ -1,6 +1,6 @@
 //! Entering and leaving the terminal modes termide runs in.
 //!
-//! These live here rather than in `main` because a detached session has to
+//! These live here rather than in `main` because a detached instance has to
 //! re-enter them: a client that attaches later is looking at a terminal that
 //! knows nothing of the alternate screen, mouse reporting or bracketed paste
 //! the hosted process switched on when it started. Startup and reattach must
@@ -128,7 +128,7 @@ pub fn adopt_variation_selector_width(widens: Option<bool>) -> bool {
 ///
 /// Used on exit, from the panic hook, and by the attach client when its
 /// connection ends — the client never enabled these itself, but it is the one
-/// holding the terminal when a session lets go of it.
+/// holding the terminal when an instance lets go of it.
 pub fn leave_terminal_modes() {
     let _ = disable_raw_mode();
     let mut stdout = io::stdout();

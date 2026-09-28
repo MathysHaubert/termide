@@ -271,7 +271,7 @@ impl SettingsModal {
                 Field(7), // bell
                 Spacer,
                 Header(t.settings_header_performance()),
-                Field(6), // session_retention
+                Field(6), // project_retention
                 Field(8), // resource_monitor_interval
                 Spacer,
                 Header(t.settings_header_instance()),

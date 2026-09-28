@@ -8,7 +8,7 @@ use termide_config::IconMode;
 
 /// Global terminal capabilities.
 ///
-/// Behind a lock rather than a `OnceLock` because a detached session can be
+/// Behind a lock rather than a `OnceLock` because a detached instance can be
 /// reattached from a different terminal than the one that started it, and
 /// capabilities detected against the original `$TERM` would then be wrong for
 /// the whole remaining life of the process.
@@ -28,7 +28,7 @@ pub fn init_terminal_caps() -> TerminalCaps {
 
 /// Re-detect capabilities, replacing whatever was stored.
 ///
-/// Called when a client attaches to a detached session: `$TERM` has already
+/// Called when a client attaches to a detached instance: `$TERM` has already
 /// been updated in this process's environment from what the client reported.
 pub fn refresh_terminal_caps() -> TerminalCaps {
     let detected = TerminalCaps::detect();
