@@ -21,7 +21,7 @@ pub fn generate_unsaved_filename() -> String {
     format!("unsaved-{}-{:03}.txt", now.format("%Y%m%d-%H%M%S"), millis)
 }
 
-/// Generate a unique filename for session log
+/// Generate a unique filename for the log of one termide run
 ///
 /// Format: session-YYYYMMDD-HHMMSS-MSC.log
 /// Example: session-20251206-143022-456.log
@@ -31,18 +31,18 @@ pub fn generate_log_filename() -> String {
     format!("session-{}-{:03}.log", now.format("%Y%m%d-%H%M%S"), millis)
 }
 
-/// Cleanup old log files in session directory
+/// Cleanup old log files in a project directory
 ///
 /// Removes log files (session-*.log) that haven't been modified for more than 24 hours.
-/// Uses modification time (not creation time) so active long-running sessions keep their logs.
-pub fn cleanup_old_logs(session_dir: &Path) -> Result<()> {
-    if !session_dir.exists() {
+/// Uses modification time (not creation time) so long-running instances keep their logs.
+pub fn cleanup_old_logs(project_dir: &Path) -> Result<()> {
+    if !project_dir.exists() {
         return Ok(());
     }
 
     let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
 
-    let entries = match fs::read_dir(session_dir) {
+    let entries = match fs::read_dir(project_dir) {
         Ok(entries) => entries,
         Err(_) => return Ok(()),
     };
@@ -52,7 +52,7 @@ pub fn cleanup_old_logs(session_dir: &Path) -> Result<()> {
         if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
             if filename.starts_with("session-") && filename.ends_with(".log") {
                 if let Ok(metadata) = path.metadata() {
-                    // Check last modification time - active sessions keep updating their logs
+                    // Check last modification time - running instances keep updating their logs
                     if let Ok(modified) = metadata.modified() {
                         if modified < cutoff {
                             let _ = fs::remove_file(&path);
@@ -67,8 +67,8 @@ pub fn cleanup_old_logs(session_dir: &Path) -> Result<()> {
 }
 
 /// Save unsaved buffer content to a temporary file
-pub fn save_unsaved_buffer(session_dir: &Path, filename: &str, content: &str) -> Result<()> {
-    let buffer_path = session_dir.join(filename);
+pub fn save_unsaved_buffer(project_dir: &Path, filename: &str, content: &str) -> Result<()> {
+    let buffer_path = project_dir.join(filename);
     fs::write(&buffer_path, content).with_context(|| {
         format!(
             "Failed to write unsaved buffer file: {}",
@@ -79,8 +79,8 @@ pub fn save_unsaved_buffer(session_dir: &Path, filename: &str, content: &str) ->
 }
 
 /// Load unsaved buffer content from a temporary file
-pub fn load_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<String> {
-    let buffer_path = session_dir.join(filename);
+pub fn load_unsaved_buffer(project_dir: &Path, filename: &str) -> Result<String> {
+    let buffer_path = project_dir.join(filename);
     fs::read_to_string(&buffer_path).with_context(|| {
         format!(
             "Failed to read unsaved buffer file: {}",
@@ -90,8 +90,8 @@ pub fn load_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<String>
 }
 
 /// Clean up (delete) an unsaved buffer temporary file
-pub fn cleanup_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> {
-    let buffer_path = session_dir.join(filename);
+pub fn cleanup_unsaved_buffer(project_dir: &Path, filename: &str) -> Result<()> {
+    let buffer_path = project_dir.join(filename);
     if buffer_path.exists() {
         fs::remove_file(&buffer_path).with_context(|| {
             format!(
@@ -103,9 +103,9 @@ pub fn cleanup_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> 
     Ok(())
 }
 
-/// Remove unsaved-*.txt files not referenced in the given session.
-pub fn cleanup_stale_buffers(session_dir: &Path, session: &ProjectLayout) {
-    let active: HashSet<&str> = session
+/// Remove unsaved-*.txt files not referenced in the given layout.
+pub fn cleanup_stale_buffers(project_dir: &Path, layout: &ProjectLayout) {
+    let active: HashSet<&str> = layout
         .panel_groups
         .iter()
         .flat_map(|g| &g.panels)
@@ -118,7 +118,7 @@ pub fn cleanup_stale_buffers(session_dir: &Path, session: &ProjectLayout) {
         })
         .collect();
 
-    let Ok(entries) = fs::read_dir(session_dir) else {
+    let Ok(entries) = fs::read_dir(project_dir) else {
         return;
     };
     for entry in entries.flatten() {
@@ -130,23 +130,23 @@ pub fn cleanup_stale_buffers(session_dir: &Path, session: &ProjectLayout) {
     }
 }
 
-/// Clean up old sessions (excluding the current project's session)
+/// Clean up old project layouts (excluding the current project's)
 ///
-/// Removes sessions older than `retention_days` from the sessions directory
+/// Removes layouts older than `retention_days` from the projects directory
 pub fn cleanup_old_projects(current_project: &Path, retention_days: u32) -> Result<()> {
     use std::time::{Duration, SystemTime};
 
-    // 0 disables cleanup (keep sessions forever). Guard against the footgun
-    // where a 0 cutoff of "now" would delete every non-current session.
+    // 0 disables cleanup (keep layouts forever). Guard against the footgun
+    // where a 0 cutoff of "now" would delete every non-current layout.
     if retention_days == 0 {
         return Ok(());
     }
 
     let data_dir = get_data_dir()?;
-    let sessions_dir = data_dir.join(crate::PROJECTS_DIR);
+    let projects_dir = data_dir.join(crate::PROJECTS_DIR);
 
-    if !sessions_dir.exists() {
-        return Ok(()); // No sessions to clean up
+    if !projects_dir.exists() {
+        return Ok(()); // No layouts to clean up
     }
 
     // Canonicalize current project path for comparison
@@ -159,13 +159,13 @@ pub fn cleanup_old_projects(current_project: &Path, retention_days: u32) -> Resu
         .checked_sub(retention_duration)
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
-    // Walk through sessions directory recursively
-    walk_and_cleanup(&sessions_dir, &current_canonical, cutoff_time)?;
+    // Walk through the projects directory recursively
+    walk_and_cleanup(&projects_dir, &current_canonical, cutoff_time)?;
 
     Ok(())
 }
 
-/// Recursively walk through directories and clean up old sessions
+/// Recursively walk through directories and clean up old project layouts
 fn walk_and_cleanup(
     dir: &Path,
     current_project: &Path,
@@ -189,17 +189,17 @@ fn walk_and_cleanup(
             continue;
         }
 
-        // Project paths nest, so their session directories nest too (e.g.
+        // Project paths nest, so their project directories nest too (e.g.
         // `.../Data/Downloads` and `.../Data/Downloads/proj`). Always recurse
-        // first so every session is evaluated on its own age — never shadowed
-        // by, or deleted together with, an ancestor session.
+        // first so every layout is evaluated on its own age — never shadowed
+        // by, or deleted together with, an ancestor project's layout.
         let _ = walk_and_cleanup(&path, current_project, cutoff_time);
 
-        let session_file = path.join("session.toml");
-        if !session_file.exists() || is_same_session(&path, current_project) {
+        let layout_file = path.join("session.toml");
+        if !layout_file.exists() || is_same_project(&path, current_project) {
             continue;
         }
-        let stale = session_file
+        let stale = layout_file
             .metadata()
             .and_then(|m| m.modified())
             .map(|modified| modified < cutoff_time)
@@ -208,13 +208,17 @@ fn walk_and_cleanup(
             continue;
         }
 
-        if contains_nested_session(&path) {
-            // A parent project session that also contains child project
-            // sessions: drop only this session's own files, keep the nested
+        if contains_nested_layout(&path) {
+            // A parent project that also contains child projects with saved
+            // layouts: drop only this project's own files, keep the nested
             // ones intact.
-            remove_session_own_files(&path);
+            remove_own_layout_files(&path);
         } else if let Err(e) = fs::remove_dir_all(&path) {
-            log::warn!("Failed to remove old session {}: {}", path.display(), e);
+            log::warn!(
+                "Failed to remove old project layout {}: {}",
+                path.display(),
+                e
+            );
         }
     }
 
@@ -222,24 +226,24 @@ fn walk_and_cleanup(
 }
 
 /// Whether any subdirectory of `dir` (at any depth) holds a `session.toml`,
-/// i.e. `dir` is an ancestor of one or more nested project sessions.
-fn contains_nested_session(dir: &Path) -> bool {
+/// i.e. `dir` is an ancestor of one or more nested projects.
+fn contains_nested_layout(dir: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() && (path.join("session.toml").exists() || contains_nested_session(&path)) {
+        if path.is_dir() && (path.join("session.toml").exists() || contains_nested_layout(&path)) {
             return true;
         }
     }
     false
 }
 
-/// Remove only a session's own files (`session.toml` and its unsaved buffer
-/// files), leaving any nested project session directories untouched. Prunes the
+/// Remove only a project's own files (`session.toml` and its unsaved buffer
+/// files), leaving any nested project directories untouched. Prunes the
 /// directory afterwards only if it ended up empty.
-fn remove_session_own_files(dir: &Path) {
+fn remove_own_layout_files(dir: &Path) {
     let _ = fs::remove_file(dir.join("session.toml"));
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -254,21 +258,21 @@ fn remove_session_own_files(dir: &Path) {
             }
         }
     }
-    // Succeeds only when nothing (no nested sessions, no other files) remains.
+    // Succeeds only when nothing (no nested projects, no other files) remains.
     let _ = fs::remove_dir(dir);
 }
 
-/// Check if session directory corresponds to the given project path
-fn is_same_session(session_dir: &Path, project_path: &Path) -> bool {
+/// Check if a project directory corresponds to the given project path
+fn is_same_project(project_dir: &Path, project_path: &Path) -> bool {
     let data_dir = match get_data_dir() {
         Ok(dir) => dir,
         Err(_) => return false,
     };
 
-    let sessions_base = data_dir.join(crate::PROJECTS_DIR);
+    let projects_base = data_dir.join(crate::PROJECTS_DIR);
 
-    // Extract relative path from session directory
-    let rel_path = match session_dir.strip_prefix(&sessions_base) {
+    // Extract relative path from the project directory
+    let rel_path = match project_dir.strip_prefix(&projects_base) {
         Ok(p) => p,
         Err(_) => return false,
     };
@@ -293,9 +297,9 @@ fn is_buffer_file_empty(path: &Path) -> bool {
     }
 }
 
-/// Check if a session directory contains any non-empty unsaved buffer files
-fn has_non_empty_unsaved_buffers(session_dir: &Path) -> bool {
-    let entries = match fs::read_dir(session_dir) {
+/// Check if a project directory contains any non-empty unsaved buffer files
+fn has_non_empty_unsaved_buffers(project_dir: &Path) -> bool {
+    let entries = match fs::read_dir(project_dir) {
         Ok(e) => e,
         Err(_) => return false,
     };
@@ -318,19 +322,19 @@ fn has_non_empty_unsaved_buffers(session_dir: &Path) -> bool {
 /// Empty orphaned files are deleted. Non-empty ones are returned
 /// for the caller to add as editor panels (they contain user data
 /// that may have been lost due to a crash).
-pub fn restore_orphaned_buffers(session_dir: &Path) -> Result<Vec<String>> {
-    if !session_dir.exists() {
+pub fn restore_orphaned_buffers(project_dir: &Path) -> Result<Vec<String>> {
+    if !project_dir.exists() {
         return Ok(Vec::new());
     }
 
-    // Load session to get list of active buffer files
-    let session_file = session_dir.join("session.toml");
-    let active_buffers: HashSet<String> = if session_file.exists() {
-        match fs::read_to_string(&session_file) {
+    // Load the layout to get the list of active buffer files
+    let layout_file = project_dir.join("session.toml");
+    let active_buffers: HashSet<String> = if layout_file.exists() {
+        match fs::read_to_string(&layout_file) {
             Ok(contents) => match toml::from_str::<ProjectLayout>(&contents) {
-                Ok(session) => {
-                    // Collect all unsaved_buffer_file references from session
-                    session
+                Ok(layout) => {
+                    // Collect all unsaved_buffer_file references from the layout
+                    layout
                         .panel_groups
                         .iter()
                         .flat_map(|group| &group.panels)
@@ -348,11 +352,11 @@ pub fn restore_orphaned_buffers(session_dir: &Path) -> Result<Vec<String>> {
             Err(_) => HashSet::new(), // Failed to read, proceed with cleanup
         }
     } else {
-        HashSet::new() // No session file, clean all temporary files
+        HashSet::new() // No layout file, clean all temporary files
     };
 
-    // Find all unsaved-*.txt files in session directory
-    let entries = match fs::read_dir(session_dir) {
+    // Find all unsaved-*.txt files in the project directory
+    let entries = match fs::read_dir(project_dir) {
         Ok(e) => e,
         Err(_) => return Ok(Vec::new()),
     };
@@ -380,10 +384,10 @@ pub fn restore_orphaned_buffers(session_dir: &Path) -> Result<Vec<String>> {
     Ok(restored)
 }
 
-/// Delete a temporary unsaved buffer file from the session directory
+/// Delete a temporary unsaved buffer file from the project directory
 /// This should be called when an editor with an unsaved buffer is closed without saving
-pub fn delete_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> {
-    let temp_file = session_dir.join(filename);
+pub fn delete_unsaved_buffer(project_dir: &Path, filename: &str) -> Result<()> {
+    let temp_file = project_dir.join(filename);
 
     // Only delete if the file exists
     if temp_file.exists() {
@@ -394,40 +398,40 @@ pub fn delete_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> {
     Ok(())
 }
 
-/// Information about a discovered session
+/// Information about a project with a saved layout
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
-    /// Original project path (reconstructed from session directory)
+    /// Original project path (reconstructed from the project directory)
     pub project_path: PathBuf,
     /// Path to session.toml file
-    pub session_path: PathBuf,
+    pub layout_path: PathBuf,
     /// Last modification time of session.toml
     pub modified: std::time::SystemTime,
 }
 
-/// List all available sessions, sorted by modification time (newest first)
+/// List all projects with a saved layout, sorted by modification time (newest first)
 pub fn list_all_projects() -> Result<Vec<ProjectInfo>> {
     let data_dir = get_data_dir()?;
-    let sessions_dir = data_dir.join(crate::PROJECTS_DIR);
+    let projects_dir = data_dir.join(crate::PROJECTS_DIR);
 
-    if !sessions_dir.exists() {
+    if !projects_dir.exists() {
         return Ok(Vec::new());
     }
 
-    let mut sessions = Vec::new();
-    collect_sessions(&sessions_dir, &sessions_dir, &mut sessions)?;
+    let mut projects = Vec::new();
+    collect_projects(&projects_dir, &projects_dir, &mut projects)?;
 
     // Sort by modification time (newest first)
-    sessions.sort_by_key(|s| std::cmp::Reverse(s.modified));
+    projects.sort_by_key(|p| std::cmp::Reverse(p.modified));
 
-    Ok(sessions)
+    Ok(projects)
 }
 
-/// Recursively collect sessions from directory tree
-fn collect_sessions(
+/// Recursively collect projects from the directory tree
+fn collect_projects(
     dir: &Path,
-    sessions_base: &Path,
-    sessions: &mut Vec<ProjectInfo>,
+    projects_base: &Path,
+    projects: &mut Vec<ProjectInfo>,
 ) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -442,29 +446,29 @@ fn collect_sessions(
         let path = entry.path();
 
         if path.is_dir() {
-            let session_file = path.join("session.toml");
+            let layout_file = path.join("session.toml");
 
-            if session_file.exists() {
-                // Extract project path from session directory structure
-                if let Ok(rel_path) = path.strip_prefix(sessions_base) {
+            if layout_file.exists() {
+                // Extract project path from the project directory structure
+                if let Ok(rel_path) = path.strip_prefix(projects_base) {
                     let project_path = PathBuf::from("/").join(rel_path);
 
                     // Get modification time
-                    let modified = session_file
+                    let modified = layout_file
                         .metadata()
                         .and_then(|m| m.modified())
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                    sessions.push(ProjectInfo {
+                    projects.push(ProjectInfo {
                         project_path,
-                        session_path: session_file,
+                        layout_path: layout_file,
                         modified,
                     });
                 }
             }
 
-            // Always recurse into subdirectories to find nested sessions
-            let _ = collect_sessions(&path, sessions_base, sessions);
+            // Always recurse into subdirectories to find nested projects
+            let _ = collect_projects(&path, projects_base, projects);
         }
     }
 
@@ -485,18 +489,18 @@ mod tests {
     use super::*;
     use crate::PanelGroupState;
 
-    /// Regression: a stale *parent* project session must not take fresh
-    /// *nested* project sessions down with it (previously `remove_dir_all` on
-    /// the parent wiped nested sessions, and nested sessions were never
+    /// Regression: a stale *parent* project layout must not take fresh
+    /// *nested* project layouts down with it (previously `remove_dir_all` on
+    /// the parent wiped nested layouts, and nested layouts were never
     /// evaluated on their own age).
     #[test]
-    fn cleanup_keeps_nested_fresh_session_when_parent_is_stale() {
+    fn cleanup_keeps_nested_fresh_layout_when_parent_is_stale() {
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::time::{Duration, SystemTime};
 
         static N: AtomicU32 = AtomicU32::new(0);
         let base = std::env::temp_dir().join(format!(
-            "termide-session-nest-{}-{}",
+            "termide-layout-nest-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
@@ -520,14 +524,14 @@ mod tests {
             .set_modified(old)
             .unwrap();
 
-        // A current project that matches neither session.
+        // A current project that matches neither layout.
         let current = base.join("nonexistent");
         walk_and_cleanup(&base, &current, cutoff).unwrap();
 
-        assert!(child_toml.exists(), "fresh nested session must survive");
+        assert!(child_toml.exists(), "fresh nested layout must survive");
         assert!(
             !parent_toml.exists(),
-            "stale parent session should be cleaned"
+            "stale parent layout should be cleaned"
         );
 
         let _ = fs::remove_dir_all(&base);
@@ -539,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_serialization() {
-        let session = ProjectLayout {
+        let layout = ProjectLayout {
             panel_groups: vec![
                 PanelGroupState {
                     panels: vec![
@@ -571,7 +575,7 @@ mod tests {
             focused_group: 0,
         };
 
-        let toml_str = toml::to_string_pretty(&session).unwrap();
+        let toml_str = toml::to_string_pretty(&layout).unwrap();
         let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(restored.focused_group, 0);
@@ -598,8 +602,8 @@ expanded_index = 0
 type = "file_manager"
 path = "/old/style/path"
 "#;
-        let session: ProjectLayout = toml::from_str(toml_str).unwrap();
-        match &session.panel_groups[0].panels[0] {
+        let layout: ProjectLayout = toml::from_str(toml_str).unwrap();
+        match &layout.panel_groups[0].panels[0] {
             PanelState::FileManager { path_or_url } => {
                 assert_eq!(path_or_url, "/old/style/path");
             }
@@ -613,7 +617,7 @@ path = "/old/style/path"
 
     #[test]
     fn test_sftp_url_round_trip() {
-        let session = ProjectLayout {
+        let layout = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![PanelState::FileManager {
                     path_or_url: "sftp://user@host:22/remote/path".to_string(),
@@ -627,7 +631,7 @@ path = "/old/style/path"
             focused_group: 0,
         };
 
-        let toml_str = toml::to_string_pretty(&session).unwrap();
+        let toml_str = toml::to_string_pretty(&layout).unwrap();
         let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
 
         match &restored.panel_groups[0].panels[0] {
@@ -644,7 +648,7 @@ path = "/old/style/path"
 
     #[test]
     fn test_markdown_panel_round_trip() {
-        let session = ProjectLayout {
+        let layout = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![PanelState::Markdown {
                     path: PathBuf::from("/home/user/project/README.md"),
@@ -658,7 +662,7 @@ path = "/old/style/path"
             focused_group: 0,
         };
 
-        let toml_str = toml::to_string_pretty(&session).unwrap();
+        let toml_str = toml::to_string_pretty(&layout).unwrap();
         // Serialized with the "markdown" type tag.
         assert!(toml_str.contains("type = \"markdown\""), "{toml_str}");
 
@@ -697,24 +701,24 @@ path = "/old/style/path"
     // =========================================================================
 
     #[test]
-    fn test_session_dir_mapping() {
+    fn test_project_dir_mapping() {
         let project = Path::new("/home/user/project");
-        let session_dir = ProjectLayout::get_project_dir(project).unwrap();
-        // Should contain "sessions/home/user/project"
-        let path_str = session_dir.to_string_lossy();
+        let project_dir = ProjectLayout::get_project_dir(project).unwrap();
+        // Should contain "projects/home/user/project"
+        let path_str = project_dir.to_string_lossy();
         assert!(path_str.contains(crate::PROJECTS_DIR));
         assert!(path_str.ends_with("home/user/project"));
     }
 
     #[test]
-    fn test_session_path_has_toml_extension() {
+    fn test_layout_path_has_toml_extension() {
         let project = Path::new("/home/user/project");
-        let session_path = ProjectLayout::get_project_path(project).unwrap();
-        assert!(session_path.to_string_lossy().ends_with("session.toml"));
+        let layout_path = ProjectLayout::get_project_path(project).unwrap();
+        assert!(layout_path.to_string_lossy().ends_with("session.toml"));
     }
 
     // =========================================================================
-    // Empty/corrupt session handling
+    // Empty/corrupt layout handling
     // =========================================================================
 
     #[test]
@@ -738,8 +742,8 @@ focused_group = 0
 expanded_index = 0
 panels = []
 "#;
-        let session: ProjectLayout = toml::from_str(toml_str).unwrap();
-        assert_eq!(session.panel_groups[0].panels.len(), 0);
+        let layout: ProjectLayout = toml::from_str(toml_str).unwrap();
+        assert_eq!(layout.panel_groups[0].panels.len(), 0);
     }
 
     // =========================================================================
@@ -748,7 +752,7 @@ panels = []
 
     #[test]
     fn test_all_panel_types_round_trip() {
-        let session = ProjectLayout {
+        let layout = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![
                     PanelState::FileManager {
@@ -790,7 +794,7 @@ panels = []
             focused_group: 0,
         };
 
-        let toml_str = toml::to_string_pretty(&session).unwrap();
+        let toml_str = toml::to_string_pretty(&layout).unwrap();
         let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.panel_groups[0].panels.len(), 11);
     }

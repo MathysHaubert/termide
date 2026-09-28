@@ -414,7 +414,7 @@ impl Panel for GitDiffPanel {
         vec![]
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
         Some(PanelState::GitDiff {
             repo_path: self.repo_path.clone(),
             commit_hash: self.commit_hash.clone(),

@@ -264,7 +264,7 @@ impl DbPanel {
         }
     }
 
-    /// The connection URL (used for session persistence / reconnect).
+    /// The connection URL (used for layout persistence / reconnect).
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -998,7 +998,7 @@ impl Panel for DbPanel {
         WidthPreference::PreferWide
     }
 
-    fn to_state(&self, _session_dir: &std::path::Path) -> Option<termide_core::PanelState> {
+    fn to_state(&self, _project_dir: &std::path::Path) -> Option<termide_core::PanelState> {
         Some(termide_core::PanelState::Database {
             url: self.url.clone(),
             label: self.label.clone(),

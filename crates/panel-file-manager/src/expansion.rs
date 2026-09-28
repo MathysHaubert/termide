@@ -443,7 +443,7 @@ impl FileManager {
     }
 
     /// After building top-level tree, kick off async listings for every
-    /// directory that was expanded in the previous session. Same
+    /// directory that was expanded in the previous run. Same
     /// pipeline as a fresh expand — placeholders inserted here are
     /// replaced by real children in `tick()` once each listing
     /// resolves, then `finish_expand` recursively schedules listings

@@ -17,7 +17,7 @@ pub struct FileState {
     pub size: u64,
     /// Cached title (filename).
     pub title: String,
-    /// Temporary file name for unsaved buffer (for session restoration).
+    /// Temporary file name for unsaved buffer (for layout restoration).
     pub unsaved_buffer_file: Option<String>,
     /// Initial directory for new buffers (used in SaveAs dialog).
     pub initial_directory: Option<PathBuf>,

@@ -86,7 +86,7 @@ pub struct FileManager {
     visible_indices: Vec<usize>,
     /// Tree-drawing prefixes (├─, └─, │) for each visible node.
     tree_prefixes: Vec<String>,
-    /// Set of expanded directory paths (persists across reloads within session).
+    /// Set of expanded directory paths (persists across reloads within a run).
     expanded_dirs: HashSet<PathBuf>,
     /// Cursor position — index into `visible_indices`.
     selected: usize,
@@ -886,14 +886,14 @@ impl Panel for FileManager {
         self.on_tick()
     }
 
-    fn to_state(&self, _session_dir: &std::path::Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &std::path::Path) -> Option<PanelState> {
         // Save file manager with current directory path or VFS URL
         let path_or_url = self.display_path(); // Returns VFS URL for remote, local path for local
 
         // Defensive check: ensure remote paths include protocol
         if self.is_remote() && !path_or_url.contains("://") {
             log::warn!(
-                "Session save WARNING: Remote path missing protocol. VfsPath details: protocol={:?}, host={:?}, path={:?}",
+                "Layout save WARNING: Remote path missing protocol. VfsPath details: protocol={:?}, host={:?}, path={:?}",
                 self.vfs.current_path().protocol,
                 self.vfs.current_path().host,
                 self.vfs.current_path().path

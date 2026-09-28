@@ -64,7 +64,7 @@ impl PanelGroup {
     }
 
     /// Construct a group from already-decomposed parts. Used by the
-    /// session loader to restore heights and fullscreen-cache state.
+    /// layout loader to restore heights and fullscreen-cache state.
     ///
     /// The cache is adopted only if its length matches the panel count;
     /// otherwise it is dropped (mismatched caches are stale).
@@ -294,7 +294,7 @@ impl PanelGroup {
     }
 
     /// Snapshot of the heights kept aside while the fullscreen preset is
-    /// active (`None` when not in fullscreen). Used by session save.
+    /// active (`None` when not in fullscreen). Used by layout save.
     pub fn fullscreen_cache(&self) -> Option<&[u16]> {
         self.fullscreen_cache.as_deref()
     }

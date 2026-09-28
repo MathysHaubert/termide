@@ -172,7 +172,7 @@ fn build_git_status_hotkey_table(config: &Config) -> HotkeyTable {
 }
 
 impl GitStatusPanel {
-    /// Create a new Git Status panel from a list of paths (from panels/session)
+    /// Create a new Git Status panel from a list of paths (from panels/layout)
     pub fn new(paths: &[PathBuf]) -> Self {
         Self::create(RepoManager::new(paths), paths.to_vec())
     }
@@ -542,7 +542,7 @@ impl Panel for GitStatusPanel {
         vec![]
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
         self.repo_manager
             .current()
             .map(|repo| PanelState::GitStatus {

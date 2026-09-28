@@ -413,8 +413,8 @@ impl Panel for OperationsPanel {
         CommandResult::None
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
-        // Operations panel is transient, don't persist to session
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
+        // Operations panel is transient, don't persist to the layout
         None
     }
 

@@ -89,7 +89,7 @@ pub struct MarkdownPanel {
     last_config_ptr: usize,
     /// Origin URL when the content was fetched (not read from a file). `None`
     /// for file-backed viewers. Used for the title, base-URL link resolution,
-    /// and navigation; URL-backed viewers are not persisted across sessions.
+    /// and navigation; URL-backed viewers are not persisted across runs.
     source_url: Option<String>,
     /// Browsing history (URLs) for an in-panel navigated viewer.
     history: Vec<String>,
@@ -592,7 +592,7 @@ impl Panel for MarkdownPanel {
         Ok(())
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
         // Only file-backed viewers persist; fetched URLs are not restored.
         if self.source_url.is_some() {
             return None;
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn to_session_round_trips_path() {
+    fn to_state_round_trips_path() {
         let p = panel_from("x");
         match p.to_state(Path::new("/tmp")) {
             Some(PanelState::Markdown { path }) => {

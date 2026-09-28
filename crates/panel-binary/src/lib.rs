@@ -595,7 +595,7 @@ impl Panel for BinaryPanel {
         }
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
         Some(PanelState::Binary {
             path: self.file_path.clone(),
         })

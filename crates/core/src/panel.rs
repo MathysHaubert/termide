@@ -19,7 +19,7 @@ use termide_theme::Theme;
 
 use crate::{CommandResult, KeyChord, PanelCommand, PanelEvent};
 
-// Re-export PanelState from termide-session for unified type
+// Re-export PanelState from termide-project for unified type
 pub use termide_project::PanelState;
 
 /// Configuration settings relevant to panels.
@@ -191,7 +191,7 @@ pub enum WidthPreference {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeightMode {
     /// Share the column with the other panels: the height comes from the
-    /// user's resizes (or an equal split) and is kept in the session.
+    /// user's resizes (or an equal split) and is kept in the project layout.
     Free,
     /// Take exactly this many rows, borders included, and leave the rest of
     /// the column to the free panels. The layout asks again on every frame,
@@ -416,12 +416,12 @@ pub trait Panel: Any {
         Ok(())
     }
 
-    /// Serialize panel state for session persistence.
+    /// Serialize panel state for the project layout.
     ///
-    /// Returns None if panel should not be saved in session.
-    /// The session_dir is provided for saving unsaved buffers.
-    fn to_state(&self, session_dir: &Path) -> Option<PanelState> {
-        let _ = session_dir;
+    /// Returns None if panel should not be saved in the layout.
+    /// The project_dir is provided for saving unsaved buffers.
+    fn to_state(&self, project_dir: &Path) -> Option<PanelState> {
+        let _ = project_dir;
         None
     }
 

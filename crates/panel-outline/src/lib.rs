@@ -592,7 +592,7 @@ impl Panel for OutlinePanel {
         vec![]
     }
 
-    fn to_state(&self, _session_dir: &std::path::Path) -> Option<termide_core::PanelState> {
+    fn to_state(&self, _project_dir: &std::path::Path) -> Option<termide_core::PanelState> {
         Some(termide_core::PanelState::Outline)
     }
 

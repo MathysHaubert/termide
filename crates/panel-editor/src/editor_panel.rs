@@ -809,7 +809,7 @@ impl Panel for Editor {
                 .unwrap_or(false)
     }
 
-    fn to_state(&self, session_dir: &std::path::Path) -> Option<PanelState> {
+    fn to_state(&self, project_dir: &std::path::Path) -> Option<PanelState> {
         if let Some(path) = self.file_path() {
             // Named file - save path
             Some(PanelState::Editor {
@@ -817,7 +817,7 @@ impl Panel for Editor {
                 unsaved_buffer_file: None,
             })
         } else if self.buffer_is_modified() {
-            // Unnamed buffer with unsaved content - save to session dir
+            // Unnamed buffer with unsaved content - save to the project dir
             // ensure_unsaved_buffer_file() must be called before to_state()
             let filename = self.unsaved_buffer_file()?.to_string();
 
@@ -826,8 +826,8 @@ impl Panel for Editor {
                 return None; // Don't save empty buffers
             }
 
-            // Save content to session directory
-            if let Err(e) = termide_project::save_unsaved_buffer(session_dir, &filename, &content) {
+            // Save content to the project directory
+            if let Err(e) = termide_project::save_unsaved_buffer(project_dir, &filename, &content) {
                 log::warn!("Failed to save unsaved buffer: {}", e);
                 return None;
             }

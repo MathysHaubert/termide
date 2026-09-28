@@ -1451,9 +1451,9 @@ impl Panel for Terminal {
         self.find_bar.is_some() || (self.is_alive() && self.has_running_processes())
     }
 
-    fn to_state(&self, _session_dir: &std::path::Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &std::path::Path) -> Option<PanelState> {
         // Save where the shell was last working, not where the panel was
-        // created: reopening the session should put the user back in the
+        // created: reopening the project should put the user back in the
         // directory they left off in.
         Some(PanelState::Terminal {
             working_dir: self.shell_cwd(),
@@ -1564,7 +1564,7 @@ mod title_tests {
 
     /// The title must name the directory the shell actually runs in — it used
     /// to read the *application's* cwd, so every terminal was labelled with the
-    /// session root no matter where it was opened.
+    /// project root no matter where it was opened.
     #[test]
     fn title_shows_the_shell_start_directory() {
         let dir = std::env::temp_dir().join(format!("termide-title-{}", std::process::id()));
@@ -1585,12 +1585,12 @@ mod title_tests {
         );
     }
 
-    /// Reopening a session must land the shell where the user left off, so the
+    /// Reopening a project must land the shell where the user left off, so the
     /// saved directory is the shell's live one, not the panel's starting one.
     #[cfg(target_os = "linux")]
     #[test]
-    fn session_saves_the_directory_the_shell_ended_in() {
-        let dir = std::env::temp_dir().join(format!("termide-session-cd-{}", std::process::id()));
+    fn layout_saves_the_directory_the_shell_ended_in() {
+        let dir = std::env::temp_dir().join(format!("termide-layout-cd-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("subdir")).unwrap();
         let dir = std::fs::canonicalize(&dir).unwrap();
         let Ok(mut term) = Terminal::new_with_cwd(24, 80, Some(dir.clone())) else {
@@ -1615,7 +1615,7 @@ mod title_tests {
         assert_eq!(
             saved.as_ref(),
             Some(&expected),
-            "session kept the directory the panel was opened in"
+            "layout kept the directory the panel was opened in"
         );
     }
 

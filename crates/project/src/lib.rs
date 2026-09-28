@@ -20,8 +20,8 @@ pub struct ProjectLayout {
 }
 
 /// Legacy layout-mode tag retained for backward compatibility with
-/// sessions saved before the unified-split refactor. Newer code never
-/// writes this field; older sessions deserialize the tag and the
+/// layouts saved before the unified-split refactor. Newer code never
+/// writes this field; older layouts deserialize the tag and the
 /// loader treats `Accordion` as a request to apply the
 /// fullscreen-current-panel preset on top of `expanded_index`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,8 +42,8 @@ pub struct PanelGroupState {
     pub expanded_index: usize,
     /// Column width in characters (None = auto-distributed).
     pub width: Option<u16>,
-    /// Legacy mode tag — still parsed from old sessions to drive
-    /// fullscreen-preset migration. New sessions never write it.
+    /// Legacy mode tag — still parsed from old layouts to drive
+    /// fullscreen-preset migration. New layouts never write it.
     #[serde(default, skip_serializing)]
     pub mode: GroupLayoutMode,
     /// Cached panel heights (in lines). `None` means "no cache yet —
@@ -262,23 +262,23 @@ fn merge_move(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Remove the files of the project stored in `session_dir`, then the
+/// Remove the files of the project stored in `project_dir`, then the
 /// directories left empty up to `projects_dir`.
 ///
 /// Storage directories nest like the project paths they mirror, so the
-/// subdirectories of `session_dir` hold the state of projects inside this
+/// subdirectories of `project_dir` hold the state of projects inside this
 /// one and are kept.
-fn delete_project_files(session_dir: &Path, projects_dir: &Path) -> std::io::Result<()> {
-    if !session_dir.is_dir() {
+fn delete_project_files(project_dir: &Path, projects_dir: &Path) -> std::io::Result<()> {
+    if !project_dir.is_dir() {
         return Ok(());
     }
-    for entry in fs::read_dir(session_dir)? {
+    for entry in fs::read_dir(project_dir)? {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             fs::remove_file(entry.path())?;
         }
     }
-    let mut dir = session_dir;
+    let mut dir = project_dir;
     while dir != projects_dir && dir.starts_with(projects_dir) && fs::remove_dir(dir).is_ok() {
         match dir.parent() {
             Some(parent) => dir = parent,
@@ -300,46 +300,46 @@ impl ProjectLayout {
         Ok(data_dir.join(PROJECTS_DIR).join(project_key(project_root)))
     }
 
-    /// Get the path to the session.toml file for a specific project
+    /// Get the path to the layout file (`session.toml`) of a specific project
     pub fn get_project_path(project_root: &Path) -> Result<PathBuf> {
         Ok(Self::get_project_dir(project_root)?.join("session.toml"))
     }
 
     /// Delete the stored state of a specific project.
     pub fn delete_layout(project_root: &Path) -> Result<()> {
-        let session_dir = Self::get_project_dir(project_root)?;
+        let project_dir = Self::get_project_dir(project_root)?;
         let projects_dir = get_data_dir()?.join(PROJECTS_DIR);
-        delete_project_files(&session_dir, &projects_dir)
-            .with_context(|| format!("Failed to delete session: {}", session_dir.display()))
+        delete_project_files(&project_dir, &projects_dir)
+            .with_context(|| format!("Failed to delete project layout: {}", project_dir.display()))
     }
 
-    /// Load session from file for a specific project
+    /// Load the saved layout of a specific project
     pub fn load(project_root: &Path) -> Result<Self> {
         let path = Self::get_project_path(project_root)?;
         let contents = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read session file: {}", path.display()))?;
-        let session: ProjectLayout = toml::from_str(&contents)
-            .with_context(|| format!("Failed to parse session file: {}", path.display()))?;
-        Ok(session)
+            .with_context(|| format!("Failed to read layout file: {}", path.display()))?;
+        let layout: ProjectLayout = toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse layout file: {}", path.display()))?;
+        Ok(layout)
     }
 
-    /// Save session to file for a specific project
+    /// Save this layout for a specific project
     pub fn save(&self, project_root: &Path) -> Result<()> {
-        let session_dir = Self::get_project_dir(project_root)?;
+        let project_dir = Self::get_project_dir(project_root)?;
 
-        // Ensure session directory exists
-        fs::create_dir_all(&session_dir).with_context(|| {
+        // Ensure the project directory exists
+        fs::create_dir_all(&project_dir).with_context(|| {
             format!(
-                "Failed to create session directory: {}",
-                session_dir.display()
+                "Failed to create project directory: {}",
+                project_dir.display()
             )
         })?;
 
-        let path = session_dir.join("session.toml");
-        let contents = toml::to_string_pretty(self).context("Failed to serialize session")?;
+        let path = project_dir.join("session.toml");
+        let contents = toml::to_string_pretty(self).context("Failed to serialize layout")?;
 
         fs::write(&path, contents)
-            .with_context(|| format!("Failed to write session file: {}", path.display()))?;
+            .with_context(|| format!("Failed to write layout file: {}", path.display()))?;
 
         Ok(())
     }

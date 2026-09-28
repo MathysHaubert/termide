@@ -448,7 +448,7 @@ impl Panel for MermaidPanel {
         Ok(())
     }
 
-    fn to_state(&self, _session_dir: &Path) -> Option<PanelState> {
+    fn to_state(&self, _project_dir: &Path) -> Option<PanelState> {
         Some(PanelState::Mermaid {
             path: self.file_path.clone(),
         })
@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn to_session_round_trips() {
+    fn to_state_round_trips() {
         let p = panel_from("sequenceDiagram");
         match p.to_state(Path::new("/tmp")) {
             Some(PanelState::Mermaid { path }) => assert_eq!(path, PathBuf::from("/x/d.mmd")),
