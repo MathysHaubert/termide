@@ -62,8 +62,10 @@ the recorder; the disk modal is never opened, since it names the VM's disk.
 
 Each `tapes/*.tape` is one shot; files starting with `_` are shared steps:
 `_settings.tape` (geometry, font), `_start.tape` (hidden setup, termide in
-the project) and `_widen.tape` (move the panel just opened into a wide
-column). VHS cannot send `Alt` with a digit or a special key, nor function
+the project), `_widen.tape` (move the panel just opened into a wide
+column) and `_next-scene.tape` (quit and restart termide on a fresh
+project out of frame). `tour.tape` chains the single-shot tapes into the
+README's hero GIF; copy `out/tour.gif` to `assets/screenshots/termide.gif`. VHS cannot send `Alt` with a digit or a special key, nor function
 keys, so `env/config.toml` binds the layout actions the tapes need to free
 `Alt+<letter>` chords; `Alt+m` also trips VHS's parser, so the menu is
 opened with `Alt+M`. Viewers are opened from the file manager (`v` views,

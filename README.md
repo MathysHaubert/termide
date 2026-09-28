@@ -10,7 +10,7 @@ An all-in-one terminal workspace for your workstation and your servers: code edi
 
 **[Website](https://termide.github.io)** | **[Documentation](doc/en/README.md)** | **[Releases](https://github.com/termide/termide/releases)** | **[Screenshots](https://termide.github.io/#screenshots)**
 
-<p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — editor, file manager, terminal and viewers in one TUI" width="900"></p>
+<p align="center"><img src="assets/screenshots/termide.gif" alt="TermIDE — editor, file manager, terminal and viewers in one TUI" width="900"></p>
 
 ## Why TermIDE?
 

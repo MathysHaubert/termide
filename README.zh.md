@@ -10,7 +10,7 @@
 
 **[网站](https://termide.github.io)** | **[文档](doc/zh/README.md)** | **[版本发布](https://github.com/termide/termide/releases)** | **[截图](https://termide.github.io/zh/#screenshots)**
 
-<p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — 编辑器、文件管理器、终端和查看器合为一个 TUI" width="900"></p>
+<p align="center"><img src="assets/screenshots/termide.gif" alt="TermIDE — 编辑器、文件管理器、终端和查看器合为一个 TUI" width="900"></p>
 
 ## 为什么选择 TermIDE？
 

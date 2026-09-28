@@ -10,7 +10,7 @@
 
 **[Сайт](https://termide.github.io)** | **[Документация](doc/ru/README.md)** | **[Релизы](https://github.com/termide/termide/releases)** | **[Скриншоты](https://termide.github.io/ru/#screenshots)**
 
-<p align="center"><img src="assets/screenshots/termide.png" alt="TermIDE — редактор, файловый менеджер, терминал и просмотрщики в одном TUI" width="900"></p>
+<p align="center"><img src="assets/screenshots/termide.gif" alt="TermIDE — редактор, файловый менеджер, терминал и просмотрщики в одном TUI" width="900"></p>
 
 ## Почему TermIDE?
 
