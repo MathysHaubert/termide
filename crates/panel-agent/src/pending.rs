@@ -1,0 +1,505 @@
+//! The card the panel shows while it waits for an answer: a permission
+//! request, the model's questions, a project command, an undo, a plan or a
+//! handoff brief.
+
+use std::time::Instant;
+
+use termide_agent_core::{
+    CommandScript, Decision, Mode, PermissionAnswer, PermissionEnvelope, PersistScope,
+    QuestionAnswer, QuestionEnvelope, QuestionReply,
+};
+use termide_core::PanelEvent;
+use termide_ui::{ChoiceAction, ChoiceForm};
+
+use crate::{millis, AgentPanel, Item, NoticeKind};
+
+/// What a card in the panel is asking: the agent's permission request, the
+/// model's questions to the user, or whether a command script that came with
+/// the project may run.
+pub(crate) enum Pending {
+    Permission {
+        envelope: PermissionEnvelope,
+        form: ChoiceForm,
+        /// What each of the form's rows answers, in their order.
+        answers: Vec<PermissionAnswer>,
+    },
+    /// The model's questions, asked one card at a time; `answers` holds those
+    /// already given, and `form` asks the next.
+    Question {
+        envelope: QuestionEnvelope,
+        answers: Vec<QuestionAnswer>,
+        form: ChoiceForm,
+    },
+    Command {
+        script: CommandScript,
+        args: String,
+        form: ChoiceForm,
+    },
+    Undo {
+        form: ChoiceForm,
+    },
+    /// Plan mode: the agent answered, carry the plan out or keep planning?
+    Plan {
+        form: ChoiceForm,
+    },
+    /// A `/handoff` brief is ready: save it to a file, or start a new session
+    /// from it. The brief is kept until the choice is made.
+    Handoff {
+        form: ChoiceForm,
+        brief: String,
+    },
+}
+
+impl Pending {
+    pub(crate) fn form(&self) -> &ChoiceForm {
+        match self {
+            Pending::Permission { form, .. }
+            | Pending::Question { form, .. }
+            | Pending::Command { form, .. }
+            | Pending::Undo { form }
+            | Pending::Plan { form }
+            | Pending::Handoff { form, .. } => form,
+        }
+    }
+
+    pub(crate) fn form_mut(&mut self) -> &mut ChoiceForm {
+        match self {
+            Pending::Permission { form, .. }
+            | Pending::Question { form, .. }
+            | Pending::Command { form, .. }
+            | Pending::Undo { form }
+            | Pending::Plan { form }
+            | Pending::Handoff { form, .. } => form,
+        }
+    }
+}
+
+/// The card for question `index` of `envelope`: who asks and the topic in the
+/// title, with the position among several; the question itself as the
+/// detail; the choices with their descriptions, checkboxes when several can
+/// be picked; a row for an answer of the user's own, and one that declines.
+pub(crate) fn question_form(envelope: &QuestionEnvelope, index: usize) -> ChoiceForm {
+    let t = termide_i18n::t();
+    let question = &envelope.questions[index];
+    let mut title = t.agent_question_title().to_string();
+    if !question.header.is_empty() {
+        title.push_str(&format!(": {}", question.header));
+    }
+    if envelope.questions.len() > 1 {
+        title.push_str(&format!(" ({}/{})", index + 1, envelope.questions.len()));
+    }
+    let (labels, descriptions) = question
+        .options
+        .iter()
+        .map(|option| (option.label.clone(), option.description.clone()))
+        .unzip();
+    let mut form = ChoiceForm::new(title, labels)
+        .with_detail(&question.question)
+        .with_descriptions(descriptions)
+        .with_custom(t.agent_question_own_answer())
+        .with_cancel(t.agent_question_decline());
+    if question.multi_select {
+        form = form.with_multi(t.agent_question_submit());
+    }
+    form
+}
+
+/// A permission card's detail: what the agent wants to do and, for a
+/// command of several parts, the parts the question is about, one a line,
+/// those no rule can be recorded for marked as answered this time only.
+pub(crate) fn permission_detail(request: &termide_agent_core::PermissionRequest) -> String {
+    let several =
+        termide_agent_core::shell_parts(&request.subject, std::path::Path::new("/")).len() > 1;
+    if request.tool != "bash" || !several || request.parts.is_empty() {
+        return request.subject.clone();
+    }
+    let once = termide_i18n::t().agent_perm_part_once();
+    let parts: Vec<String> = request
+        .parts
+        .iter()
+        .map(|part| match part.pattern {
+            Some(_) => format!("• {}", part.text),
+            None => format!("• {} ({once})", part.text),
+        })
+        .collect();
+    format!("{}\n\n{}", request.subject, parts.join("\n"))
+}
+
+impl AgentPanel {
+    pub(crate) fn poll_permissions(&mut self) -> Vec<PanelEvent> {
+        let mut events = Vec::new();
+        while let Ok(envelope) = self.permission_rx.try_recv() {
+            if self.pending.is_some() {
+                // Prompts are sequential on the agent thread; a second one
+                // cannot arrive before the first is answered. Deny defensively.
+                let _ = envelope.reply.send(PermissionAnswer::Deny);
+                continue;
+            }
+            // The question is asked in the panel, not in an app-wide modal:
+            // with several panels open a modal does not say who is asking.
+            // The status line still announces it for an unfocused panel.
+            let request = &envelope.request;
+            // The card shows the intent in its title and what exactly the agent
+            // wants to do in the detail block below. MCP tools and others
+            // without a path or command have no subject, so no detail.
+            let has_subject = !request.subject.is_empty();
+            let t = termide_i18n::t();
+            let base = t.agent_permission_run_fmt(&request.tool);
+            let title = if has_subject {
+                format!("{base}:")
+            } else {
+                base.clone()
+            };
+            // The status line, for an unfocused panel, still names the subject.
+            let status = if has_subject {
+                format!("{base}: {}", request.subject)
+            } else {
+                base
+            };
+            // The answers the form offers, each with its row. The rows that
+            // outlast this call name the rules they record, and show only
+            // when there is one to record; "always" only where the
+            // configured rules count.
+            let pattern = &request.suggested_pattern;
+            let remember = request.can_remember();
+            let mut rows: Vec<(PermissionAnswer, String)> = vec![(
+                PermissionAnswer::AllowOnce,
+                t.agent_perm_allow_once().to_string(),
+            )];
+            if remember {
+                rows.push((
+                    PermissionAnswer::AllowSession,
+                    format!("{} ({pattern})", t.agent_perm_allow_session()),
+                ));
+            }
+            if remember && request.can_persist {
+                rows.push((
+                    PermissionAnswer::AllowAlways,
+                    format!("{} ({pattern})", t.agent_perm_allow_always()),
+                ));
+                rows.push((
+                    PermissionAnswer::AllowAlwaysGlobal,
+                    format!("{} ({pattern})", t.agent_perm_allow_always_global()),
+                ));
+            }
+            rows.push((PermissionAnswer::Deny, t.agent_perm_deny().to_string()));
+            if remember {
+                rows.push((
+                    PermissionAnswer::DenySession,
+                    format!("{} ({pattern})", t.agent_perm_deny_session()),
+                ));
+            }
+            let (answers, options): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+            let mut form = ChoiceForm::new(title, options)
+                .with_custom(t.agent_perm_deny_reason())
+                .with_cancel(t.agent_perm_stop());
+            if has_subject {
+                form = form.with_detail(permission_detail(request));
+            }
+            events.push(PanelEvent::SetStatusMessage {
+                message: status,
+                is_error: false,
+            });
+            self.pending = Some(Pending::Permission {
+                envelope,
+                form,
+                answers,
+            });
+            self.attention = true;
+            // The question pauses the running call until it is answered.
+            let before = self.running_tool_wait();
+            self.permission_wait = Some((Instant::now(), before));
+            self.transcript.set_tool_wait(before, true);
+        }
+        events
+    }
+
+    /// How long the running call has waited on permission answers so far.
+    pub(crate) fn running_tool_wait(&self) -> u32 {
+        self.transcript
+            .items()
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                Item::Tool {
+                    result: None,
+                    waited_ms,
+                    ..
+                } => Some(waited_ms.unwrap_or(0)),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    /// Show the model's questions as they arrive, one card at a time. Like a
+    /// permission prompt, they pause the running call until answered.
+    pub(crate) fn poll_questions(&mut self) -> Vec<PanelEvent> {
+        let mut events = Vec::new();
+        while let Ok(envelope) = self.question_rx.try_recv() {
+            if self.pending.is_some() || envelope.questions.is_empty() {
+                // Calls run one at a time, so a second set cannot arrive
+                // while one is shown; decline it defensively.
+                let _ = envelope.reply.send(QuestionReply::Declined);
+                continue;
+            }
+            let form = question_form(&envelope, 0);
+            events.push(PanelEvent::SetStatusMessage {
+                message: envelope.questions[0].question.clone(),
+                is_error: false,
+            });
+            self.pending = Some(Pending::Question {
+                envelope,
+                answers: Vec::new(),
+                form,
+            });
+            self.attention = true;
+            let before = self.running_tool_wait();
+            self.permission_wait = Some((Instant::now(), before));
+            self.transcript.set_tool_wait(before, true);
+        }
+        events
+    }
+
+    /// Record the answer to the question on the card, then ask the next one,
+    /// or send them all back once the last is answered.
+    pub(crate) fn answer_question(&mut self, answer: QuestionAnswer) {
+        let Some(Pending::Question {
+            envelope,
+            mut answers,
+            ..
+        }) = self.pending.take()
+        else {
+            return;
+        };
+        answers.push(answer);
+        if answers.len() < envelope.questions.len() {
+            let form = question_form(&envelope, answers.len());
+            self.pending = Some(Pending::Question {
+                envelope,
+                answers,
+                form,
+            });
+            return;
+        }
+        self.end_permission_wait();
+        let _ = envelope.reply.send(QuestionReply::Answered(answers));
+    }
+
+    /// The permission question is gone (answered, or dropped by a stop):
+    /// the call's wait keeps its length and rests.
+    pub(crate) fn end_permission_wait(&mut self) {
+        if let Some((start, before)) = self.permission_wait.take() {
+            self.transcript
+                .set_tool_wait(before.saturating_add(millis(start.elapsed())), false);
+        }
+    }
+
+    /// Answer the outstanding question; `false` when there is none.
+    pub fn answer_permission(&mut self, answer: PermissionAnswer) -> bool {
+        let Some(Pending::Permission { envelope, .. }) = self.pending.take() else {
+            return false;
+        };
+        // Mirror a lasting grant into the panel's own rules so rebuilding the
+        // agent (undo, a model or agent switch) carries it, not just the hooks
+        // on the worker thread. "Always" is also written to the configuration
+        // by the persist callback, where it is on offer; "for this session"
+        // lives only here.
+        let request = &envelope.request;
+        for pattern in request.patterns() {
+            match answer {
+                PermissionAnswer::AllowAlways | PermissionAnswer::AllowAlwaysGlobal
+                    if request.can_persist =>
+                {
+                    self.rules.add(&request.tool, &pattern, Decision::Allow);
+                }
+                PermissionAnswer::AllowAlways
+                | PermissionAnswer::AllowAlwaysGlobal
+                | PermissionAnswer::AllowSession => {
+                    self.session_rules
+                        .add(&request.tool, &pattern, Decision::Allow);
+                }
+                PermissionAnswer::DenySession => {
+                    self.session_rules
+                        .add(&request.tool, &pattern, Decision::Deny);
+                }
+                _ => {}
+            }
+        }
+        self.end_permission_wait();
+        let _ = envelope.reply.send(answer);
+        true
+    }
+
+    /// In plan mode, once the agent has answered: offer to carry the plan
+    /// out, in accept-edits or asking, or to keep planning.
+    pub(crate) fn offer_plan(&mut self) {
+        if self.external || self.mode.get() != Mode::Plan || self.pending.is_some() {
+            return;
+        }
+        // The run's closing line sits after the answer; look past it.
+        let last = self
+            .transcript
+            .items()
+            .iter()
+            .rev()
+            .find(|item| !matches!(item, Item::RunEnd { .. }));
+        let answered = matches!(
+            last,
+            Some(Item::Assistant { text, error: None, .. }) if !text.trim().is_empty()
+        );
+        if !answered {
+            return;
+        }
+        let t = termide_i18n::t();
+        let form = ChoiceForm::new(
+            t.agent_plan_carry_title(),
+            vec![
+                t.agent_plan_accept_edits().to_string(),
+                t.agent_plan_configured().to_string(),
+            ],
+        )
+        .with_cancel(t.agent_plan_keep());
+        self.pending = Some(Pending::Plan { form });
+    }
+
+    /// The plan was accepted: leave plan mode for `mode` and send the
+    /// request that carries it out.
+    pub(crate) fn carry_out_plan(&mut self, mode: Mode) -> Vec<PanelEvent> {
+        let mut events = vec![self.set_mode(mode)];
+        let request = self.plan_prompt.request.trim().to_string();
+        if request.is_empty() {
+            self.notice(
+                termide_i18n::t().agent_notice_plan_no_request(),
+                NoticeKind::Warn,
+            );
+        } else {
+            events.extend(self.send(request));
+        }
+        events.push(PanelEvent::NeedsRedraw);
+        events
+    }
+
+    /// Turn what the card reported into an answer. For a permission,
+    /// `Cancelled` denies and stops the run: the user wants out, not just a
+    /// "no" to this one call; for the model's question it declines and stops
+    /// the run alike. For a command script, the rows are run once,
+    /// run for the session, run always (a rule is written) and don't run.
+    /// `false` for `NotHandled`.
+    pub(crate) fn apply_form_action(&mut self, action: ChoiceAction) -> bool {
+        match (&self.pending, action) {
+            (_, ChoiceAction::Handled) => {}
+            (_, ChoiceAction::NotHandled) => return false,
+            (Some(Pending::Permission { answers, .. }), ChoiceAction::Chosen(index)) => {
+                let answer = answers
+                    .get(index)
+                    .cloned()
+                    .unwrap_or(PermissionAnswer::Deny);
+                self.answer_permission(answer);
+            }
+            (Some(Pending::Permission { .. }), ChoiceAction::Custom(reason)) => {
+                self.answer_permission(PermissionAnswer::DenyWithReason(reason));
+            }
+            (Some(Pending::Permission { .. }), ChoiceAction::Cancelled) => {
+                self.answer_permission(PermissionAnswer::Deny);
+                self.abort();
+            }
+            (Some(Pending::Question { form, .. }), ChoiceAction::Chosen(index)) => {
+                let chosen = form.options().get(index).cloned().into_iter().collect();
+                self.answer_question(QuestionAnswer {
+                    chosen,
+                    custom: None,
+                });
+            }
+            (Some(Pending::Question { .. }), ChoiceAction::Custom(text)) => {
+                self.answer_question(QuestionAnswer {
+                    chosen: Vec::new(),
+                    custom: Some(text),
+                });
+            }
+            (Some(Pending::Question { form, .. }), ChoiceAction::Submitted { chosen, custom }) => {
+                let options = form.options();
+                let chosen = chosen
+                    .iter()
+                    .filter_map(|&index| options.get(index).cloned())
+                    .collect();
+                self.answer_question(QuestionAnswer { chosen, custom });
+            }
+            // Declining stops the run, as it does for a permission: the user
+            // takes over and says what they want in their own message.
+            (Some(Pending::Question { .. }), ChoiceAction::Cancelled) => {
+                if let Some(Pending::Question { envelope, .. }) = self.pending.take() {
+                    self.end_permission_wait();
+                    let _ = envelope.reply.send(QuestionReply::Declined);
+                }
+                self.abort();
+            }
+            // Only a question's card lets several rows be picked.
+            (_, ChoiceAction::Submitted { .. }) => {}
+            (Some(Pending::Command { .. }), ChoiceAction::Chosen(index)) => {
+                let Some(Pending::Command { script, args, .. }) = self.pending.take() else {
+                    return true;
+                };
+                match index {
+                    1 => {
+                        self.allowed_commands.insert(script.name.clone());
+                    }
+                    2 => {
+                        self.rules.add("command", &script.name, Decision::Allow);
+                        if let Some(persist) = self.persist_rule {
+                            persist(
+                                "command",
+                                &script.name,
+                                Decision::Allow,
+                                PersistScope::Project,
+                            );
+                        }
+                    }
+                    3 => return true,
+                    _ => {}
+                }
+                self.start_command(script, args);
+            }
+            (Some(Pending::Command { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (Some(Pending::Undo { .. }), ChoiceAction::Chosen(_)) => {
+                self.pending = None;
+                let events = self.perform_undo();
+                self.pending_events.extend(events);
+            }
+            (Some(Pending::Undo { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (Some(Pending::Plan { .. }), ChoiceAction::Chosen(index)) => {
+                self.pending = None;
+                let mode = if index == 0 {
+                    Mode::Edit
+                } else {
+                    Mode::Configured
+                };
+                let events = self.carry_out_plan(mode);
+                self.pending_events.extend(events);
+            }
+            (Some(Pending::Plan { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (Some(Pending::Handoff { .. }), ChoiceAction::Chosen(index)) => {
+                let brief = match self.pending.take() {
+                    Some(Pending::Handoff { brief, .. }) => brief,
+                    _ => return true,
+                };
+                if index == 0 {
+                    self.save_handoff(&brief);
+                } else {
+                    let events = self.handoff_to_new_session(brief);
+                    self.pending_events.extend(events);
+                }
+            }
+            (Some(Pending::Handoff { .. }), ChoiceAction::Cancelled | ChoiceAction::Custom(_)) => {
+                self.pending = None;
+            }
+            (None, _) => {}
+        }
+        true
+    }
+}

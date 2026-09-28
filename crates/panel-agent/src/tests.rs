@@ -5,10 +5,12 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use termide_agent_core::{
-    AgentEvent, AssistantContent, AssistantMessage, PermissionPrompter, Request, StopReason,
-    StreamEvent, ToolCall, ToolUpdate, Usage,
+    AgentEvent, AssistantContent, AssistantMessage, PermissionAnswer, PermissionPrompter,
+    QuestionAnswer, QuestionReply, Request, StopReason, StreamEvent, ToolCall, ToolUpdate, Usage,
 };
 use termide_core::PanelConfig;
+
+use crate::pending::Pending;
 
 /// Replays one scripted assistant message per model call and records
 /// which model each call asked for.
