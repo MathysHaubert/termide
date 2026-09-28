@@ -530,8 +530,12 @@ pub struct AgentPanel {
     goal_prompt: GoalPrompt,
     /// The handoff-brief texts, passed to the agent for `/handoff`.
     handoff_prompt: HandoffPrompt,
-    /// When blocks fold; passed to each transcript.
+    /// When blocks fold now; passed to each transcript. `Ctrl+O` switches
+    /// it between `Never` and the configured mode, so fresh blocks follow
+    /// what it last did to the finished ones.
     fold: FoldMode,
+    /// When blocks fold as configured, restored by `Ctrl+O` folding all.
+    fold_setting: FoldMode,
     /// The worker still has the prompt of the other plan-ness: a mode
     /// switch during a run could not update it, `AgentEnd` retries.
     prompt_stale: bool,
@@ -813,6 +817,7 @@ impl AgentPanel {
             goal_prompt: setup.goal_prompt,
             handoff_prompt: setup.handoff_prompt,
             fold: setup.fold,
+            fold_setting: setup.fold,
             prompt_stale: false,
             shown_system: String::new(),
             persist_rule: setup.persist_rule,

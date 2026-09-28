@@ -3428,6 +3428,38 @@ fn tab_moves_focus_to_the_chat_and_arrows_fold_blocks() {
 }
 
 #[test]
+fn ctrl_o_sets_how_fresh_blocks_fold() {
+    let thinking = "l1\nl2";
+    let mut panel = AgentPanel::new(setup(vec![
+        reply_thinking("one", thinking),
+        reply_thinking("two", thinking),
+        reply_thinking("three", thinking),
+    ]));
+    let turn = |panel: &mut AgentPanel, text: &str| {
+        type_text(panel, text);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(panel);
+    };
+    let reasoning_expanded = |panel: &AgentPanel| -> Vec<bool> {
+        let items = panel.transcript().items();
+        (0..items.len())
+            .filter(|&i| matches!(items[i], Item::Thinking { .. }))
+            .map(|i| panel.transcript.is_expanded(i))
+            .collect()
+    };
+    turn(&mut panel, "first");
+    assert_eq!(reasoning_expanded(&panel), [false]);
+    // Unfolding everything has the next turn arrive unfolded too.
+    panel.handle_key(chord(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    turn(&mut panel, "second");
+    assert_eq!(reasoning_expanded(&panel), [true, true]);
+    // Folding everything back returns fresh blocks to the configured mode.
+    panel.handle_key(chord(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    turn(&mut panel, "third");
+    assert_eq!(reasoning_expanded(&panel), [false, false, false]);
+}
+
+#[test]
 fn file_completions_list_paths_and_at_mentions_insert_them() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();

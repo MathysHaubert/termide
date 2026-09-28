@@ -8,7 +8,7 @@ use termide_ui::textarea::TextArea;
 use termide_ui::{ChoiceAction, CompletionAction, CompletionItem, CompletionList, FieldEdit};
 
 use crate::{
-    select, transcript, AgentPanel, Item, NoticeKind, Paste, RunButton, CLEAR_COMMAND,
+    select, transcript, AgentPanel, FoldMode, Item, NoticeKind, Paste, RunButton, CLEAR_COMMAND,
     COMPACT_COMMAND, CONTINUE_COMMAND, GOAL_COMMAND, HANDOFF_COMMAND, LOOP_COMMAND, NAME_COMMAND,
     NEW_COMMAND, NEW_SESSION_ACTION, PAUSE_COMMAND, PROMPT_COMMAND, RENAME_ACTION, RENAME_COMMAND,
     RESUME_ACTION, UNDO_COMMAND, USAGE_COMMAND,
@@ -678,6 +678,20 @@ impl AgentPanel {
         self.follow = self.top >= max_top;
     }
 
+    /// Unfold every block, or fold them all back when any is unfolded, and
+    /// have fresh blocks do the same: unfolded they arrive in full, folded
+    /// they follow the configured mode (on finish, when that is `never`).
+    pub(crate) fn toggle_all_folded(&mut self) {
+        let expand = !self.transcript.any_expanded();
+        self.fold = match (expand, self.fold_setting) {
+            (true, _) => FoldMode::Never,
+            (false, FoldMode::Never) => FoldMode::OnFinish,
+            (false, setting) => setting,
+        };
+        self.transcript.set_fold(self.fold);
+        self.transcript.set_all_expanded(expand);
+    }
+
     /// Bring the selected block into view after the selection moves. Scrolling
     /// is otherwise free, so this runs only from block navigation, not on every
     /// frame — a block scrolled off screen stays off until the selection moves.
@@ -858,8 +872,7 @@ impl AgentPanel {
                     return self.open_selected_in_panel();
                 }
                 KeyCode::Char('o') if ctrl => {
-                    let expand = !self.transcript.any_expanded();
-                    self.transcript.set_all_expanded(expand);
+                    self.toggle_all_folded();
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::PageUp => {
@@ -920,10 +933,7 @@ impl AgentPanel {
                 self.after_edit();
             }
             KeyCode::Enter => return self.submit(),
-            KeyCode::Char('o') if ctrl => {
-                let expand = !self.transcript.any_expanded();
-                self.transcript.set_all_expanded(expand);
-            }
+            KeyCode::Char('o') if ctrl => self.toggle_all_folded(),
             KeyCode::BackTab if !self.external || self.runtime.follows_mode() => {
                 let next = self.mode.get().next();
                 return vec![self.set_mode(next), PanelEvent::NeedsRedraw];

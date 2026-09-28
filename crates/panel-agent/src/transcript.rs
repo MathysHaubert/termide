@@ -236,9 +236,17 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// Set when blocks fold (before any is pushed).
+    /// Set when blocks fold from now on. Blocks already pushed keep their
+    /// fold flag, but whether a live one can fold follows the mode, so each
+    /// is laid out again.
     pub fn set_fold(&mut self, fold: FoldMode) {
+        if self.fold == fold {
+            return;
+        }
         self.fold = fold;
+        for index in 0..self.cache.len() {
+            self.invalidate(index);
+        }
     }
 
     #[must_use]
@@ -591,6 +599,12 @@ impl Transcript {
                 self.invalidate(index);
             }
         }
+    }
+
+    /// Whether item `index` is foldable and shows its detail.
+    #[cfg(test)]
+    pub(crate) fn is_expanded(&self, index: usize) -> bool {
+        self.foldable(index) && !self.collapsed.get(index).copied().unwrap_or(true)
     }
 
     /// Whether any foldable item is currently expanded.
