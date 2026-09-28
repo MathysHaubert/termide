@@ -21,23 +21,23 @@ Terminal editors cover the code; everything around it — files on remote hosts,
 | LSP Support | ✓ | ✓ | ✓ | ✓ | plugin |
 | Zero Config | ✓ | ✓ | ✗ | ✓ | ✓ |
 | Script Automation | ✓ | ✓ | ✓ | ✗ | plugin |
-| Built-in Coding Agent (local or hosted models) | ✓ | ✗ | plugin | ✗ | ✗ |
 | External Agents (Claude Code, Codex, Gemini CLI) | ✓ | ✓ | plugin | ✗ | ✗ |
-| MCP Servers | ✓ | ✗ | plugin | ✗ | ✗ |
 | Remote Filesystems (SFTP/FTP) | ✓ | SSH | ✓ | ✗ | ✗ |
-| Hex / Binary Viewer | ✓ | ✗ | plugin | ✗ | plugin |
-| Database Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
 | Markdown Preview | ✓ | ✓ | plugin | ✗ | ✗ |
-| Diagram Viewer (Mermaid) | ✓ | ✗ | plugin | ✗ | ✗ |
-| Image Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
 | Built-in Terminal | ✓ | ✓ | plugin | ✗ | ✗ |
-| File Manager | ✓ | tree only | plugin | ✗ | ✗ |
-| Background File Operations | ✓ | ✗ | plugin | ✗ | ✗ |
 | Git Integration | ✓ | ✓ | plugin | ✗ | ✗ |
 | Project Layouts | ✓ | ✓ | plugin | ✗ | ✗ |
-| Detachable Instances | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Multi-panel Layout | ✓ | ✓ | plugin | ✗ | ✗ |
 | Bookmarks | ✓ | ✓ | plugin | ✗ | ✗ |
+| Hex / Binary Viewer | ✓ | ✗ | plugin | ✗ | plugin |
+| File Manager | ✓ | tree only | plugin | ✗ | ✗ |
+| Detachable Instances | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Built-in Coding Agent (local or hosted models) | ✓ | ✗ | plugin | ✗ | ✗ |
+| MCP Servers | ✓ | ✗ | plugin | ✗ | ✗ |
+| Database Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
+| Diagram Viewer (Mermaid) | ✓ | ✗ | plugin | ✗ | ✗ |
+| Image Viewer | ✓ | ✗ | plugin | ✗ | ✗ |
+| Background File Operations | ✓ | ✗ | plugin | ✗ | ✗ |
 | Resource Monitor | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 **TermIDE = Editor + File Manager + Terminal + Git + Agent in one TUI application.**
