@@ -1001,17 +1001,6 @@ fn shorten_path(path: &Path, max: usize) -> String {
     format!("…{tail}")
 }
 
-/// A byte count as `B`/`KB`/`MB`, for the output-cleaning diagnostic.
-fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1_000_000 {
-        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
-    } else if bytes >= 1000 {
-        format!("{}KB", (bytes + 500) / 1000)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
 /// Token counts as the status line shows them: `32k`, `1.2M`.
 pub(crate) fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {

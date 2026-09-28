@@ -9,9 +9,11 @@ use termide_core::{ConfirmAction, PanelEvent, SelectAction};
 use termide_ui::ChoiceForm;
 
 use crate::pending::Pending;
+use crate::runtime::{
+    checkpoint_store, session_agent, session_model, spawn_runtime, start_session, Spawned,
+};
 use crate::{
-    checkpoint_store, format_bytes, format_tokens, session_agent, session_model, shorten_path,
-    spawn_runtime, start_session, truncate_title, AgentPanel, Item, NoticeKind, Spawned,
+    format_tokens, shorten_path, truncate_title, AgentPanel, Item, NoticeKind,
     DELETE_SESSION_ACTION, ROLLBACK_ACTION,
 };
 
@@ -551,5 +553,16 @@ impl AgentPanel {
         );
         events.push(PanelEvent::NeedsRedraw);
         events
+    }
+}
+
+/// A byte count as `B`/`KB`/`MB`, for the output-cleaning diagnostic.
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1000 {
+        format!("{}KB", (bytes + 500) / 1000)
+    } else {
+        format!("{bytes}B")
     }
 }
