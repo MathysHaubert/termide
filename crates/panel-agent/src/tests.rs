@@ -3,16 +3,17 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use termide_agent_core::{
     permission_channel, question_channel, Agent, AgentEvent, AssistantContent, AssistantMessage,
     CancelToken, Message, PermissionAnswer, PermissionPrompter, QuestionAnswer, QuestionReply,
     Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision, ToolUpdate,
-    Usage,
+    Usage, UserMessage,
 };
 use termide_core::{ConfirmAction, PanelConfig};
-use termide_ui::ChoiceForm;
+use termide_ui::{ChoiceAction, ChoiceForm};
 
+use crate::input::file_completions;
 use crate::pending::Pending;
 use crate::runtime::{push_history, session_model};
 use crate::submit::{parse_duration, parse_loop_args, slash_command};
