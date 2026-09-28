@@ -3,11 +3,11 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ignore::{Walk, WalkBuilder};
 use regex::RegexBuilder;
 use termide_core::util::is_binary_file;
 use termide_git::{GitStatus, GitStatusCache};
 use termide_ui::fuzzy::Query;
+use termide_walk::walker;
 
 use super::{ContentResult, FileResult};
 
@@ -98,42 +98,6 @@ impl NameMatcher {
             self.substring.score(&name).is_some()
         })
     }
-}
-
-/// Every entry under `base`, hidden ones included. With `respect_gitignore`
-/// the walk leaves out what git ignores and the `.git` directory itself, as
-/// a project-wide search wants; without it, it sees everything, as a search
-/// of the directory on screen does.
-fn walker(base: &Path, respect_gitignore: bool) -> Walk {
-    let mut builder = WalkBuilder::new(base);
-    builder
-        .hidden(false)
-        .git_ignore(respect_gitignore)
-        .git_global(respect_gitignore)
-        .git_exclude(respect_gitignore);
-    if respect_gitignore {
-        builder.filter_entry(|entry| entry.file_name() != ".git");
-    }
-    builder.build()
-}
-
-/// The files under `root` a project-wide search offers, as paths relative to
-/// `root`: what git ignores and `.git` left out, at most `limit` of them.
-pub fn project_files(root: &Path, cancel: &AtomicBool, limit: usize) -> Vec<String> {
-    let mut files = Vec::new();
-    for entry in walker(root, true) {
-        if cancel.load(Ordering::Relaxed) || files.len() >= limit {
-            break;
-        }
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        if let Ok(relative) = entry.path().strip_prefix(root) {
-            files.push(relative.display().to_string());
-        }
-    }
-    files
 }
 
 pub(super) fn search_files(
@@ -399,34 +363,5 @@ mod tests {
         );
         // Regex, case-sensitive: only the uppercase README.
         assert_eq!(names(r"^README", true, true), vec!["README.md"]);
-    }
-
-    #[test]
-    fn project_files_leave_out_what_git_ignores_and_the_git_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        for path in [
-            ".git/HEAD",
-            ".github/workflows/ci.yml",
-            "src/main.rs",
-            "target/debug/app",
-            "notes.log",
-        ] {
-            let path = root.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, "").unwrap();
-        }
-        std::fs::write(root.join(".gitignore"), "target/\n*.log\n").unwrap();
-
-        let never = AtomicBool::new(false);
-        let mut files = project_files(root, &never, 100);
-        files.sort();
-        assert_eq!(
-            files,
-            [".github/workflows/ci.yml", ".gitignore", "src/main.rs"],
-            "hidden files stay, ignored ones and .git go"
-        );
-        assert_eq!(project_files(root, &never, 1).len(), 1, "capped");
-        assert!(project_files(root, &AtomicBool::new(true), 100).is_empty());
     }
 }

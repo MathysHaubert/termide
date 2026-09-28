@@ -10,7 +10,6 @@ description = "Coding agent panel for termide: transcript, input, tool calls and
 [dependencies]
 chrono.workspace = true
 crossterm.workspace = true
-ignore.workspace = true
 log.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true
@@ -24,6 +23,7 @@ termide-panel-markdown = { path = "../panel-markdown" }
 termide-richtext = { path = "../richtext" }
 termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }
+termide-walk = { path = "../walk" }
 
 [dev-dependencies]
 tempfile.workspace = true

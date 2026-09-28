@@ -1,0 +1,14 @@
+[package]
+name = "termide-walk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Walking a project tree the way git sees it, for termide"
+
+[dependencies]
+ignore.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

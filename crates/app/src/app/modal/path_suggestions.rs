@@ -79,11 +79,8 @@ impl PathSuggestions {
         let spawned = std::thread::Builder::new()
             .name("project-files".into())
             .spawn(move || {
-                let files = termide_panel_file_manager::project_files(
-                    &walk_root,
-                    &walk_cancel,
-                    MAX_PROJECT_FILES,
-                );
+                let files =
+                    termide_walk::project_files(&walk_root, &walk_cancel, MAX_PROJECT_FILES);
                 let _ = tx.send(files);
             });
         if let Err(e) = spawned {

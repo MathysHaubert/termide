@@ -4937,28 +4937,7 @@ fn file_completions(root: &std::path::Path, prefix: &str) -> Vec<CompletionItem>
     const MAX_RESULTS: usize = 50;
     const MAX_VISITED: usize = 4000;
 
-    let wants_hidden = prefix.starts_with('.');
-    let walk = ignore::WalkBuilder::new(root)
-        .hidden(!wants_hidden)
-        .filter_entry(|entry| {
-            let name = entry.file_name();
-            name != ".git" && name != ".termide"
-        })
-        .build();
-    let mut candidates: Vec<String> = walk
-        .flatten()
-        .filter(|entry| entry.depth() > 0)
-        .take(MAX_VISITED)
-        .filter_map(|entry| {
-            let relative = entry.path().strip_prefix(root).ok()?;
-            let mut path = relative.to_string_lossy().replace('\\', "/");
-            // `Path::is_dir` follows a symlink to a directory.
-            if entry.path().is_dir() {
-                path.push('/');
-            }
-            Some(path)
-        })
-        .collect();
+    let mut candidates = termide_walk::project_entries(root, prefix.starts_with('.'), MAX_VISITED);
     // Shortest paths first, so an empty or loose query offers the top of the
     // tree before its depths.
     candidates.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));

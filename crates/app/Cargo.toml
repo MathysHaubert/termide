@@ -72,6 +72,7 @@ termide-panel-agent = { path = "../panel-agent" }
 termide-panel-operations = { path = "../panel-operations" }
 termide-panel-outline = { path = "../panel-outline" }
 termide-panel-db = { path = "../panel-db" }
+termide-walk = { path = "../walk" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -4997,6 +4997,7 @@ dependencies = [
  "termide-ui",
  "termide-ui-render",
  "termide-vfs",
+ "termide-walk",
  "termide-watcher",
  "toml_edit",
  "unicode-width",
@@ -5238,7 +5239,6 @@ version = "0.35.0"
 dependencies = [
  "chrono",
  "crossterm",
- "ignore",
  "log",
  "ratatui",
  "serde_json",
@@ -5251,6 +5251,7 @@ dependencies = [
  "termide-richtext",
  "termide-theme",
  "termide-ui",
+ "termide-walk",
 ]
 
 [[package]]
@@ -5375,6 +5376,7 @@ dependencies = [
  "termide-theme",
  "termide-ui",
  "termide-vfs",
+ "termide-walk",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -5696,6 +5698,14 @@ dependencies = [
  "url",
  "webpki-roots 1.0.7",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "termide-walk"
+version = "0.35.0"
+dependencies = [
+ "ignore",
+ "tempfile",
 ]
 
 [[package]]

@@ -12,7 +12,6 @@ chrono.workspace = true
 crossterm.workspace = true
 dirs.workspace = true
 glob.workspace = true
-ignore.workspace = true
 log.workspace = true
 ratatui.workspace = true
 regex.workspace = true
@@ -31,6 +30,7 @@ termide-modal = { path = "../modal" }
 termide-state = { path = "../state" }
 termide-theme = { path = "../theme" }
 termide-ui = { path = "../ui" }
+termide-walk = { path = "../walk" }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
