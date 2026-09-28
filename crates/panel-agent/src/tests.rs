@@ -5,13 +5,15 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use termide_agent_core::{
-    AgentEvent, AssistantContent, AssistantMessage, PermissionAnswer, PermissionPrompter,
-    QuestionAnswer, QuestionReply, Request, StopReason, StreamEvent, ToolCall, ToolContext,
-    ToolDecision, ToolUpdate, Usage,
+    permission_channel, question_channel, Agent, AgentEvent, AssistantContent, AssistantMessage,
+    CancelToken, Message, PermissionAnswer, PermissionPrompter, QuestionAnswer, QuestionReply,
+    Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision, ToolUpdate,
+    Usage,
 };
 use termide_core::{ConfirmAction, PanelConfig};
 
 use crate::pending::Pending;
+use crate::runtime::{push_history, session_model};
 use crate::toolset::{Blocked, ToolsetGuard};
 
 /// Replays one scripted assistant message per model call and records
