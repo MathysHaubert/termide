@@ -290,79 +290,99 @@ Proceed? [yes/no]
 
 ### Step 5: Update Version in All Files
 
-Update version `NEW_VERSION` in these 10 files using Edit tool:
+Update version `NEW_VERSION` in these 10 files (plus `Cargo.lock`). Build the
+authoritative list first, so a file added since this skill was written is not
+missed:
+
+```bash
+git grep -c 'OLD_VERSION_ESCAPED' -- ':!CHANGELOG.md' ':!Cargo.lock'
+```
+
+(`OLD_VERSION_ESCAPED` is `OLD_VERSION` with the dots escaped, e.g. `0\.35\.0`.)
+Every hit below is the release version itself, so a literal replace of all
+occurrences is safe in each file; review the grep output once in case a new
+file shows up with an unrelated match.
 
 #### 1. Cargo.toml
 ```toml
+[workspace.package]
 version = "NEW_VERSION"
 ```
-Line 3, exact match: `version = "OLD_VERSION"`
+Line 9 (under `[workspace.package]`, which every crate inherits), exact match:
+`version = "OLD_VERSION"`
 
-#### 2. flake.nix
+#### 2. flake.nix (2 occurrences)
 ```nix
 version = "NEW_VERSION";
 ```
-Around line 68, exact match: `version = "OLD_VERSION";`
+One in `packages.default` (around line 84) and one in `packages.termide-static`
+(around line 117). Both are the exact match `version = "OLD_VERSION";` — use
+replace_all=true.
 
-#### 3. README.md (8 occurrences)
-Replace all download URLs:
+#### 3. README.md, README.ru.md, README.zh.md (23 occurrences each)
+All occurrences are release asset file names in download URLs and commands:
 ```
-termide-OLD_VERSION-x86_64-unknown-linux-gnu.tar.gz
-→
-termide-NEW_VERSION-x86_64-unknown-linux-gnu.tar.gz
+termide-OLD_VERSION-x86_64-unknown-linux-gnu.tar.gz   (also musl, aarch64, apple-darwin)
+termide-OLD_VERSION-x86_64-pc-windows-msvc.zip
+termide_OLD_VERSION-1_amd64.deb
+termide-OLD_VERSION-1.x86_64.rpm
 ```
+Replace all occurrences of `OLD_VERSION` (note the `.deb` uses `termide_`, so a
+`termide-VERSION-` pattern alone would miss it). URLs go through
+`releases/latest/download/`, so there is no version in the URL path itself.
 
-Pattern: `termide-\d+\.\d+\.\d+-` → `termide-NEW_VERSION-`
+#### 4. doc/en/installation.md, doc/ru/installation.md, doc/zh/installation.md (16 occurrences each)
+Same asset names as the READMEs; replace all occurrences.
 
-Also update version tags in examples:
-```
-download/OLD_VERSION/
-→
-download/NEW_VERSION/
-```
-
-Pattern: `download/\d+\.\d+\.\d+/` → `download/NEW_VERSION/`
-
-#### 4. README.zh.md (8 occurrences)
-Same pattern as README.md for download URLs.
-
-#### 5. doc/en/installation.md (4 occurrences)
-Same pattern as README.md for download URLs.
-
-#### 6. doc/ru/installation.md (4 occurrences)
-Same pattern as README.md for download URLs.
-
-#### 7. doc/zh/installation.md (4 occurrences)
-Same pattern as README.md for download URLs.
-
-#### 8. packaging/homebrew/termide.rb (5 occurrences)
-```ruby
-version "NEW_VERSION"
-url "https://github.com/termide/termide/archive/refs/tags/NEW_VERSION.tar.gz"
-sha256 "..."  # This will need to be updated AFTER release
-```
-
-Update version and URL, note that sha256 will be wrong until after release.
-
-#### 9. packaging/aur/PKGBUILD
+#### 5. packaging/aur/PKGBUILD
 ```bash
 pkgver=NEW_VERSION
 ```
-Line 4, simple replacement.
+Line 4, simple replacement. Reset `pkgrel=1` if it was bumped.
 
-#### 10. packaging/aur/PKGBUILD-bin
+#### 6. packaging/aur/PKGBUILD-bin
 ```bash
 pkgver=NEW_VERSION
 ```
-Line 4, simple replacement.
+Line 4, simple replacement. Reset `pkgrel=1` if it was bumped.
+
+#### 7. Cargo.lock
+The workspace crates' versions in `Cargo.lock` follow `Cargo.toml`, and the AUR
+build uses `cargo fetch --locked`, so the lock file must be committed with the
+new version. Refresh it after editing `Cargo.toml`:
+```bash
+cargo update --workspace
+```
+This touches only the workspace members' entries, not dependency versions.
+
+**Not bumped:** `packaging/crates-io-redirect/` is a standalone tombstone crate
+for the `termide` name on crates.io. Its `version` is unrelated to the release
+(it must exceed the crates.io maximum and is set only when that crate is
+republished by hand) — leave it alone. There is no Homebrew formula in the tree.
 
 **Batch Update Strategy:**
-Use replace_all=true where appropriate for URL patterns in README and docs.
+All files above can be updated in one pass (the version is not a substring of
+anything else in them):
+```bash
+git grep -l 'OLD_VERSION_ESCAPED' -- ':!CHANGELOG.md' ':!Cargo.lock' \
+  | xargs sed -i '' 's/OLD_VERSION_ESCAPED/NEW_VERSION/g'   # GNU sed: -i without ''
+cargo update --workspace
+```
+Or use the Edit tool with replace_all=true per file.
 
 **Verification:**
-After updates, grep for old version to ensure all replaced:
+After updates, grep for the old version to ensure all replaced — this must
+print nothing:
 ```bash
-grep -r "OLD_VERSION" --exclude-dir=.git --exclude-dir=target --exclude=CHANGELOG.md .
+git grep -n 'OLD_VERSION_ESCAPED' -- ':!CHANGELOG.md'
+```
+`Cargo.lock` is included on purpose: a leftover there means the workspace
+entries were not refreshed (unless a third-party dependency happens to share
+the old version number — check the `name` above any hit). Then confirm the new version landed everywhere
+with the expected counts (Cargo.toml 1, flake.nix 2, each README 23, each
+installation.md 16, each PKGBUILD 1):
+```bash
+git grep -c 'NEW_VERSION_ESCAPED' -- ':!CHANGELOG.md' ':!Cargo.lock'
 ```
 
 ### Step 6: Documentation Actuality Check
@@ -374,6 +394,7 @@ After version updates, prompt user to review documentation:
 
 Version numbers have been updated in:
 - README.md
+- README.ru.md
 - README.zh.md
 - doc/en/installation.md
 - doc/ru/installation.md
@@ -383,6 +404,7 @@ Please review these files for content accuracy:
 
 Required reviews (version-critical):
 ✅ README.md - Download links updated
+✅ README.ru.md - Download links updated
 ✅ README.zh.md - Download links updated
 ✅ doc/en/installation.md - Installation steps updated
 ✅ doc/ru/installation.md - Installation steps updated
@@ -614,15 +636,15 @@ abc1234 chore: release version 0.3.0
 
 Files changed:
 - Cargo.toml
+- Cargo.lock
 - flake.nix
 - README.md
+- README.ru.md
 - README.zh.md
 - doc/en/installation.md
 - doc/ru/installation.md
 - doc/zh/installation.md
-- src/i18n/en.rs
-- src/i18n/ru.rs
-- packaging/*
+- packaging/aur/*
 - CHANGELOG.md
 
 12 files changed, 87 insertions(+), 42 deletions(-)
