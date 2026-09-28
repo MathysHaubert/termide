@@ -5359,7 +5359,6 @@ dependencies = [
  "crossterm",
  "dirs",
  "glob",
- "ignore",
  "libc",
  "log",
  "ratatui",
