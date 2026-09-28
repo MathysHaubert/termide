@@ -385,6 +385,9 @@ impl App {
     /// a file the text editor cannot load goes where [`cli_open_event`]
     /// sends it.
     pub fn open_cli_path(&mut self, path: std::path::PathBuf) -> Result<()> {
+        // Every other way in hands panels absolute paths; a relative one here
+        // would give the language server an empty workspace root and bad URIs.
+        let path = std::path::absolute(&path).unwrap_or(path);
         if path.is_dir() {
             let panel = termide_panel_file_manager::FileManager::new_with_path(path);
             self.add_panel(Box::new(panel));
