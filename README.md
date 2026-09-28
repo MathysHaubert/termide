@@ -16,7 +16,7 @@ An all-in-one terminal workspace for your workstation and your servers: code edi
 
 Terminal editors cover the code; everything around it — files on remote hosts, databases, git, long-running shells, a coding agent — usually takes plugins or separate tools. TermIDE ships all of it in one binary that works out of the box on a laptop, a server, or a phone:
 
-| Feature | TermIDE | [Fresh](https://getfresh.dev) | Vim/Neovim | Helix | Micro |
+| Feature | TermIDE | Fresh | Vim/Neovim | Helix | Micro |
 |---------|:-------:|:-----:|:----------:|:-----:|:-----:|
 | LSP Support | ✓ | ✓ | ✓ | ✓ | plugin |
 | Zero Config | ✓ | ✓ | ✗ | ✓ | ✓ |
