@@ -655,8 +655,8 @@ impl Transcript {
     }
 
     /// The flattened lines of item `index` that hold its content, without the
-    /// rule or blank gap it opens with and the gap a user message ends with,
-    /// so a highlight covers the block and not its surroundings.
+    /// rule or blank gap it opens with and the gap it ends with, so a
+    /// highlight covers the block and not its surroundings.
     #[must_use]
     pub fn content_lines_of(&self, index: usize) -> Option<(usize, usize)> {
         let first = self.first_line_of(index)?;
@@ -666,7 +666,8 @@ impl Transcript {
         }
         let (lead, trail) = match self.items.get(index)? {
             Item::User { .. } => (1, 1),
-            Item::System { .. } | Item::Assistant { .. } => (1, 0),
+            Item::System { .. } => (1, 0),
+            Item::Assistant { .. } => (1, usize::from(self.gap_after(index))),
             Item::Thinking { .. }
             | Item::Tool { .. }
             | Item::Notice { .. }
@@ -717,6 +718,10 @@ impl Transcript {
                     self.flat.extend(cached.lines.iter().cloned());
                     self.line_item
                         .extend(std::iter::repeat_n(index, cached.lines.len()));
+                    if !cached.lines.is_empty() && self.gap_after(index) {
+                        self.flat.push(Line::default());
+                        self.line_item.push(index);
+                    }
                 }
             }
             for line in &self.live_footer {
@@ -726,6 +731,17 @@ impl Transcript {
             self.flat_dirty = false;
         }
         &self.flat
+    }
+
+    /// Whether a blank line follows item `index`: an answer is set apart
+    /// from the step after it, unless that step opens with a gap or rule of
+    /// its own, or is the closing line of the run the answer ended.
+    fn gap_after(&self, index: usize) -> bool {
+        matches!(self.items[index], Item::Assistant { .. })
+            && matches!(
+                self.items.get(index + 1),
+                Some(Item::Thinking { .. } | Item::Tool { .. } | Item::Notice { .. })
+            )
     }
 
     /// The flattened lines as last laid out by [`Transcript::lines`].
@@ -2631,6 +2647,39 @@ mod tests {
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains('…'), "{lines:?}");
         assert!(width_of(&lines[0]) <= 20, "{lines:?}");
+    }
+
+    #[test]
+    fn a_blank_line_sets_an_answer_apart_from_the_next_step() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::Assistant {
+            text: "Let me look.".into(),
+            error: None,
+            at: "12:00:00".into(),
+            cost: None,
+            run_ms: None,
+            streaming: false,
+        });
+        // Last in the chat, the answer ends at its meta row.
+        let lines = text_of(transcript.lines(40, &colors, false));
+        assert!(!lines.last().is_some_and(String::is_empty), "{lines:?}");
+        transcript.push(Item::Tool {
+            call: call("bash", json!({ "command": "ls" })),
+            result: None,
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+            waited_ms: None,
+            waiting: false,
+        });
+        let lines = text_of(transcript.lines(40, &colors, false));
+        let tool = lines.iter().position(|l| l.starts_with("$ ")).unwrap();
+        assert_eq!(lines[tool - 1], "", "{lines:?}");
+        assert!(!lines[tool - 2].is_empty(), "{lines:?}");
+        // The gap belongs to the answer, outside its highlight.
+        assert_eq!(transcript.item_at_line(tool - 1), Some(0));
+        assert_eq!(transcript.content_lines_of(0), Some((1, tool - 2)));
     }
 
     #[test]

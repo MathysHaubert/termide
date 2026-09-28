@@ -260,8 +260,9 @@ reviewer: check the diff`), an MCP tool with its server, name and arguments as
 as its name and a summary. The reasoning is its own block above the
 answer, and its text wraps to the width. Only the system prompt
 opens with a dim dashed rule that sets it apart from the block before; an
-annotation has none, its glyph marks it. A blank line follows your message and another precedes the answer; the
-reasoning and tool calls in between stack with no gap. A folded block is marked
+annotation has none, its glyph marks it. A blank line follows your message and another precedes the answer, and one
+follows an answer that more steps come after; the reasoning and tool calls in
+between stack with no gap. A folded block is marked
 with `▸`, an unfolded one with `▾`, right after the step's action
 (`@ Thinking ▸`, `$ Running ▸`, `< Reading ▸ src/main.rs`) or the system
 prompt's `#` (`# ▸`).
