@@ -56,6 +56,14 @@ In tree view, selecting a directory with `Insert` cascades the selection to all 
 | `Ctrl+R`          | Refresh current directory contents         |
 | `Space`           | Show file/directory information            |
 
+Copy and move work between panels the way they do in two-pane file managers:
+open a second file manager beside the first, select files in one and press
+`C` / `F5` or `M` / `F6`. The destination is pre-filled with the directory of
+the nearest other file manager (another panel's directory when there is none);
+the source directory is offered only when no panel sits anywhere else. When the
+panels span more than one directory, a dropdown under the field lists them all;
+the path stays editable.
+
 ## Search
 
 | Shortcut           | Action                                     |

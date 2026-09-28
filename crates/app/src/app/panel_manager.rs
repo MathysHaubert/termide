@@ -238,6 +238,34 @@ impl App {
         options
     }
 
+    /// Working directories of the file managers other than the focused panel,
+    /// nearest group first: the focused group itself, then the neighbouring
+    /// columns outward, the right one before the left one at equal distance.
+    /// Remote file managers report full URLs, as in
+    /// [`find_all_other_panel_paths`](Self::find_all_other_panel_paths).
+    pub(super) fn other_file_manager_paths(&self) -> Vec<String> {
+        let focus = self.layout_manager.focus;
+        let mut found: Vec<((usize, bool), String)> = Vec::new();
+        for (gi, group) in self.layout_manager.panel_groups.iter().enumerate() {
+            for (pi, panel) in group.panels().iter().enumerate() {
+                if gi == focus && pi == group.expanded_index() {
+                    continue;
+                }
+                if !panel
+                    .as_any()
+                    .is::<termide_panel_file_manager::FileManager>()
+                {
+                    continue;
+                }
+                if let Some(path) = panel.get_working_directory_display() {
+                    found.push(((gi.abs_diff(focus), gi < focus), path));
+                }
+            }
+        }
+        found.sort_by_key(|(distance, _)| *distance);
+        found.into_iter().map(|(_, path)| path).collect()
+    }
+
     /// Refresh all FM panels that show specified directory
     pub(super) fn refresh_fm_panels(&mut self, directory: &std::path::Path) {
         // Refresh all FileManager panels showing this directory

@@ -416,56 +416,41 @@ impl App {
         self.state.close_modal();
 
         // Get source directory to exclude from default selection
-        let source_dir = sources[0].parent().map(|p| p.to_path_buf());
-        let source_dir_str = source_dir.as_ref().map(|p| p.display().to_string());
+        let source_dir = sources[0].parent().map(|p| p.display().to_string());
 
         // Find all unique paths from other panels
         let options = self.find_all_other_panel_paths();
         let unique_paths_count = options.len();
 
-        // For single file: append filename to each option so dropdown shows full paths
-        let options = if sources.len() == 1 {
-            if let Some(file_name) = sources[0].file_name().and_then(|n| n.to_str()) {
-                options
-                    .into_iter()
-                    .map(|mut opt| {
-                        let base = opt.value.trim_end_matches('/');
-                        opt.value = format!("{}/{}", base, file_name);
-                        opt.display = opt.value.clone();
-                        opt
-                    })
-                    .collect()
-            } else {
-                options
-            }
-        } else {
-            options
-        };
+        let panel_dirs: Vec<String> = options.iter().map(|opt| opt.value.clone()).collect();
+        let dest_dir = default_destination_dir(
+            source_dir.as_deref(),
+            &self.other_file_manager_paths(),
+            &panel_dirs,
+        )
+        .map(str::to_string)
+        .or(source_dir)
+        .unwrap_or_else(|| "/".to_string());
 
-        // Filter out source directory for default selection
-        let source_dir_prefix = source_dir_str.as_ref().map(|s| format!("{}/", s));
-        let default_dest = options
-            .iter()
-            .find(|opt| {
-                // Compare directory part of option value against source directory
-                source_dir_prefix
-                    .as_ref()
-                    .map(|prefix| !opt.value.starts_with(prefix.as_str()))
-                    .unwrap_or(true)
+        // For single file: append filename to each option so dropdown shows full paths
+        let file_name = match sources {
+            [source] => source.file_name().and_then(|n| n.to_str()),
+            _ => None,
+        };
+        let join = |dir: &str| match file_name {
+            Some(name) => format!("{}/{}", dir.trim_end_matches('/'), name),
+            None if dir.ends_with('/') => dir.to_string(),
+            None => format!("{}/", dir),
+        };
+        let options: Vec<_> = options
+            .into_iter()
+            .map(|mut opt| {
+                opt.value = join(&opt.value);
+                opt.display = opt.value.clone();
+                opt
             })
-            .map(|opt| opt.value.clone())
-            .or_else(|| {
-                source_dir.as_ref().map(|p| {
-                    let base = format!("{}/", p.display());
-                    if sources.len() == 1 {
-                        if let Some(name) = sources[0].file_name().and_then(|n| n.to_str()) {
-                            return format!("{}{}", base, name);
-                        }
-                    }
-                    base
-                })
-            })
-            .unwrap_or_else(|| "/".to_string());
+            .collect();
+        let default_dest = join(&dest_dir);
 
         *target_directory = Some(std::path::PathBuf::from(default_dest.trim_end_matches('/')));
 
@@ -522,5 +507,69 @@ impl App {
             }
             ActiveModal::Input(Box::new(new_modal))
         }
+    }
+}
+
+/// Directory a copy or move defaults to: the nearest other file manager,
+/// else the first other panel directory, never the directory the sources
+/// come from. Directories are compared whole, so a panel sitting in a
+/// subdirectory of the source directory is a valid destination.
+fn default_destination_dir<'a>(
+    source_dir: Option<&str>,
+    file_managers: &'a [String],
+    panel_dirs: &'a [String],
+) -> Option<&'a str> {
+    let is_source = |dir: &str| {
+        source_dir.is_some_and(|src| dir.trim_end_matches('/') == src.trim_end_matches('/'))
+    };
+    file_managers
+        .iter()
+        .chain(panel_dirs)
+        .map(String::as_str)
+        .find(|dir| !is_source(dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_destination_dir;
+
+    fn dirs(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn destination_may_be_a_subdirectory_of_the_source() {
+        let panels = dirs(&["/proj/", "/proj/sub/"]);
+        assert_eq!(
+            default_destination_dir(Some("/proj"), &[], &panels),
+            Some("/proj/sub/")
+        );
+    }
+
+    #[test]
+    fn other_file_manager_wins_over_other_panels() {
+        let fms = dirs(&["/data/backup"]);
+        let panels = dirs(&["/data/backup/", "/home/", "/proj/"]);
+        assert_eq!(
+            default_destination_dir(Some("/proj"), &fms, &panels),
+            Some("/data/backup")
+        );
+    }
+
+    #[test]
+    fn file_manager_in_the_source_directory_is_skipped() {
+        let fms = dirs(&["/proj", "/tmp"]);
+        assert_eq!(
+            default_destination_dir(Some("/proj"), &fms, &[]),
+            Some("/tmp")
+        );
+    }
+
+    #[test]
+    fn no_destination_when_every_panel_is_in_the_source_directory() {
+        let fms = dirs(&["/proj"]);
+        let panels = dirs(&["/proj/"]);
+        assert_eq!(default_destination_dir(Some("/proj"), &fms, &panels), None);
+        assert_eq!(default_destination_dir(Some("/"), &dirs(&["/"]), &[]), None);
     }
 }
