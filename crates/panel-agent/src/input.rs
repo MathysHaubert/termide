@@ -835,7 +835,8 @@ impl AgentPanel {
         }
 
         // Chat focus: the arrows walk the blocks, Space/Enter fold the one
-        // under the cursor, Tab or Esc hands focus back to the input.
+        // under the cursor and ←/→ fold or unfold it as in the file manager's
+        // tree, Tab or Esc hands focus back to the input.
         if self.chat_focus {
             let count = self.transcript.items().len();
             match key.code {
@@ -866,6 +867,13 @@ impl AgentPanel {
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
                     self.transcript.toggle_expanded(self.selected);
+                    return vec![PanelEvent::NeedsRedraw];
+                }
+                KeyCode::Left | KeyCode::Right if !ctrl && !alt && !shift => {
+                    let expand = key.code == KeyCode::Right;
+                    if !self.transcript.set_expanded(self.selected, expand) {
+                        return vec![];
+                    }
                     return vec![PanelEvent::NeedsRedraw];
                 }
                 KeyCode::Char('o') if !ctrl => {

@@ -588,6 +588,22 @@ impl Transcript {
         true
     }
 
+    /// Show (`expanded` true) or hide the detail of item `index`; false when
+    /// it does not fold or already is that way.
+    pub fn set_expanded(&mut self, index: usize, expanded: bool) -> bool {
+        if !self.foldable(index) {
+            return false;
+        }
+        match self.collapsed.get_mut(index) {
+            Some(slot) if *slot == expanded => {
+                *slot = !expanded;
+                self.invalidate(index);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Expand (`value` true) or collapse every foldable item at once.
     pub fn set_all_expanded(&mut self, value: bool) {
         for index in 0..self.items.len() {

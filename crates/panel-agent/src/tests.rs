@@ -3414,6 +3414,18 @@ fn tab_moves_focus_to_the_chat_and_arrows_fold_blocks() {
     panel.handle_key(chord(KeyCode::Char(' '), KeyModifiers::NONE));
     assert!(!panel.transcript().any_expanded());
 
+    // Right unfolds it and Left folds it, as in the file manager's tree; a
+    // second press in the same direction leaves it as it is.
+    panel.handle_key(chord(KeyCode::Right, KeyModifiers::NONE));
+    assert!(panel.transcript.is_expanded(1));
+    panel.handle_key(chord(KeyCode::Right, KeyModifiers::NONE));
+    assert!(panel.transcript.is_expanded(1));
+    panel.handle_key(chord(KeyCode::Left, KeyModifiers::NONE));
+    assert!(!panel.transcript.is_expanded(1));
+    panel.handle_key(chord(KeyCode::Left, KeyModifiers::NONE));
+    assert!(!panel.transcript.is_expanded(1));
+    assert!(panel.input_text().is_empty(), "the arrows stay in the chat");
+
     // Up walks to the user block; a printable key does not type.
     panel.handle_key(chord(KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(panel.selected, 0);

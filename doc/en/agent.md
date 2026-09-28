@@ -206,7 +206,7 @@ you have named or sent even one message to is always kept.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every block, and new blocks after them |
-| `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `o` opens it in its own panel |
+| `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `→`/`←` unfold or fold it as in the file manager's tree, `o` opens it in its own panel |
 | Click a block | Focus the chat and select that block (the selected block is shown inverted, success and error colours keeping their hue); click it again to fold or unfold it |
 | `Ctrl+C` | Copy: the selected prompt text, or — with a block selected in the chat — the block's text |
 | `Ctrl+X` / `Ctrl+V` | Cut / paste the prompt selection |
@@ -341,7 +341,8 @@ conversation restores each block's time, its reasoning, the turn's
 prefill/generation lines and each tool call's duration from the log.
 
 Unfold a block to see all of it: click it, or press `Tab` to move into the
-chat and `Space`/`Enter` on the block the `↑`/`↓` cursor is on. `Ctrl+O`
+chat and `Space`/`Enter` or `→` on the block the `↑`/`↓` cursor is on (`←`
+folds it back). `Ctrl+O`
 unfolds everything at once and keeps the blocks that arrive after it unfolded
 too; pressed again, it folds everything back and new blocks fold as
 `fold_blocks` says (on finish, when that is `never`). `o` opens the selected block in its own
