@@ -786,20 +786,20 @@ impl App {
                     scope_global,
                 } => {
                     if let Some(name) = value.downcast_ref::<String>() {
-                        self.ai_create_item(&section, scope_global, name)?;
+                        self.ai_create_item(section, scope_global, name)?;
                     }
                 }
                 PendingAction::AiDelete { section, path } => {
                     if value.downcast_ref::<bool>().copied().unwrap_or(false) {
-                        self.ai_delete_item(&section, &path)?;
-                        self.reopen_ai_menu(&section);
+                        self.ai_delete_item(section, &path)?;
+                        self.reopen_ai_menu(section);
                     }
                 }
                 PendingAction::AiRename { section, path } => {
                     if let Some(new_name) = value.downcast_ref::<String>() {
-                        self.ai_rename_item(&section, &path, new_name)?;
+                        self.ai_rename_item(section, &path, new_name)?;
                     }
-                    self.reopen_ai_menu(&section);
+                    self.reopen_ai_menu(section);
                 }
                 PendingAction::RenameBookmark {
                     path,

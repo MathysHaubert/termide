@@ -393,7 +393,7 @@ impl AppState {
     }
 
     /// Open the AI nested submenu for `section` (the section's item list).
-    pub fn open_ai_nested_submenu(&mut self, section: String) {
+    pub fn open_ai_nested_submenu(&mut self, section: termide_state::AiSection) {
         self.ui.ai_nested.open();
         self.ui.current_ai_section = Some(section);
     }
@@ -441,41 +441,44 @@ impl AppState {
         )
     }
 
+    /// The Sessions section's rows: the project's session logs, newest first.
+    fn ai_session_items(&self) -> Vec<termide_ui_render::DropdownItem> {
+        use termide_ui_render::DropdownItem;
+        let sessions = self
+            .ai_sessions_dir()
+            .and_then(|dir| termide_agent_core::Session::list(&dir).ok())
+            .unwrap_or_default();
+        if sessions.is_empty() {
+            return vec![DropdownItem::new(
+                termide_i18n::t().ai_empty(),
+                String::new(),
+            )];
+        }
+        sessions
+            .into_iter()
+            .map(|s| {
+                DropdownItem::new(s.label(), format!("session:{}", s.path.to_string_lossy()))
+                    .with_shortcut(Some(relative_millis_ago(s.modified)))
+            })
+            .collect()
+    }
+
     /// Build one AI section's dropdown rows. Called by both the renderer and the
-    /// action handler so they address the same rows by index. `section` is one
-    /// of `agents`/`sessions`/`skills`/`prompts`. Agents, skills and prompts get
+    /// action handler so they address the same rows by index. Agents, skills and prompts get
     /// two "New …" rows and a separator before the merged, source-marked items
     /// (project-local first, in bold); sessions list the project's logs only.
-    pub fn ai_section_items(&self, section: &str) -> Vec<termide_ui_render::DropdownItem> {
+    pub fn ai_section_items(
+        &self,
+        section: termide_state::AiSection,
+    ) -> Vec<termide_ui_render::DropdownItem> {
+        use termide_state::AiSection;
         use termide_ui_render::DropdownItem;
         let t = termide_i18n::t();
 
-        if section == "sessions" {
-            let sessions = self
-                .ai_sessions_dir()
-                .and_then(|dir| termide_agent_core::Session::list(&dir).ok())
-                .unwrap_or_default();
-            if sessions.is_empty() {
-                return vec![DropdownItem::new(t.ai_empty(), String::new())];
-            }
-            return sessions
-                .into_iter()
-                .map(|s| {
-                    DropdownItem::new(s.label(), format!("session:{}", s.path.to_string_lossy()))
-                        .with_shortcut(Some(relative_millis_ago(s.modified)))
-                })
-                .collect();
-        }
-
-        let mut items = vec![
-            DropdownItem::new(t.menu_ai_new_project(), "new:project"),
-            DropdownItem::new(t.menu_ai_new_global(), "new:global"),
-            DropdownItem::separator(),
-        ];
-
         let dirs = self.ai_dirs();
         let mut listed: Vec<(String, bool)> = match section {
-            "agents" => dirs
+            AiSection::Sessions => return self.ai_session_items(),
+            AiSection::Agents => dirs
                 .agents()
                 .into_iter()
                 .filter(|n| n != termide_agent_core::DEFAULT_AGENT)
@@ -487,7 +490,7 @@ impl AppState {
                     (name, is_project)
                 })
                 .collect(),
-            "skills" => dirs
+            AiSection::Skills => dirs
                 .skills()
                 .into_iter()
                 .map(|s| {
@@ -495,7 +498,7 @@ impl AppState {
                     (s.name, is_project)
                 })
                 .collect(),
-            "prompts" => dirs
+            AiSection::Prompts => dirs
                 .prompts()
                 .into_iter()
                 .map(|p| {
@@ -506,8 +509,12 @@ impl AppState {
                     (p.name, is_project)
                 })
                 .collect(),
-            _ => Vec::new(),
         };
+        let mut items = vec![
+            DropdownItem::new(t.menu_ai_new_project(), "new:project"),
+            DropdownItem::new(t.menu_ai_new_global(), "new:global"),
+            DropdownItem::separator(),
+        ];
         // Project-local first (bold), then global; each group alphabetical.
         listed.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let has_project = listed.iter().any(|(_, p)| *p);

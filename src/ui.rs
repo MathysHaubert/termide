@@ -160,8 +160,8 @@ fn render_dropdowns_and_modals(
 
         // The selected section's item list, to the right.
         if state.ui.ai_nested.open {
-            if let Some(section) = state.ui.current_ai_section.clone() {
-                let nested_items = state.ai_section_items(&section);
+            if let Some(section) = state.ui.current_ai_section {
+                let nested_items = state.ai_section_items(section);
                 if !nested_items.is_empty() {
                     let nested_x = menu_x + dropdown.width();
                     let nested_y = dropdown_y + 1 + state.ui.ai_submenu.selected as u16;

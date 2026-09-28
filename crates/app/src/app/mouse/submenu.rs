@@ -330,8 +330,8 @@ impl App {
 
         // Nested section list first.
         if self.state.ui.ai_nested.open {
-            if let Some(section) = self.state.ui.current_ai_section.clone() {
-                let nested_items = self.state.ai_section_items(&section);
+            if let Some(section) = self.state.ui.current_ai_section {
+                let nested_items = self.state.ai_section_items(section);
                 if !nested_items.is_empty() {
                     let nested_x = menu_x + dropdown_width(&ai_items);
                     let nested_y = 2 + self.state.ui.ai_submenu.selected as u16;
@@ -367,7 +367,7 @@ impl App {
                         self.screen_rect(),
                     ) {
                         self.state.ui.ai_nested.selected = index;
-                        self.execute_ai_nested_action(&section)?;
+                        self.execute_ai_nested_action(section)?;
                         return Ok(true);
                     }
                 }

@@ -325,8 +325,8 @@ pub struct UiState {
     pub ai_submenu: SubmenuState,
     /// AI nested submenu state (the selected section's item list)
     pub ai_nested: SubmenuState,
-    /// Current AI section key (`agents`/`sessions`/`skills`/`prompts`)
-    pub current_ai_section: Option<String>,
+    /// The AI section whose item list is open
+    pub current_ai_section: Option<crate::AiSection>,
     /// AI agent file-choice submenu (third level: SOUL.md vs agent.toml)
     pub ai_agent_choice: SubmenuState,
     /// The agent whose file-choice submenu is open

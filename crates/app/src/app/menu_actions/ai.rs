@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use termide_state::AiSection;
 
 use super::super::App;
 use super::{navigate_submenu, SubmenuNavAction};
@@ -104,10 +105,10 @@ impl App {
                 super::super::agent_panel::toggle_web_browser();
                 return;
             }
-            let section = item.key.clone();
-            if self.state.ui.ai_nested.open
-                && self.state.ui.current_ai_section.as_deref() == Some(section.as_str())
-            {
+            let Some(section) = AiSection::from_key(&item.key) else {
+                return;
+            };
+            if self.state.ui.ai_nested.open && self.state.ui.current_ai_section == Some(section) {
                 self.state.close_ai_nested_submenu();
             } else {
                 self.state.ui.ai_nested.selected = 0;
@@ -122,11 +123,11 @@ impl App {
         if self.state.ui.ai_agent_choice.open {
             return self.handle_ai_agent_choice_key(key);
         }
-        let Some(section) = self.state.ui.current_ai_section.clone() else {
+        let Some(section) = self.state.ui.current_ai_section else {
             self.state.close_ai_nested_submenu();
             return Ok(());
         };
-        let items = self.state.ai_section_items(&section);
+        let items = self.state.ai_section_items(section);
         let separators: Vec<usize> = items
             .iter()
             .enumerate()
@@ -139,10 +140,10 @@ impl App {
             }
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
             SubmenuNavAction::Execute | SubmenuNavAction::Edit => {
-                self.execute_ai_nested_action(&section)?;
+                self.execute_ai_nested_action(section)?;
             }
-            SubmenuNavAction::Delete => self.delete_ai_selected(&section)?,
-            SubmenuNavAction::Rename => self.rename_ai_selected(&section)?,
+            SubmenuNavAction::Delete => self.delete_ai_selected(section)?,
+            SubmenuNavAction::Rename => self.rename_ai_selected(section)?,
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -150,7 +151,7 @@ impl App {
 
     /// The key of the selected row, skipping separators and the empty
     /// placeholder.
-    fn ai_selected_key(&self, section: &str) -> Option<String> {
+    fn ai_selected_key(&self, section: AiSection) -> Option<String> {
         let items = self.state.ai_section_items(section);
         items
             .get(self.state.ui.ai_nested.selected)
@@ -163,7 +164,7 @@ impl App {
     // =========================================================================
 
     /// Enter/F4 on a row: create, edit a file, or open a session.
-    pub(in crate::app) fn execute_ai_nested_action(&mut self, section: &str) -> Result<()> {
+    pub(in crate::app) fn execute_ai_nested_action(&mut self, section: AiSection) -> Result<()> {
         let Some(key) = self.ai_selected_key(section) else {
             return Ok(());
         };
@@ -174,8 +175,8 @@ impl App {
         if let Some(name) = key.strip_prefix("item:") {
             let name = name.to_string();
             match section {
-                "agents" => self.toggle_ai_agent_choice(&name),
-                "skills" => {
+                AiSection::Agents => self.toggle_ai_agent_choice(&name),
+                AiSection::Skills => {
                     if let Some(path) = self
                         .state
                         .ai_dirs()
@@ -188,13 +189,14 @@ impl App {
                         self.open_path_in_editor(path)?;
                     }
                 }
-                "prompts" => {
+                AiSection::Prompts => {
                     if let Some(path) = self.state.ai_dirs().prompt_path(&name) {
                         self.state.close_menu();
                         self.open_path_in_editor(path)?;
                     }
                 }
-                _ => {}
+                // Session rows carry `session:` keys, handled below.
+                AiSection::Sessions => {}
             }
             return Ok(());
         }
@@ -281,13 +283,13 @@ impl App {
     }
 
     /// Ask for a name, then scaffold the new item at the chosen scope.
-    fn ai_create(&mut self, section: &str, scope_global: bool) {
+    fn ai_create(&mut self, section: AiSection, scope_global: bool) {
         self.state.close_menu();
         let t = termide_i18n::t();
         let modal = termide_modal::InputModal::new(t.ai_create_title(), t.ai_create_title());
         self.state.set_pending_action(
             termide_state::PendingAction::AiCreate {
-                section: section.to_string(),
+                section,
                 scope_global,
             },
             crate::state::ActiveModal::Input(Box::new(modal)),
@@ -295,7 +297,7 @@ impl App {
     }
 
     /// Resolve the on-disk target of the selected row.
-    fn ai_target(&self, section: &str) -> Option<AiTarget> {
+    fn ai_target(&self, section: AiSection) -> Option<AiTarget> {
         let key = self.ai_selected_key(section)?;
         if let Some(path) = key.strip_prefix("session:") {
             let path = PathBuf::from(path);
@@ -312,14 +314,14 @@ impl App {
         let name = key.strip_prefix("item:")?.to_string();
         let dirs = self.state.ai_dirs();
         let path = match section {
-            "agents" => dirs.agent_dir(&name)?,
-            "skills" => dirs
+            AiSection::Agents => dirs.agent_dir(&name)?,
+            AiSection::Skills => dirs
                 .skills()
                 .into_iter()
                 .find(|s| s.name == name)
                 .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))?,
-            "prompts" => dirs.prompt_path(&name)?,
-            _ => return None,
+            AiSection::Prompts => dirs.prompt_path(&name)?,
+            AiSection::Sessions => return None,
         };
         Some(AiTarget {
             path,
@@ -329,13 +331,13 @@ impl App {
     }
 
     /// Delete the selected item, after confirmation.
-    fn delete_ai_selected(&mut self, section: &str) -> Result<()> {
+    fn delete_ai_selected(&mut self, section: AiSection) -> Result<()> {
         let Some(target) = self.ai_target(section) else {
             return Ok(());
         };
         self.state.close_menu();
         let t = termide_i18n::t();
-        let (title, message) = if section == "sessions" {
+        let (title, message) = if section == AiSection::Sessions {
             let summary = self
                 .state
                 .ai_sessions_dir()
@@ -360,7 +362,7 @@ impl App {
         let modal = termide_modal::ConfirmModal::new(title, message);
         self.state.set_pending_action(
             termide_state::PendingAction::AiDelete {
-                section: section.to_string(),
+                section,
                 path: target.path.to_string_lossy().into_owned(),
             },
             crate::state::ActiveModal::Confirm(Box::new(modal)),
@@ -369,7 +371,7 @@ impl App {
     }
 
     /// Rename the selected item (a display name for sessions, a path otherwise).
-    fn rename_ai_selected(&mut self, section: &str) -> Result<()> {
+    fn rename_ai_selected(&mut self, section: AiSection) -> Result<()> {
         let Some(target) = self.ai_target(section) else {
             return Ok(());
         };
@@ -383,7 +385,7 @@ impl App {
         );
         self.state.set_pending_action(
             termide_state::PendingAction::AiRename {
-                section: section.to_string(),
+                section,
                 path: target.path.to_string_lossy().into_owned(),
             },
             crate::state::ActiveModal::Input(Box::new(modal)),
@@ -418,7 +420,7 @@ impl App {
     /// Scaffold a new agent/skill/prompt and open its primary file.
     pub(in crate::app) fn ai_create_item(
         &mut self,
-        section: &str,
+        section: AiSection,
         scope_global: bool,
         name: &str,
     ) -> Result<()> {
@@ -429,7 +431,7 @@ impl App {
         }
         let root = self.ai_create_root(scope_global);
         let open_path: Option<PathBuf> = match section {
-            "agents" => {
+            AiSection::Agents => {
                 let dir = root.join("agents").join(name);
                 if dir.exists() {
                     None
@@ -444,7 +446,7 @@ impl App {
                     Some(soul)
                 }
             }
-            "skills" => {
+            AiSection::Skills => {
                 let dir = root.join("skills").join(name);
                 if dir.exists() {
                     None
@@ -455,7 +457,7 @@ impl App {
                     Some(file)
                 }
             }
-            "prompts" => {
+            AiSection::Prompts => {
                 let dir = root.join("prompts");
                 std::fs::create_dir_all(&dir)?;
                 let file = dir.join(format!("{name}.md"));
@@ -466,7 +468,8 @@ impl App {
                     Some(file)
                 }
             }
-            _ => None,
+            // Sessions come from the agent panel, not from this menu.
+            AiSection::Sessions => return Ok(()),
         };
         match open_path {
             Some(path) => self.open_path_in_editor(path)?,
@@ -476,9 +479,9 @@ impl App {
     }
 
     /// Delete a resource's file or directory.
-    pub(in crate::app) fn ai_delete_item(&mut self, section: &str, path: &str) -> Result<()> {
+    pub(in crate::app) fn ai_delete_item(&mut self, section: AiSection, path: &str) -> Result<()> {
         let path = PathBuf::from(path);
-        let result = if section == "prompts" || section == "sessions" {
+        let result = if section.item_is_file() {
             std::fs::remove_file(&path)
         } else {
             std::fs::remove_dir_all(&path)
@@ -493,13 +496,13 @@ impl App {
     /// Rename a resource: a session's display name, or a file/directory move.
     pub(in crate::app) fn ai_rename_item(
         &mut self,
-        section: &str,
+        section: AiSection,
         path: &str,
         new_name: &str,
     ) -> Result<()> {
         let new_name = new_name.trim();
         let path = PathBuf::from(path);
-        if section == "sessions" {
+        if section == AiSection::Sessions {
             if !new_name.is_empty() {
                 if let Ok(mut session) = termide_agent_core::Session::open_exclusive(&path) {
                     let _ = session.set_name(new_name);
@@ -512,9 +515,10 @@ impl App {
             self.show_error_modal(termide_i18n::t().ai_name_invalid().to_string());
             return Ok(());
         }
-        let target = match section {
-            "prompts" => path.with_file_name(format!("{new_name}.md")),
-            _ => path.with_file_name(new_name),
+        let target = if section == AiSection::Prompts {
+            path.with_file_name(format!("{new_name}.md"))
+        } else {
+            path.with_file_name(new_name)
         };
         if target.exists() {
             self.show_error_modal(termide_i18n::t().ai_name_exists().to_string());
@@ -532,26 +536,46 @@ impl App {
     // =========================================================================
 
     /// Reopen the AI menu on `section` after a create/delete/rename modal.
-    pub(in crate::app) fn reopen_ai_menu(&mut self, section: &str) {
+    pub(in crate::app) fn reopen_ai_menu(&mut self, section: AiSection) {
         use termide_ui_render::menu::AI_MENU_INDEX;
-        let index = match section {
-            "agents" => termide_ui_render::AI_SUBMENU_AGENTS,
-            "sessions" => termide_ui_render::AI_SUBMENU_SESSIONS,
-            "skills" => termide_ui_render::AI_SUBMENU_SKILLS,
-            "prompts" => termide_ui_render::AI_SUBMENU_PROMPTS,
-            _ => return,
-        };
         self.state.ui.menu_open = true;
         self.state.ui.selected_menu_item = Some(AI_MENU_INDEX);
         self.state.open_ai_submenu();
-        self.state.ui.ai_submenu.selected = index;
-        self.state.open_ai_nested_submenu(section.to_string());
+        self.state.ui.ai_submenu.selected = section.index();
+        self.state.open_ai_nested_submenu(section);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{session_delete_message, truncate_label};
+    use super::{session_delete_message, truncate_label, AiSection};
+
+    /// The renderer names the sections by key; each row must name the
+    /// section at its index, which is how the handlers address it.
+    #[test]
+    fn the_menu_rows_are_the_sections_in_order() {
+        let items = termide_ui_render::get_ai_items(None);
+        assert_eq!(items.len(), termide_ui_render::AI_SUBMENU_ITEM_COUNT);
+        for section in AiSection::ALL {
+            assert_eq!(items[section.index()].key, section.key());
+        }
+        assert_eq!(
+            AiSection::Agents.index(),
+            termide_ui_render::AI_SUBMENU_AGENTS
+        );
+        assert_eq!(
+            AiSection::Sessions.index(),
+            termide_ui_render::AI_SUBMENU_SESSIONS
+        );
+        assert_eq!(
+            AiSection::Skills.index(),
+            termide_ui_render::AI_SUBMENU_SKILLS
+        );
+        assert_eq!(
+            AiSection::Prompts.index(),
+            termide_ui_render::AI_SUBMENU_PROMPTS
+        );
+    }
 
     #[test]
     fn session_delete_message_names_the_session() {
