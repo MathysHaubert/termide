@@ -434,8 +434,14 @@ fn the_stop_control_is_red_only_while_a_stop_is_under_way() {
     let mut panel = AgentPanel::new(setup(vec![]));
     panel.apply(AgentEvent::AgentStart);
     let colors = panel.colors;
-    assert_eq!(panel.run_button_color(RunButton::Pause), colors.fg);
-    assert_eq!(panel.run_button_color(RunButton::Stop), colors.fg);
+    assert_eq!(
+        panel.run_button_color(RunButton::Pause),
+        colors.border_focused
+    );
+    assert_eq!(
+        panel.run_button_color(RunButton::Stop),
+        colors.border_focused
+    );
     panel.request_pause();
     panel.abort();
     // A stop under way leaves stop alone, red, and a second press adds
@@ -448,7 +454,10 @@ fn the_stop_control_is_red_only_while_a_stop_is_under_way() {
     panel.apply(AgentEvent::AgentEnd);
     panel.apply(AgentEvent::AgentStart);
     assert_eq!(panel.run_buttons(), vec![RunButton::Pause, RunButton::Stop]);
-    assert_eq!(panel.run_button_color(RunButton::Stop), colors.fg);
+    assert_eq!(
+        panel.run_button_color(RunButton::Stop),
+        colors.border_focused
+    );
 }
 
 fn type_text(panel: &mut AgentPanel, text: &str) {

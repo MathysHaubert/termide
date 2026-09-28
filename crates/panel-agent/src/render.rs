@@ -369,15 +369,16 @@ impl AgentPanel {
         }
     }
 
-    /// A run control's color: neutral at rest, so a control does not look
-    /// engaged just because a run is on; continue is green and stop red
-    /// only while the pause or stop they stand for is under way.
+    /// A run control's color: the panel border's accent at rest, so a
+    /// control reads as part of the frame rather than engaged just because
+    /// a run is on; continue is green and stop red only while the pause or
+    /// stop they stand for is under way.
     pub(crate) fn run_button_color(&self, button: RunButton) -> Color {
         match button {
-            RunButton::Pause => self.colors.fg,
+            RunButton::Pause => self.colors.border_focused,
             RunButton::Continue => self.colors.success,
             RunButton::Stop if self.stop_requested => self.colors.error,
-            RunButton::Stop => self.colors.fg,
+            RunButton::Stop => self.colors.border_focused,
         }
     }
 

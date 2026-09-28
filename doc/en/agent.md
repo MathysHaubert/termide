@@ -279,7 +279,7 @@ while the agent works; once a pause is asked for, `[▶]` takes the place of
 `/continue`, and `[■]` gives the paused run up (the calls it left unrun are
 closed by the next request). Claude Code and Codex run their own loop, which
 cannot stop between steps: they show `[■]` alone, and `/pause` says so. The
-controls are neutral at rest; `[▶]` is green. Once `[■]` (or `Esc`) is pressed,
+controls take the panel border's accent color at rest; `[▶]` is green. Once `[■]` (or `Esc`) is pressed,
 a stop cannot be taken back: until the run has actually stopped, only a red
 `[■]` stays, and pressing it again does nothing.
 
