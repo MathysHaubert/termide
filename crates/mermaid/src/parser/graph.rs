@@ -11,8 +11,8 @@ struct Connector {
 }
 
 /// Parse a `flowchart`/`graph` source. Supports common node shapes, plain and
-/// `|label|` edges, chains (`A --> B --> C`), and solid/dotted/thick lines.
-/// Subgraphs and inline `-- label -->` edges are not parsed yet.
+/// `|label|` and inline `-- label -->` edges, chains (`A --> B --> C`), and
+/// solid/dotted/thick lines. Subgraphs are not parsed yet.
 pub fn parse_flowchart(src: &str) -> Flowchart {
     let mut fc = Flowchart {
         direction: Direction::Down,
@@ -138,6 +138,15 @@ fn scan_connector(chars: &[char], mut i: usize) -> Option<Connector> {
     let thick = chars[i] == '=';
     let dotted = chars[i] == '-' && chars.get(i + 1) == Some(&'.');
     let mut j = i;
+    let mut label = String::new();
+    // An inline label, `A -- text --> B`: the opening pair alone, then the
+    // text up to the closing connector of the same style.
+    if chars.get(i + 2) == Some(&' ') {
+        if let Some(close) = find_label_close(chars, i + 2, thick, dotted) {
+            label = chars[i + 2..close].iter().collect();
+            j = close;
+        }
+    }
     let mut arrow = false;
     while j < chars.len() {
         match chars[j] {
@@ -154,12 +163,11 @@ fn scan_connector(chars: &[char], mut i: usize) -> Option<Connector> {
             _ => break,
         }
     }
-    let mut label = String::new();
     let mut k = j;
     while k < chars.len() && chars[k] == ' ' {
         k += 1;
     }
-    if chars.get(k) == Some(&'|') {
+    if label.is_empty() && chars.get(k) == Some(&'|') {
         k += 1;
         while k < chars.len() && chars[k] != '|' {
             label.push(chars[k]);
@@ -183,6 +191,31 @@ fn scan_connector(chars: &[char], mut i: usize) -> Option<Connector> {
         arrow,
         label: label.trim().to_string(),
     })
+}
+
+/// Where the closing connector of an inline label starts, searching from
+/// `start`: `--`/`==` for solid and thick lines, `.-` for dotted ones. The
+/// closing run must end in a head or be a bare link (`---`, `===`, `.-`),
+/// so a label cannot swallow the next edge of a chain.
+fn find_label_close(chars: &[char], start: usize, thick: bool, dotted: bool) -> Option<usize> {
+    let mut p = start;
+    while p + 1 < chars.len() {
+        if chars[p] == '|' {
+            return None;
+        }
+        let opens = if dotted {
+            chars[p] == '.' && chars[p + 1] == '-'
+        } else if thick {
+            chars[p] == '=' && chars[p + 1] == '='
+        } else {
+            chars[p] == '-' && chars[p + 1] == '-'
+        };
+        if opens && p > start && chars[p - 1] == ' ' {
+            return Some(p);
+        }
+        p += 1;
+    }
+    None
 }
 
 /// Register/update a node from a spec like `A`, `A[Label]`, `A{Decision}`.
@@ -341,6 +374,21 @@ mod tests {
         assert_eq!(fc.nodes[2].shape, NodeShape::Stadium);
         let labeled = fc.edges.iter().find(|e| e.label == "yes");
         assert!(labeled.is_some(), "edge label not parsed: {:?}", fc.edges);
+    }
+
+    #[test]
+    fn flowchart_inline_edge_labels() {
+        let fc = parse_flowchart(
+            "flowchart LR\nA -- yes --> B\nA -. maybe .-> C\nA == sure ==> D\nA -- two words --- E --> F",
+        );
+        let ids: Vec<&str> = fc.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["A", "B", "C", "D", "E", "F"]);
+        let labels: Vec<&str> = fc.edges.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, vec!["yes", "maybe", "sure", "two words", ""]);
+        assert_eq!(fc.edges[1].line, EdgeLine::Dotted);
+        assert_eq!(fc.edges[2].line, EdgeLine::Thick);
+        assert!(fc.edges[0].arrow);
+        assert!(!fc.edges[3].arrow);
     }
 
     #[test]

@@ -183,13 +183,11 @@ fn assign_cross(
                 };
             }
             // Place left-to-right honoring desired + minimum spacing.
-            let mut prev_right = i64::MIN / 4;
+            let mut prev_end = i64::MIN / 4;
             for (idx, &i) in g.iter().enumerate() {
-                let half = (size[i] / 2) as i64;
-                let min_center = prev_right + gap as i64 + half;
-                let c = desired[idx].max(min_center);
+                let c = desired[idx].max(min_center(prev_end, gap, size[i]));
                 center[i] = c;
-                prev_right = c + half;
+                prev_end = end_after(c, size[i]);
             }
             // Re-center the rank. The pass above can only push a node right of
             // its desired position (never left), so a rank whose nodes crowd the
@@ -221,17 +219,15 @@ fn assign_cross(
     // nodes keep their barycenter positions; only dummies move, clamped to
     // their rank's left-to-right order and spacing.
     for g in groups {
-        let mut prev_right = i64::MIN / 4;
+        let mut prev_end = i64::MIN / 4;
         for &i in g {
-            let half = (size[i] / 2) as i64;
-            let min_center = prev_right + gap as i64 + half;
             let desired = if is_dummy[i] && !preds[i].is_empty() {
                 preds[i].iter().map(|&p| center[p]).sum::<i64>() / preds[i].len() as i64
             } else {
                 center[i]
             };
-            center[i] = desired.max(min_center);
-            prev_right = center[i] + half;
+            center[i] = desired.max(min_center(prev_end, gap, size[i]));
+            prev_end = end_after(center[i], size[i]);
         }
     }
 
@@ -241,4 +237,16 @@ fn assign_cross(
         .min()
         .unwrap_or(0);
     (0..n).map(|i| (center[i] - min_left) as usize).collect()
+}
+
+/// A box of `size` centred on `c` spans `c - size / 2 .. c - size / 2 + size`
+/// (see the `Rect` placement in [`layout`]); this is its first free cell.
+fn end_after(c: i64, size: usize) -> i64 {
+    c - (size / 2) as i64 + size as i64
+}
+
+/// The smallest centre for a box of `size` that leaves `gap` free cells after
+/// a neighbour ending (exclusive) at `prev_end`.
+fn min_center(prev_end: i64, gap: usize, size: usize) -> i64 {
+    prev_end + gap as i64 + (size / 2) as i64
 }

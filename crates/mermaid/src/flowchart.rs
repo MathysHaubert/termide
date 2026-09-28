@@ -176,6 +176,42 @@ pub fn render_flowchart(fc: &Flowchart) -> Vec<String> {
     }
     let ext = rank_ext.len();
 
+    // Every edge meeting a box side attaches to a cell of its own inside the
+    // border, never a corner: grow a box along the cross axis when one side
+    // carries more edges than it has room for (a vertical box widens and keeps
+    // a free column between attachments; a horizontal one only gets taller).
+    // A binary fork leaves the cross sides, so its exits claim no slot.
+    let vertical = fc.direction.vertical();
+    let mut seg_out = vec![0usize; ext];
+    for s in &segs {
+        seg_out[s.from] += 1;
+    }
+    let mut side_load = vec![[0usize; 2]; n];
+    for s in &segs {
+        let (rf, rt) = (rank_ext[s.from], rank_ext[s.to]);
+        if rf == rt {
+            continue; // same-rank edges join facing sides, not a fan
+        }
+        let forward = rt > rf;
+        if s.from < n && seg_out[s.from] != 2 {
+            side_load[s.from][usize::from(forward)] += 1;
+        }
+        if s.to < n {
+            side_load[s.to][usize::from(!forward)] += 1;
+        }
+    }
+    for (i, load) in side_load.iter().enumerate() {
+        let k = load[0].max(load[1]);
+        if k < 2 {
+            continue;
+        }
+        if vertical {
+            bw[i] = bw[i].max(2 * k + 1);
+        } else {
+            bh[i] = bh[i].max(k + 2);
+        }
+    }
+
     let mut groups_ext: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
     for (i, &r) in rank_ext.iter().enumerate() {
         groups_ext[r].push(i);
@@ -192,7 +228,6 @@ pub fn render_flowchart(fc: &Flowchart) -> Vec<String> {
     let max_label = edge_label.iter().copied().max().unwrap_or(0);
     let col_gap = COL_GAP.max(max_label + 1);
 
-    let vertical = fc.direction.vertical();
     // (from, to, has_label, is_solid) per segment. A gap carrying both a label
     // and an elbow needs the tallest channel so the label clears the jog row; a
     // non-solid edge needs at least a line row so its dotted/thick glyph shows.
@@ -312,14 +347,18 @@ pub fn render_flowchart(fc: &Flowchart) -> Vec<String> {
 
     for (i, node) in fc.nodes.iter().enumerate() {
         let r = rects[i];
-        c.draw_panel(
-            r.x,
-            r.y,
-            r.w - 2,
-            &node.label,
-            &node.body,
-            corners(node.shape),
-        );
+        if node.body.is_empty() && r.h > BOX_H {
+            c.draw_tall_box(r.x, r.y, r.w - 2, r.h, &node.label, corners(node.shape));
+        } else {
+            c.draw_panel(
+                r.x,
+                r.y,
+                r.w - 2,
+                &node.label,
+                &node.body,
+                corners(node.shape),
+            );
+        }
     }
 
     // Attach edges to box borders with T-junctions (over the box outline).
@@ -444,6 +483,77 @@ mod tests {
             two_bars,
             "long edge did not run as a straight bypass:\n{out}"
         );
+    }
+
+    /// No edge may attach to a box corner or leave a stub hanging off one:
+    /// every junction glyph sits on a straight border cell.
+    fn assert_no_corner_attachments(lines: &[String]) {
+        let grid: Vec<Vec<char>> = lines.iter().map(|l| l.chars().collect()).collect();
+        let at = |x: usize, y: usize| grid.get(y).and_then(|r| r.get(x)).copied().unwrap_or(' ');
+        for (y, row) in grid.iter().enumerate() {
+            for (x, &ch) in row.iter().enumerate() {
+                let neighbours = match ch {
+                    '┬' | '┴' => [at(x.wrapping_sub(1), y), at(x + 1, y)],
+                    '├' | '┤' => [at(x, y.wrapping_sub(1)), at(x, y + 1)],
+                    _ => continue,
+                };
+                // Along the border: a straight run, a corner, or a sibling
+                // junction on the same side.
+                let along = if matches!(ch, '┬' | '┴') {
+                    "─┬┴┌┐└┘╭╮╰╯"
+                } else {
+                    "│├┤┌┐└┘╭╮╰╯"
+                };
+                assert!(
+                    neighbours.iter().all(|&n| along.contains(n)),
+                    "junction {ch} at ({x},{y}) is not on a border:\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn horizontal_fork_leaves_top_and_bottom() {
+        // A binary branch in LR leaves the top and bottom of the decision and
+        // reaches each child on a clean elbow, labels on the runs.
+        let lines = render_flowchart(&parse_flowchart(
+            "flowchart LR\nA[Count] --> B{Low?}\nB -- yes --> C[Report]\nB -- no --> D[Skip]",
+        ));
+        let out = lines.join("\n");
+        assert!(out.contains("┌───yes───▶┤Report"), "{out}");
+        assert!(out.contains("└───no────▶┤Skip"), "{out}");
+        assert!(out.contains("┌──┴─┐") && out.contains("└──┬─┘"), "{out}");
+        assert_no_corner_attachments(&lines);
+    }
+
+    #[test]
+    fn fan_out_never_uses_corners() {
+        for src in [
+            "flowchart LR\nA --> B\nA --> C\nA --> D",
+            "flowchart TD\nA --> B\nA --> C\nA --> D",
+            "flowchart TD\nB --> A\nC --> A\nD --> A",
+        ] {
+            let lines = render_flowchart(&parse_flowchart(src));
+            assert_no_corner_attachments(&lines);
+        }
+    }
+
+    #[test]
+    fn horizontal_siblings_keep_a_blank_row() {
+        // Siblings stacked in one LR rank keep a free row between their boxes.
+        let lines = render_flowchart(&parse_flowchart("flowchart LR\nA --> B\nA --> C\nA --> D"));
+        let grid: Vec<Vec<char>> = lines.iter().map(|l| l.chars().collect()).collect();
+        for y in 1..grid.len() {
+            for (x, &ch) in grid[y].iter().enumerate() {
+                let above = grid[y - 1].get(x).copied().unwrap_or(' ');
+                assert!(
+                    !("┌┐".contains(ch) && "└┘".contains(above)),
+                    "box at ({x},{y}) sits right on the one above:\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
     }
 
     #[test]

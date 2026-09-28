@@ -87,14 +87,22 @@ pub(super) fn draw_edge(
             ticks.push((border, ay, stick));
             ticks.push((entry_x, tgt_b, t_tick));
             // Label on the run, anchored just outside the source box (so the
-            // box never clobbers it) and extending toward the child.
+            // box never clobbers it) and extending toward the child. A run too
+            // short to hold it without covering the corner moves the label to
+            // the row above, beside the box.
             let len = label.chars().count();
-            let lx = if left {
-                outer.saturating_sub(len)
+            let (lx, fits) = if left {
+                (outer.saturating_sub(len), outer > entry_x + len)
             } else {
-                outer
+                (outer, outer + len < entry_x)
             };
-            label_at(labels, label, lx, ay);
+            if fits {
+                label_at(labels, label, lx, ay);
+            } else {
+                // Keep a free cell between the label and the box border.
+                let lx = if left { lx.saturating_sub(1) } else { lx + 1 };
+                label_at(labels, label, lx, ay - 1);
+            }
             return;
         }
 
@@ -183,7 +191,9 @@ pub(super) fn draw_edge(
             let ax = from.cx();
             c.vline(ax, outer.min(entry_y), outer.max(entry_y), vch);
             c.hline(ax.min(tx), ax.max(tx), entry_y, hch);
-            c.put(ax, entry_y, corner(outer < entry_y, tx > ax));
+            // The vertical arm always runs back toward the source box, also
+            // when the run sits on the row just outside it (`outer`).
+            c.put(ax, entry_y, corner(!up, tx > ax));
             if arrow {
                 heads.push((tx, entry_y, head));
             }
