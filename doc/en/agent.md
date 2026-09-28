@@ -144,7 +144,7 @@ whichever connection it is on:
 All three keep their own conversation loop: they compact their context themselves,
 a run cannot pause between steps, and there is no prefill or generation
 timing (token totals show when the agent reports them, as Claude Code does).
-The **Mode** chip works for all three. The settings modal says the same under a
+The **Permissions** chip works for all three. The settings modal says the same under a
 connection's page.
 
 ## Using the panel
@@ -419,7 +419,7 @@ configured `context_window_fallback` is only a **fallback**, used when the endpo
 reports no window; left unset it shows `(auto)` in the settings modal and the
 built-in default stands in until (or unless) the provider is known.
 
-**Mode** offers the five permission modes described below. `Shift+Tab` cycles
+The **Permissions** chip offers the five modes described below. `Shift+Tab` cycles
 through them without the picker. A change applies at the agent's next tool
 call, so you can loosen the mode while a long task is running instead of
 answering the same prompt again and again. Neither switch touches the
@@ -608,7 +608,7 @@ when no part can have one, the card offers only allow once and deny.
 The mode decides which rules count and what happens to anything none covers.
 `mode` in the configuration is the starting point every new session takes
 (`configured` unless you change it), also set from the settings modal's **AI**
-section under Permissions; the panel's **Mode** chip and `Shift+Tab` change it
+section under Permissions; the panel's **Permissions** chip and `Shift+Tab` change it
 for the current panel only.
 
 - **ask** asks about everything; the configured `allow` rules do not count,
@@ -814,7 +814,7 @@ TermIDE, so an open editor follows its edits. Its permission requests are
 judged by the same rules as the built-in agent's: a read-only command or a
 request a `[ai.permissions]` rule or a session grant already covers passes
 without a card, and only what is left reaches you — so a granted or read-only
-command is never asked twice. The **Mode** chip disappears while an external
+command is never asked twice. The **Permissions** chip disappears while an external
 agent is active: it has its own, and TermIDE's mode is not cycled for it. The **Model** chip stays when the agent advertises
 its models over ACP — it then lists them and switches with `session/set_model`,
 so you pick the agent's model in TermIDE; agents that advertise none show no

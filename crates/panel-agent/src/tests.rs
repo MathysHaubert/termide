@@ -828,7 +828,7 @@ fn typing_enter_runs_a_turn_and_renders_it() {
     let text = |segs: &[StatusSegment]| segs.iter().map(|s| s.text.as_str()).collect::<String>();
     assert_eq!(
             text(&segments[..split]),
-            " Agent: default │ Mode: configured │ Reasoning: off │ Tools: 0/0 │ Connection: local · OpenAI Compatible │ Model: m"
+            " Agent: default │ Permissions: configured │ Reasoning: off │ Tools: 0/0 │ Connection: local · OpenAI Compatible │ Model: m"
         );
     assert_eq!(text(&segments[split + 1..]), "↑100 ↓20 120/1k ▰▱▱▱▱▱▱▱ ");
 }
