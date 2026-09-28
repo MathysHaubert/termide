@@ -332,9 +332,12 @@ musl-dev or glibc installed.
 termide [OPTIONS] [FILE]...
 
 Arguments:
-  [FILE]...            File(s) to open. With a path, TermIDE starts in a clean
-                       editor view (no session restore/save), so it works as
-                       $EDITOR for git, crontab, visudo, etc.
+  [FILE]...            File(s) or directories to open. With a path, TermIDE
+                       starts in a clean view (no project layout restored or
+                       saved). Text opens in the editor, so it works as
+                       $EDITOR for git, crontab, visudo, etc.; images, SQLite
+                       files, other binaries and directories open in their
+                       viewer, the hex editor or a file manager.
 
 Options:
   --log-level <LEVEL>  Set log level (trace, debug, info, warn, error)

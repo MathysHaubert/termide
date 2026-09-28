@@ -26,7 +26,7 @@ use expansion::PendingExpand;
 pub use file_info::FileInfo;
 pub use file_search::project_files;
 use navigation::NavigationState;
-pub use operations::CreateOutcome;
+pub use operations::{is_database_file, is_raster_image, CreateOutcome};
 use search_bar::{BarFocus, SearchBarKind};
 use selection::SelectionState;
 pub use utils::shared_dir_size_cache;

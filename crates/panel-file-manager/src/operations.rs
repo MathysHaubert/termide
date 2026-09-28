@@ -149,7 +149,8 @@ fn get_extension(filename: &str) -> String {
         .unwrap_or_default()
 }
 
-fn is_raster_image(filename: &str) -> bool {
+/// Whether `filename` is an image the image viewer draws.
+pub fn is_raster_image(filename: &str) -> bool {
     matches!(
         get_extension(filename).as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif"
@@ -175,7 +176,8 @@ fn is_mermaid(filename: &str) -> bool {
     matches!(get_extension(filename).as_str(), "mmd" | "mermaid")
 }
 
-fn is_database_file(filename: &str) -> bool {
+/// Whether `filename` is an SQLite database the database viewer opens.
+pub fn is_database_file(filename: &str) -> bool {
     matches!(
         get_extension(filename).as_str(),
         "db" | "sqlite" | "sqlite3" | "db3"

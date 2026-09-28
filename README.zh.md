@@ -328,9 +328,11 @@ nix build github:termide/termide#termide-static
 termide [OPTIONS] [FILE]...
 
 参数:
-  [FILE]...            要打开的文件。给定路径时，TermIDE 以干净的编辑器视图启动
-                       （不恢复/保存会话），因此可作为 git、crontab、visudo 等的
-                       $EDITOR 使用。
+  [FILE]...            要打开的文件或目录。给定路径时，TermIDE 以干净的视图启动
+                       （不恢复也不保存项目布局）。文本在编辑器中打开，因此可作为
+                       git、crontab、visudo 等的 $EDITOR 使用；图片、SQLite 文件、
+                       其他二进制文件和目录会在相应的查看器、十六进制编辑器或
+                       文件管理器中打开。
 
 选项:
   --log-level <LEVEL>  设置日志级别（trace、debug、info、warn、error）

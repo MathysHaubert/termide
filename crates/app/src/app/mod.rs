@@ -365,9 +365,8 @@ impl App {
         self.persist_session = enabled;
     }
 
-    /// Open a file path in a new editor panel at startup (used for CLI file
-    /// arguments). Creates the file (and parent directories) if it does not
-    /// exist yet, so termide works as `$EDITOR` for new files too.
+    /// Open a file path in a new editor panel, creating the file (and parent
+    /// directories) if it does not exist yet.
     pub fn open_path_in_editor(&mut self, path: std::path::PathBuf) -> Result<()> {
         if !path.exists() {
             if let Some(parent) = path.parent() {
@@ -378,6 +377,24 @@ impl App {
             std::fs::File::create(&path)?;
         }
         self.open_editor_for_file(path)
+    }
+
+    /// Open a path given on the command line. A text file opens in the
+    /// editor, and a missing one is created there, so termide works as
+    /// `$EDITOR` for new files too; a directory opens in a file manager, and
+    /// a file the text editor cannot load goes where [`cli_open_event`]
+    /// sends it.
+    pub fn open_cli_path(&mut self, path: std::path::PathBuf) -> Result<()> {
+        if path.is_dir() {
+            let panel = termide_panel_file_manager::FileManager::new_with_path(path);
+            self.add_panel(Box::new(panel));
+            self.state.needs_watcher_registration = true;
+            return Ok(());
+        }
+        match cli_open_event(&path) {
+            Some(event) => self.process_panel_events(vec![event]),
+            None => self.open_path_in_editor(path),
+        }
     }
 
     /// Log same-section conflicts and bindings that need Kitty
@@ -1193,5 +1210,63 @@ impl LayoutController for App {
 
     fn set_focus(&mut self, index: usize) {
         self.layout_manager.set_focus(index);
+    }
+}
+
+/// Where a command-line path the text editor cannot load goes, as the file
+/// manager's edit action sends it: an image to the image viewer, an SQLite
+/// file to the database viewer, any other binary file to the hex editor.
+/// `None` for a file the editor opens or creates.
+fn cli_open_event(path: &std::path::Path) -> Option<termide_core::PanelEvent> {
+    use termide_core::PanelEvent;
+    // A missing file is created in the editor, whatever its extension.
+    if !path.is_file() {
+        return None;
+    }
+    let name = path.file_name()?.to_string_lossy();
+    if termide_panel_file_manager::is_raster_image(&name) {
+        Some(PanelEvent::PreviewMedia(path.to_path_buf()))
+    } else if termide_panel_file_manager::is_database_file(&name) {
+        Some(PanelEvent::ViewDatabase(path.to_path_buf()))
+    } else if termide_core::util::is_binary_file(path) {
+        Some(PanelEvent::EditBinary(path.to_path_buf()))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod cli_open_tests {
+    use super::cli_open_event;
+    use termide_core::PanelEvent;
+
+    #[test]
+    fn command_line_paths_open_where_the_editor_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let image = write("chart.png", b"\x89PNG\r\n\x1a\n\0\0");
+        let database = write("inventory.db", b"SQLite format 3\0");
+        let binary = write("label.bin", b"\x01\x00\x02");
+        let text = write("notes.md", b"# notes\n");
+        let commit = write("COMMIT_EDITMSG", b"fix: things\n");
+
+        assert!(matches!(cli_open_event(&image), Some(PanelEvent::PreviewMedia(p)) if p == image));
+        assert!(
+            matches!(cli_open_event(&database), Some(PanelEvent::ViewDatabase(p)) if p == database)
+        );
+        assert!(matches!(cli_open_event(&binary), Some(PanelEvent::EditBinary(p)) if p == binary));
+        assert!(
+            cli_open_event(&text).is_none(),
+            "markdown is edited, not previewed"
+        );
+        assert!(cli_open_event(&commit).is_none());
+        assert!(
+            cli_open_event(&dir.path().join("new.db")).is_none(),
+            "a missing file is created in the editor"
+        );
     }
 }

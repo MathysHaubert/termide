@@ -88,9 +88,11 @@ struct Cli {
     #[arg(long, value_name = "FORMAT", requires = "prompt", value_parser = ["text", "json", "stream-json"], default_value = "text")]
     output: String,
 
-    /// File(s) to open. Given a path, termide starts in a clean editor view
-    /// (no session is restored or saved), so it works as $EDITOR for tools
-    /// like git, crontab and visudo: `EDITOR=termide git commit`.
+    /// File(s) or directories to open. Given a path, termide starts in a
+    /// clean view (no project layout is restored or saved). Text opens in the
+    /// editor, so it works as $EDITOR for tools like git, crontab and visudo:
+    /// `EDITOR=termide git commit`. Images, SQLite files, other binary files
+    /// and directories open in their viewer, the hex editor or a file manager.
     #[arg(value_name = "FILE")]
     files: Vec<std::path::PathBuf>,
 }
@@ -506,7 +508,7 @@ fn main() -> Result<()> {
     } else {
         app.set_session_persistence(false);
         for path in cli.files {
-            if let Err(e) = app.open_path_in_editor(path.clone()) {
+            if let Err(e) = app.open_cli_path(path.clone()) {
                 log::error!("Failed to open '{}' from CLI: {e}", path.display());
             }
         }
