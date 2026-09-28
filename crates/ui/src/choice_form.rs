@@ -589,7 +589,7 @@ impl ChoiceForm {
 
 /// Wrap `text` to `width` columns: pack whitespace-separated words, hard-break
 /// a word longer than the line, and start a new line on each existing newline.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
     for para in text.split('\n') {

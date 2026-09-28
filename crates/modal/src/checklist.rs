@@ -13,8 +13,7 @@ use termide_core::ChecklistItem;
 use termide_theme::Theme;
 
 use crate::{
-    base::render_modal_block, calculate_modal_width, centered_rect_with_size, max_line_width,
-    Modal, ModalResult, ModalWidthConfig,
+    base::render_modal_block, centered_rect_with_size, fit_modal_width, Modal, ModalResult,
 };
 
 /// Rows the list shows at most before it scrolls.
@@ -113,9 +112,10 @@ impl ChecklistModal {
         }
     }
 
+    /// The modal's width from its title and rows; the prompt is wrapped to
+    /// it rather than widening it.
     fn modal_width(&self, screen_width: u16) -> u16 {
         let title = UnicodeWidthStr::width(self.title.as_str()) as u16 + 2;
-        let prompt = max_line_width(&self.prompt);
         // " [✓] " before each item's text, a space after it.
         let items = self
             .items
@@ -128,11 +128,7 @@ impl ChecklistModal {
             )
             .max()
             .unwrap_or(0);
-        calculate_modal_width(
-            [title, prompt, items].into_iter(),
-            screen_width,
-            ModalWidthConfig::default(),
-        )
+        fit_modal_width(title.max(items), screen_width)
     }
 }
 
@@ -142,7 +138,13 @@ impl Modal for ChecklistModal {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         let width = self.modal_width(area.width);
-        let prompt_lines = self.prompt.lines().count() as u16;
+        let prompt: Vec<String> = if self.prompt.is_empty() {
+            Vec::new()
+        } else {
+            // One column of padding on either side, as the rows have.
+            termide_ui::choice_form::wrap(&self.prompt, width.saturating_sub(4) as usize)
+        };
+        let prompt_lines = prompt.len() as u16;
         let screen_rows = area.height.saturating_sub(4 + prompt_lines) as usize;
         let visible = self.rows.len().min(MAX_ROWS).min(screen_rows.max(1));
         // Keep the cursor's row, and its group heading when it has one, in view.
@@ -162,7 +164,7 @@ impl Modal for ChecklistModal {
         let inner = render_modal_block(modal, buf, &self.title, theme);
 
         let dim = Style::default().fg(theme.disabled);
-        for (i, line) in self.prompt.lines().enumerate() {
+        for (i, line) in prompt.iter().enumerate() {
             buf.set_stringn(
                 inner.x + 1,
                 inner.y + i as u16,
@@ -299,7 +301,7 @@ mod tests {
     fn items_toggle_under_their_headings_and_apply_together() {
         let mut modal = ChecklistModal::new(
             "Tools",
-            "Space toggles",
+            "Off before the first request",
             vec![
                 item("read", "Built-in", true, true),
                 item("bash", "Built-in", true, true),
@@ -323,6 +325,22 @@ mod tests {
             panic!("Enter applies");
         };
         assert_eq!(checked, vec!["read".to_string()]);
+    }
+
+    #[test]
+    fn a_long_prompt_wraps_to_the_rows_instead_of_widening_the_modal() {
+        let mut modal = ChecklistModal::new(
+            "Tools",
+            "Off before the first request: kept out of the context. Later: refused.",
+            vec![item("read", "Built-in", true, true)],
+        );
+        let shown = rows(&mut modal);
+        let top = shown.iter().find(|r| !r.trim().is_empty()).unwrap();
+        let width = top.trim().chars().count() as u16;
+        // As narrow as the rows allow: the minimum width, not the prompt's.
+        assert_eq!(width, crate::fit_modal_width(0, 50), "{shown:?}");
+        assert!(shown.iter().any(|r| r.contains("kept out")), "{shown:?}");
+        assert!(shown.iter().any(|r| r.contains("refused.")), "{shown:?}");
     }
 
     #[test]

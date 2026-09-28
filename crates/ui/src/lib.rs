@@ -183,16 +183,28 @@ pub fn calculate_modal_width(
     total_width.max(min_width).min(max_width).min(screen_width)
 }
 
-/// Calculate maximum line width from multiline text.
-pub fn max_line_width(text: &str) -> u16 {
-    text.lines().map(|line| line.len()).max().unwrap_or(0) as u16
+/// Width of a single-bordered modal whose rows carry their own padding:
+/// `inner` columns between the borders, within the default min/max bounds.
+pub fn fit_modal_width(inner: u16, screen_width: u16) -> u16 {
+    let max_width = (screen_width as f32 * modal_constants::MAX_WIDTH_PERCENTAGE_DEFAULT) as u16;
+    inner
+        .saturating_add(2)
+        .max(modal_constants::MIN_WIDTH_DEFAULT)
+        .min(max_width)
+        .min(screen_width)
 }
 
-/// Calculate maximum item width from a list of strings with optional prefix.
+/// Calculate maximum line width, in display columns, from multiline text.
+pub fn max_line_width(text: &str) -> u16 {
+    text.lines().map(str_display_width).max().unwrap_or(0) as u16
+}
+
+/// Calculate maximum item width, in display columns, from a list of strings
+/// with optional prefix.
 pub fn max_item_width(items: &[String], prefix_len: usize) -> u16 {
     items
         .iter()
-        .map(|item| prefix_len + item.len())
+        .map(|item| prefix_len + str_display_width(item))
         .max()
         .unwrap_or(0) as u16
 }

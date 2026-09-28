@@ -10,8 +10,8 @@ use termide_theme::Theme;
 
 // Re-export modal utilities from termide-ui
 pub use termide_ui::{
-    calculate_modal_width, centered_rect_with_size, max_item_width, max_line_width, ModalResult,
-    ModalWidthConfig, TextInput as TextInputHandler,
+    calculate_modal_width, centered_rect_with_size, fit_modal_width, max_item_width,
+    max_line_width, ModalResult, ModalWidthConfig, TextInput as TextInputHandler,
 };
 
 pub mod base;

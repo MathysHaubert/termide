@@ -12,9 +12,11 @@ use ratatui::{
 
 use termide_theme::Theme;
 
+use termide_ui::str_display_width;
+
 use crate::{
-    base::render_modal_block, calculate_modal_width, centered_rect_with_size, max_item_width,
-    max_line_width, Modal, ModalResult, ModalWidthConfig,
+    base::render_modal_block, centered_rect_with_size, fit_modal_width, max_item_width,
+    max_line_width, Modal, ModalResult,
 };
 
 /// Selection modal window (single selection only)
@@ -50,19 +52,16 @@ impl SelectModal {
         }
     }
 
-    /// Calculate dynamic modal width
+    /// The modal's width from its content: the widest of the title, the
+    /// prompt and the items, each item with one column of padding on either
+    /// side. The row under the cursor is inverted across that whole width,
+    /// so it needs no `▶` marker beside it.
     fn calculate_modal_width(&self, screen_width: u16) -> u16 {
-        let title_width = self.title.len() as u16 + 2;
+        let title_width = str_display_width(&self.title) as u16 + 2;
         let prompt_width = max_line_width(&self.prompt);
-        // One column of padding: the row under the cursor is inverted, so it
-        // needs no `▶` marker beside it.
-        let items_width = max_item_width(&self.items, 1);
-
-        calculate_modal_width(
-            [title_width, prompt_width, items_width].into_iter(),
-            screen_width,
-            ModalWidthConfig::default(),
-        )
+        let items_width = max_item_width(&self.items, 2);
+        let inner = title_width.max(prompt_width).max(items_width);
+        fit_modal_width(inner, screen_width)
     }
 }
 
@@ -98,13 +97,14 @@ impl Modal for SelectModal {
             .style(Style::default().fg(theme.fg));
         prompt.render(chunks[0], buf);
 
+        let row_width = chunks[1].width as usize;
         let items: Vec<ListItem> = self
             .items
             .iter()
             .enumerate()
             .map(|(idx, label)| {
-                let prefix = " ";
-
+                let row = format!(" {label}");
+                let pad = row_width.saturating_sub(str_display_width(&row));
                 let style = if idx == self.cursor {
                     Style::default()
                         .fg(theme.bg)
@@ -115,8 +115,8 @@ impl Modal for SelectModal {
                 };
 
                 ListItem::new(Line::from(vec![
-                    Span::styled(prefix, style),
-                    Span::styled(label, style),
+                    Span::styled(row, style),
+                    Span::styled(" ".repeat(pad), style),
                 ]))
             })
             .collect();
@@ -228,5 +228,37 @@ mod tests {
         let row = rows.iter().find(|r| r.contains("auto")).unwrap();
         assert!(row.contains("│   auto"), "{row:?}");
         assert!(rows.iter().any(|r| r.contains("│ ● ask")), "{rows:?}");
+    }
+
+    #[test]
+    fn the_width_follows_the_content_and_the_cursor_row_spans_it() {
+        let labels = vec![
+            "● ask — спрашивать обо всём, без разрешений из настроек".to_string(),
+            "  all — разрешать всё".to_string(),
+        ];
+        let widest = str_display_width(&labels[0]) as u16;
+        let mut modal = SelectModal::single("Режим разрешений", "", labels);
+        modal.set_cursor(1);
+        let area = Rect::new(0, 0, 200, 12);
+        let mut buf = Buffer::empty(area);
+        modal.render(area, &mut buf, &Theme::default());
+        // Columns, not bytes: the widest label, a column of padding on
+        // either side, and the two borders.
+        let left = (0..area.width)
+            .find(|&x| buf[(x, 4)].symbol() == "│")
+            .unwrap();
+        let right = (left + 1..area.width)
+            .find(|&x| buf[(x, 4)].symbol() == "│")
+            .unwrap();
+        assert_eq!(right - left + 1, widest + 4);
+        // The cursor row is inverted from border to border.
+        let y = (0..area.height)
+            .find(|&y| {
+                (left..right)
+                    .any(|x| buf[(x, y)].symbol() == "a" && buf[(x + 1, y)].symbol() == "l")
+            })
+            .unwrap();
+        let theme = Theme::default();
+        assert!((left + 1..right).all(|x| buf[(x, y)].bg == theme.fg));
     }
 }
