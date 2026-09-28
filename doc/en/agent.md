@@ -382,8 +382,7 @@ served, shown once there are any, and `↓` the output: `↑2.1k ↻48k ↓900`.
 window is the tokens used of it with a fill bar, `35k/262k ▰▰▱▱▱▱▱▱`; for
 Claude Code, Codex and Gemini CLI both come from what the agent reports, and the window
 shows once it has.
-Agent, mode, reasoning, connection and model are buttons, and the same entries sit in the
-`[≡]` menu. Clicking **Reasoning** asks the model to reason (extended thinking
+Agent, mode, reasoning, connection and model are buttons. Clicking **Reasoning** asks the model to reason (extended thinking
 / `reasoning_effort`) from the next request; the choice is remembered in the
 session, so a resume comes back with it. What the agent is doing right now is
 not repeated in the status bar: each chat block carries it in its byline.
@@ -430,7 +429,7 @@ configuration file; the panel starts from `[ai]` again the next time.
 
 ### Undoing a request
 
-`/undo`, or **Undo last request** in the `[≡]` menu, takes back the last
+`/undo` takes back the last
 request that changed files: a card in the panel names the files, and on
 confirmation each is put back as it was before that request (a file the
 request created is removed) and the conversation is rewound to just before
@@ -756,8 +755,7 @@ Delete a file to get the shipped version back.
 
 An agent is a directory under `agents/`. `default` is the one the panel
 starts as; it has no directory and speaks with `ai/AGENTS.md`. Any directory
-defines an agent you can switch to from the **Agent** status chip or **Change
-agent…** in the `[≡]` menu; the picker shows each agent's description. Its
+defines an agent you can switch to from the **Agent** status chip; the picker shows each agent's description. Its
 `SOUL.md` is the agent's own template; without one it uses `ai/AGENTS.md`
 too. Beside it an `agent.toml` may set, every field optional:
 
@@ -988,8 +986,8 @@ Review $1. Point at bugs first, style last, and quote the lines you mean.
 `/review src/parser.rs` then sends the expanded text. In the session the
 message is headed by what you typed, `/review src/parser.rs`, with the text
 the model actually received folded under it; `↑` recalls the command, not the
-text. **Insert prompt…** in the `[≡]` menu lists the templates and puts the
-chosen `/name ` into the input. A message starting with `/` that names no
+text. Typing `/` lists the templates, and picking one puts `/name ` into the
+input. A message starting with `/` that names no
 template is not sent; a path such as `/usr/bin/ls` is plain text.
 
 ### Command scripts
