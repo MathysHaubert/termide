@@ -39,6 +39,15 @@ pub struct LspServerConfig {
     pub root_markers: Vec<String>,
 }
 
+/// The status a server shows: `Indexing` without a progress token in flight
+/// is `Running`, since nothing is being indexed.
+fn effective_status(status: ServerStatus, in_progress: bool) -> ServerStatus {
+    match status {
+        ServerStatus::Indexing if !in_progress => ServerStatus::Running,
+        other => other,
+    }
+}
+
 /// Server status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerStatus {
@@ -546,37 +555,27 @@ impl LspServer {
         self.send_notification("textDocument/didSave", params);
     }
 
-    /// Get current server status
+    /// Current server status. A server that finished `initialize` stays
+    /// `Indexing` only while it reports work in progress; one that sends no
+    /// `$/progress` at all (pylsp, for one) is simply running.
     pub fn status(&self) -> ServerStatus {
-        *self.status.lock().unwrap_or_else(|e| e.into_inner())
+        let status = *self.status.lock().unwrap_or_else(|e| e.into_inner());
+        let in_progress = !self
+            .active_progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty();
+        effective_status(status, in_progress)
     }
 
-    /// Check if server is effectively ready (Running, or Indexing with no active progress)
+    /// Check if server is ready: running, with no work in progress.
     pub fn is_ready(&self) -> bool {
-        let status = *self.status.lock().unwrap_or_else(|e| e.into_inner());
-        match status {
-            ServerStatus::Running => true,
-            ServerStatus::Indexing => {
-                // If no active progress, consider it ready
-                // (server might not support/send progress notifications)
-                self.active_progress
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .is_empty()
-            }
-            _ => false,
-        }
+        self.status() == ServerStatus::Running
     }
 
     /// Check if server is actively indexing (has active progress tokens)
     pub fn is_indexing(&self) -> bool {
-        let status = *self.status.lock().unwrap_or_else(|e| e.into_inner());
-        status == ServerStatus::Indexing
-            && !self
-                .active_progress
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_empty()
+        self.status() == ServerStatus::Indexing
     }
 
     /// Shutdown the server
@@ -602,5 +601,31 @@ impl LspServer {
         let _ = self.process.wait();
 
         *self.status.lock().unwrap_or_else(|e| e.into_inner()) = ServerStatus::Stopped;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_status, ServerStatus};
+
+    /// A server that never reports progress must not look busy forever.
+    #[test]
+    fn indexing_lasts_only_while_progress_is_reported() {
+        assert_eq!(
+            effective_status(ServerStatus::Indexing, false),
+            ServerStatus::Running
+        );
+        assert_eq!(
+            effective_status(ServerStatus::Indexing, true),
+            ServerStatus::Indexing
+        );
+        for status in [
+            ServerStatus::Starting,
+            ServerStatus::Running,
+            ServerStatus::ShuttingDown,
+            ServerStatus::Stopped,
+        ] {
+            assert_eq!(effective_status(status, false), status);
+        }
     }
 }
