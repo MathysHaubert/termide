@@ -1493,13 +1493,9 @@ fn render_body(
                     reasoning.lines().next()
                 };
                 head.push(Span::styled(line.unwrap_or("").to_string(), dim));
-                // One `🕒` total, as a tool call shows; unfolded, it splits
-                // into the prefill and generation lines.
-                let meta = cost.as_ref().map_or_else(Vec::new, |cost| {
-                    let total = cost.prefill_ms.saturating_add(cost.gen_ms);
-                    vec![Span::styled(format!("🕒 {}", fmt_dur(total)), dim)]
-                });
-                return row_with_meta(head, meta, true, width);
+                // Folded, the headline stands alone: the prefill and generation
+                // lines are one unfold away.
+                return row_with_meta(head, Vec::new(), true, width);
             }
             let indent: usize = head.iter().map(|s| width_of(&s.content)).sum();
             let mut lines = wrap_plain(
@@ -1659,7 +1655,9 @@ fn render_body(
             };
             if collapsed {
                 // Folded, a finished call is its headline alone — a shell
-                // call's first command line — with the meta at the row's end.
+                // call's first command line — and its timing is one unfold
+                // away; a live one keeps the meta, where a wait on a
+                // permission answer ticks.
                 let head = match shell_command(call) {
                     Some(command) => {
                         let mut head = shell_prefix(colors);
@@ -1670,7 +1668,9 @@ fn render_body(
                     }
                     None => tool_headline(call, marker, width, colors),
                 };
-                return one_row(head, true);
+                let head = if ok { head } else { paint_failed(head, colors) };
+                let meta = if finished { Vec::new() } else { clock };
+                return row_with_meta(head, meta, true, width);
             }
             let mut lines = match shell_command(call) {
                 Some(command) => command_lines(&command, marker, width, colors),
@@ -2015,7 +2015,8 @@ mod tests {
             "generation line: {lines:?}"
         );
 
-        // A finished tool shows how long it took (`🕒`) and its status, no time.
+        // A finished tool folds to its headline; how long it took (`🕒`) and
+        // its status wait under the fold.
         transcript.push(Item::Tool {
             call: call("bash", json!({ "command": "cargo test" })),
             result: Some(ToolResultMessage::text(&call("bash", json!({})), "ok")),
@@ -2028,10 +2029,18 @@ mod tests {
         let lines = text_of(transcript.lines(60, &colors, false));
         assert!(
             lines
-                .iter()
-                .any(|l| l.contains("🕒 1s") && !l.contains('✓')),
+                .last()
+                .is_some_and(|l| !l.contains("🕒") && !l.contains('✓')),
             "tool meta: {lines:?}"
         );
+        assert!(transcript.toggle_expanded(transcript.items().len() - 1));
+        let lines = text_of(transcript.lines(60, &colors, false));
+        assert!(
+            lines.iter().any(|l| l.contains("🕒 1s") && l.contains('✓')),
+            "tool meta: {lines:?}"
+        );
+        assert!(transcript.toggle_expanded(transcript.items().len() - 1));
+        let lines = text_of(transcript.lines(60, &colors, false));
         // The shell headline uses the `$` prefix and the command.
         assert!(
             lines
@@ -2278,15 +2287,17 @@ mod tests {
             output: 300,
         };
         assert!(transcript.finish_thinking("12:00:00", Some(cost)));
-        // Finished: the first line with the turn's total time at the row's end.
+        // Finished: the first line alone; the timing is one unfold away.
         let lines = text_of(transcript.lines(60, &colors, false));
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
             lines[0].starts_with("@ Thinking ▸ a quick thought"),
             "{lines:?}"
         );
-        assert!(lines[0].contains("🕒 5"), "{lines:?}");
-        assert!(!lines[0].contains("⏫") && !lines[0].contains("✍"));
+        assert!(
+            !lines[0].contains("🕒") && !lines[0].contains("⏫") && !lines[0].contains("✍"),
+            "{lines:?}"
+        );
         // Unfolded: the whole text and the full cost lines.
         assert!(transcript.toggle_expanded(0));
         let lines = text_of(transcript.lines(60, &colors, false));
@@ -2599,15 +2610,12 @@ mod tests {
         let lines = text_of(transcript.lines(40, &colors, false));
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].starts_with("$ Running ▸ cargo build"), "{lines:?}");
-        assert!(lines[0].contains("🕒 3s") && !lines[0].contains('✓'));
+        assert!(!lines[0].contains("🕒") && !lines[0].contains('✓'));
         assert!(width_of(&lines[0]) <= 40);
-        // Too long for the row, the headline is clipped, never the meta.
+        // Too long for the row, the headline is clipped.
         let lines = text_of(transcript.lines(20, &colors, false));
         assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].contains('…') && lines[0].contains("🕒"),
-            "{lines:?}"
-        );
+        assert!(lines[0].contains('…'), "{lines:?}");
         assert!(width_of(&lines[0]) <= 20, "{lines:?}");
     }
 
@@ -2776,11 +2784,11 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("· compacted 1200 tokens")));
         // A notice can be selected, so an error can be copied.
         assert!(transcript.is_selectable(1));
-        // Shell headline uses `$`; folded to one row, it shows how long it
-        // took (`🕒`) and no status glyph.
+        // Shell headline uses `$`; folded to one row, it shows neither how
+        // long it took nor a status glyph.
         assert!(lines
             .iter()
-            .any(|l| l.contains("$ Running ▸ exit 1") && l.contains("🕒") && !l.contains('✗')));
+            .any(|l| l.contains("$ Running ▸ exit 1") && !l.contains("🕒") && !l.contains('✗')));
     }
 
     #[test]

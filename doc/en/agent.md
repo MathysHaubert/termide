@@ -237,13 +237,12 @@ folded to a preview that keeps the first line and the last few, with a
 `… N more lines` note between them. A block of five lines or fewer has nothing
 worth hiding, so it is shown in full with no fold marker; so is any finished
 block that takes a single row unfolded. A finished tool call
-folds to a single line: its headline (a shell call's first command line) with
-how long it took (`🕒`) at the right end. A single row carries no `✓`; a
+folds to a single line: its headline (a shell call's first command line)
+alone; how long it took (`🕒`) shows once it is unfolded. A single row carries no `✓`; a
 failed call shows its headline in the error colour instead, and its unfolded
 form ends with the `✗`. Durations grow from seconds to minutes, hours and
 days (`2s`, `1m13s`, `2h5m`, `3d4h`). Finished reasoning folds the same
-way, to its first line with how long the turn took (`🕒`, prefill and generation
-together) at the right end; unfolded, that splits into the `⏫`/`✍️` lines. A block still in progress — a
+way, to its first line alone; unfolded, it shows the `⏫`/`✍️` lines. A block still in progress — a
 streaming reasoning, a running tool call with its live output — is always shown
 unfolded and folds only once it finishes. Your
 message reads as plain text on a faint background; the reasoning, the system
@@ -325,8 +324,8 @@ or mode, for instance), so what the model was told is always in view.
 Your message and the agent's answer each end with a dim, right-aligned time and a
 `✓`/`✗` status (`18:34:01 ✓`), at the end of the text's last row when it fits
 there; the reasoning and tool blocks carry only their
-work figures, no wall-clock. A tool call shows how long it took (`🕒 6s`), and its
-status once unfolded. A call that waited on a permission question shows that
+work figures, no wall-clock, and show them only unfolded. A tool call shows
+how long it took (`🕒 6s`) and its status. A call that waited on a permission question shows that
 wait apart, first, as the pause it was: `‖ 12s 🕒 2s`, the `‖` marked and
 ticking while the question is up; the `🕒` counts only the call's own run. When a turn reasons, the reasoning block carries the turn's cost —
 the prefill phase (`⏫ 6s (↑42k, 7k tok/s)`) and the generation phase

@@ -2873,6 +2873,11 @@ fn a_permission_wait_is_timed_apart_from_the_call() {
     };
     assert!((5000..6000).contains(&waited), "{waited}");
     assert!((1500..2500).contains(&duration), "{duration}");
+    // Folded, the finished call hides both; unfolded, they show together.
+    let rows = strip_text(panel.transcript.lines(60, &panel.colors, false));
+    assert!(rows.iter().all(|r| !r.contains('‖')), "{rows:?}");
+    let last = panel.transcript.items().len() - 1;
+    assert!(panel.transcript.toggle_expanded(last));
     let rows = strip_text(panel.transcript.lines(60, &panel.colors, false));
     assert!(rows.iter().any(|r| r.contains("‖ 5s 🕒 2s")), "{rows:?}");
 }
