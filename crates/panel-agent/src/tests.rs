@@ -4,17 +4,20 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::style::Modifier;
+use ratatui::text::Line;
 use termide_agent_core::{
     permission_channel, question_channel, Agent, AgentEvent, AssistantContent, AssistantMessage,
     CancelToken, Message, PermissionAnswer, PermissionPrompter, QuestionAnswer, QuestionReply,
     Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision, ToolUpdate,
     Usage, UserMessage,
 };
-use termide_core::{ConfirmAction, PanelConfig};
+use termide_core::{ConfirmAction, PanelConfig, SegmentKind};
 use termide_ui::{ChoiceAction, ChoiceForm};
 
 use crate::input::file_completions;
 use crate::pending::Pending;
+use crate::render::context_bar;
 use crate::runtime::{push_history, session_model};
 use crate::submit::{parse_duration, parse_loop_args, slash_command};
 use crate::toolset::{Blocked, ToolsetGuard};
