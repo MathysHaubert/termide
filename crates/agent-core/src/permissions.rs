@@ -1064,11 +1064,38 @@ fn resolve_program(head: &str, dir: Option<&Path>, project: &Path) -> Option<Str
 }
 
 fn push_part(parts: &mut Vec<String>, current: &mut String) {
-    let part = current.trim().to_string();
-    if !part.is_empty() {
-        parts.push(part);
+    if let Some(part) = without_shell_keywords(current.trim()) {
+        parts.push(part.to_string());
     }
     current.clear();
+}
+
+/// `part` without the shell's reserved words, which run nothing of their
+/// own: after `if`, `then`, `do`, `!` and the like, the command that follows
+/// is what runs, while a closing word (`fi`, `done`, `esac`, `}`) or a
+/// `for`/`select`/`case` header runs nothing — a substitution in a header
+/// still marks the whole line. `None` when nothing is left to judge.
+fn without_shell_keywords(part: &str) -> Option<&str> {
+    const LEADING: [&str; 10] = [
+        "if", "then", "else", "elif", "do", "while", "until", "!", "{", "time",
+    ];
+    let mut rest = part;
+    loop {
+        let (word, tail) = rest
+            .split_once(char::is_whitespace)
+            .map_or((rest, ""), |(word, tail)| (word, tail.trim_start()));
+        if !LEADING.contains(&word) {
+            break;
+        }
+        rest = tail;
+    }
+    let head = rest.split_whitespace().next()?;
+    let closes = matches!(head, "fi" | "done" | "esac" | "}")
+        && without_harmless_redirections(rest).trim() == head;
+    if closes || matches!(head, "for" | "select" | "case") {
+        return None;
+    }
+    Some(rest)
 }
 
 /// `part` without the redirections that write no file: one stream pointed
@@ -1119,10 +1146,10 @@ pub fn is_read_only_command(part: &str) -> bool {
     };
     // Commands no argument turns into a write. `cd`, `pushd` and `popd`
     // only move the rest of the one command line.
-    const PLAIN: [&str; 26] = [
+    const PLAIN: [&str; 29] = [
         "ls", "cat", "head", "tail", "wc", "pwd", "echo", "grep", "egrep", "fgrep", "which",
         "stat", "du", "cut", "tr", "basename", "dirname", "realpath", "printenv", "whoami",
-        "uname", "true", "false", "cd", "pushd", "popd",
+        "uname", "true", "false", "cd", "pushd", "popd", "[", "[[", "test",
     ];
     if PLAIN.contains(&head) {
         return true;
@@ -1458,6 +1485,18 @@ mod tests {
         );
         assert_eq!(decide("git branch -D main"), Decision::Ask);
         assert_eq!(decide("git branch -vv"), Decision::Allow);
+        assert_eq!(
+            decide("if [ -f Cargo.toml ]; then cargo build; fi"),
+            Decision::Allow
+        );
+        assert_eq!(decide("[ -d target ] && cargo test"), Decision::Allow);
+        assert_eq!(decide("for f in a b; do cat $f; done"), Decision::Allow);
+        assert_eq!(decide("if true; then rm -rf x; fi"), Decision::Ask);
+        assert_eq!(
+            decide("for f in $(ls); do cat $f; done"),
+            Decision::Ask,
+            "substitution in a loop header"
+        );
     }
 
     #[test]
@@ -1691,6 +1730,34 @@ mod tests {
         assert_eq!(quoted.parts, vec!["echo \"x; $(id)\"", "ls"]);
         assert!(quoted.has_substitution);
         assert_eq!(split_shell("   ").parts, vec![""]);
+    }
+
+    /// The shell's reserved words are not commands: the part is the command
+    /// after them, and closing words and loop headers run nothing.
+    #[test]
+    fn shell_keywords_are_not_commands() {
+        let parts = |command: &str| split_shell(command).parts;
+        assert_eq!(
+            parts("if [ -f Cargo.toml ]; then cargo build; else echo no; fi"),
+            vec!["[ -f Cargo.toml ]", "cargo build", "echo no"]
+        );
+        assert_eq!(
+            parts("for f in *.rs; do\n  wc -l \"$f\"\ndone"),
+            vec!["wc -l \"$f\""]
+        );
+        assert_eq!(
+            parts("while ! grep -q ready log; do sleep 1; done"),
+            vec!["grep -q ready log", "sleep 1"]
+        );
+        assert_eq!(parts("{ ls; } 2>&1"), vec!["ls"]);
+        assert_eq!(parts("time cargo test"), vec!["cargo test"]);
+        // A closing word that writes stays to be judged.
+        assert_eq!(
+            parts("for f in a; do cat $f; done > out"),
+            vec!["cat $f", "done > out"]
+        );
+        // A substitution in a header still marks the line.
+        assert!(split_shell("for f in $(rm -rf x); do echo $f; done").has_substitution);
     }
 
     #[test]
