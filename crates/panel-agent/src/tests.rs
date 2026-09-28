@@ -542,6 +542,7 @@ fn shortcuts_work_on_a_cyrillic_layout() {
         id: "t1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({ "command": "ls" }),
+        extra_content: None,
     };
     panel.transcript.push(Item::Tool {
         call: call.clone(),
@@ -654,6 +655,7 @@ fn a_selected_diff_keeps_its_colors() {
         id: "e1".into(),
         name: "edit".into(),
         arguments: args,
+        extra_content: None,
     };
     let call = edit(serde_json::json!({ "path": "a.rs" }));
     panel.transcript.push(Item::Tool {
@@ -941,6 +943,7 @@ fn activity_follows_the_events_and_totals_accumulate() {
             id: "1".into(),
             name: "bash".into(),
             arguments: serde_json::json!({}),
+            extra_content: None,
         },
     });
     assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Tool));
@@ -989,6 +992,7 @@ fn the_live_footer_shows_generation_meta_and_a_clock() {
             id: "t1".into(),
             name: "bash".into(),
             arguments: serde_json::json!({ "command": "sleep 1" }),
+            extra_content: None,
         },
     });
     let lines = text_of(&panel);
@@ -1332,6 +1336,7 @@ fn a_resumed_session_keeps_its_timing() {
         id: "t1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({ "command": "ls" }),
+        extra_content: None,
     };
     let mut turn = reply("");
     turn.content = vec![
@@ -1933,6 +1938,7 @@ fn the_summary_reports_output_cleaning_savings() {
         id: "b1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({ "command": "ls" }),
+        extra_content: None,
     };
     panel.apply(AgentEvent::ToolExecutionStart { call: call.clone() });
     panel.apply(AgentEvent::ToolExecutionEnd {
@@ -2192,6 +2198,7 @@ fn permission_prompt_is_answered_in_the_panel() {
                 id: "c".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({ "command": "git push" }),
+                extra_content: None,
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,
@@ -2251,6 +2258,7 @@ fn permission_prompt_is_answered_in_the_panel() {
             id: "c".into(),
             name: "edit".into(),
             arguments: serde_json::json!({ "path": "src/x.rs" }),
+            extra_content: None,
         },
         suggested_pattern: "src/x.rs".into(),
         can_persist: true,
@@ -2309,6 +2317,7 @@ fn a_compound_command_card_lists_the_parts_it_asks_about() {
                 id: "c".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({ "command": command }),
+                extra_content: None,
             },
             suggested_pattern: "make install *".into(),
             can_persist: true,
@@ -2366,6 +2375,7 @@ fn a_compound_command_card_lists_the_parts_it_asks_about() {
                 id: "d".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({ "command": "cd $BUILD && ./run" }),
+                extra_content: None,
             },
             suggested_pattern: String::new(),
             can_persist: true,
@@ -2398,6 +2408,7 @@ fn always_is_not_offered_where_the_configured_rules_do_not_count() {
                 id: "c".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({ "command": "make" }),
+                extra_content: None,
             },
             suggested_pattern: "make *".into(),
             can_persist: false,
@@ -2438,6 +2449,7 @@ fn a_single_click_selects_and_a_double_click_answers_a_permission() {
                 id: "c".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({ "command": "git push" }),
+                extra_content: None,
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,
@@ -2605,6 +2617,7 @@ fn the_toolset_guard_refuses_what_is_switched_off_in_context() {
         id: "c".into(),
         name: name.into(),
         arguments: args,
+        extra_content: None,
     };
     let refused = |d: ToolDecision| matches!(d, ToolDecision::Block { .. });
     assert!(refused(
@@ -2752,6 +2765,7 @@ fn a_permission_wait_is_timed_apart_from_the_call() {
         id: "c".into(),
         name: "bash".into(),
         arguments: serde_json::json!({ "command": "cat notes.txt" }),
+        extra_content: None,
     };
     panel.apply(AgentEvent::AgentStart);
     panel.apply(AgentEvent::ToolExecutionStart { call: call.clone() });
@@ -2822,6 +2836,7 @@ fn a_grant_reaches_the_panel_rules_so_it_survives_a_rebuild() {
                         id: "c".into(),
                         name: "bash".into(),
                         arguments: serde_json::json!({ "command": "cat notes.txt" }),
+                        extra_content: None,
                     },
                     suggested_pattern: "cat *".into(),
                     can_persist: true,
@@ -3102,6 +3117,7 @@ fn a_successful_edit_reports_the_changed_file() {
         id: format!("{name}-1"),
         name: name.into(),
         arguments: serde_json::json!({}),
+        extra_content: None,
     };
     let changed = |events: &[PanelEvent]| -> Vec<PathBuf> {
         events

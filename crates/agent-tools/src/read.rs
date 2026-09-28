@@ -147,6 +147,7 @@ mod tests {
             id: "r".into(),
             name: "read".into(),
             arguments: args,
+            extra_content: None,
         }
     }
 

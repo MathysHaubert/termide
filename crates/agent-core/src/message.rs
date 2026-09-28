@@ -80,6 +80,12 @@ pub struct ToolCall {
     pub name: String,
     /// Parsed JSON arguments; an object for well-formed calls.
     pub arguments: Value,
+    /// Opaque data the provider attached to the call and requires back with
+    /// it: an OpenAI-compatible call's `extra_content`, where Gemini puts the
+    /// thought signature its later requests are refused without. Kept in the
+    /// session log, so a reopened session replays it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<Value>,
 }
 
 /// A block inside an assistant message.
@@ -308,6 +314,7 @@ mod tests {
                     id: "c1".into(),
                     name: "read".into(),
                     arguments: json!({ "path": "Cargo.toml" }),
+                    extra_content: None,
                 }),
             ],
             stop_reason: StopReason::ToolUse,
@@ -375,6 +382,7 @@ mod tests {
             id: "id-7".into(),
             name: "bash".into(),
             arguments: json!({}),
+            extra_content: None,
         };
         let result = ToolResultMessage::error(&call, "boom");
         assert!(result.is_error);

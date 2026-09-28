@@ -888,6 +888,7 @@ impl Shared {
                             id: format!("fs-{id}"),
                             name: "write".into(),
                             arguments: json!({ "path": path }),
+                            extra_content: None,
                         };
                         let _ = self
                             .events
@@ -1101,6 +1102,7 @@ fn tool_call_of(update: &Value) -> ToolCall {
             id: update["toolCallId"].as_str().unwrap_or("").to_string(),
             name: name.to_string(),
             arguments,
+            extra_content: None,
         };
     }
     let kind = update["kind"].as_str().unwrap_or("other").to_string();
@@ -1111,6 +1113,7 @@ fn tool_call_of(update: &Value) -> ToolCall {
         id: update["toolCallId"].as_str().unwrap_or("").to_string(),
         name: kind,
         arguments,
+        extra_content: None,
     }
 }
 
@@ -1191,6 +1194,7 @@ fn permission_call(tool_call: &Value) -> ToolCall {
         id: tool_call["toolCallId"].as_str().unwrap_or("").to_string(),
         name: name.to_string(),
         arguments,
+        extra_content: None,
     }
 }
 

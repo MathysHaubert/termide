@@ -270,6 +270,7 @@ mod tests {
             id: "c".into(),
             name: name.into(),
             arguments: json!({ "path": path }),
+            extra_content: None,
         };
 
         // Outside a request nothing is recorded.

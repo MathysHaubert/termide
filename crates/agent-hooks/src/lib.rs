@@ -286,6 +286,7 @@ mod tests {
             id: "c".into(),
             name: "bash".into(),
             arguments: json!({ "command": command }),
+            extra_content: None,
         }
     }
 
@@ -357,12 +358,14 @@ mod tests {
             id: "r".into(),
             name: "read".into(),
             arguments: json!({ "path": "x" }),
+            extra_content: None,
         };
         assert_eq!(chain.before_tool_call(&read, &ctx()), ToolDecision::Allow);
         let rm = ToolCall {
             id: "r".into(),
             name: "read".into(),
             arguments: json!({ "path": "rm-notes" }),
+            extra_content: None,
         };
         assert_eq!(
             chain.before_tool_call(&rm, &ctx()),

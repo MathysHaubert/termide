@@ -128,6 +128,7 @@ mod tests {
             id: "t".into(),
             name: "task".into(),
             arguments: args,
+            extra_content: None,
         }
     }
 

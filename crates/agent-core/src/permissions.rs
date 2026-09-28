@@ -1258,6 +1258,7 @@ mod tests {
             id: "c".into(),
             name: name.into(),
             arguments: args,
+            extra_content: None,
         }
     }
 
@@ -2082,6 +2083,7 @@ mod prompter_tests {
                 id: "c".into(),
                 name: "bash".into(),
                 arguments: json!({ "command": "git push" }),
+                extra_content: None,
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,

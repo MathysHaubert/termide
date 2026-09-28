@@ -170,11 +170,15 @@ impl OpenAiCompatProvider {
                             Value::String(raw) => raw.clone(),
                             other => other.to_string(),
                         };
-                        json!({
+                        let mut value = json!({
                             "id": call.id,
                             "type": "function",
                             "function": { "name": call.name, "arguments": arguments }
-                        })
+                        });
+                        if let Some(extra) = &call.extra_content {
+                            value["extra_content"] = extra.clone();
+                        }
+                        value
                     })
                     .collect();
                 if !calls.is_empty() {
@@ -550,6 +554,7 @@ mod tests {
             id: "c1".into(),
             name: "read".into(),
             arguments: json!({ "path": "a" }),
+            extra_content: None,
         };
         let messages = vec![
             Message::User(UserMessage::text("hi")),
@@ -605,6 +610,45 @@ mod tests {
         let plain = OpenAiCompatProvider::new("p", "http://x/v1").build_body(&request);
         assert!(plain.get("reasoning_effort").is_none());
         assert!(plain["messages"][2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn a_calls_extra_content_goes_back_with_it() {
+        // Gemini's OpenAI-compatible endpoint signs a call in `extra_content`
+        // and refuses the next request unless the call carries it again.
+        let transcript = r#"data: {"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"extra_content":{"google":{"thought_signature":"sig"}},"function":{"arguments":"{\"path\":\"x\"}","name":"read"},"id":"function-call-1","type":"function"}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+"#;
+        let (url, _) = serve(vec![sse(transcript)]);
+        let provider = provider(&url);
+        let mut messages = vec![Message::User(UserMessage::text("read x"))];
+        let request = Request {
+            model: &model(),
+            system_prompt: "",
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        };
+        let message = provider.stream(&request, &mut |_| {}, &CancelToken::new());
+        let extra = json!({ "google": { "thought_signature": "sig" } });
+        let call = message.tool_calls().next().unwrap().clone();
+        assert_eq!(call.extra_content.as_ref(), Some(&extra), "{message:?}");
+
+        messages.push(Message::Assistant(message));
+        messages.push(Message::ToolResult(ToolResultMessage::text(
+            &call, "contents",
+        )));
+        let body = provider.build_body(&Request {
+            model: &model(),
+            system_prompt: "",
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::Off,
+        });
+        let sent = &body["messages"][1]["tool_calls"][0];
+        assert_eq!(sent["extra_content"], extra);
+        assert_eq!(sent["id"], "function-call-1");
     }
 
     #[test]

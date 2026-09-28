@@ -246,6 +246,7 @@ mod tests {
             id: "q1".into(),
             name: "question".into(),
             arguments,
+            extra_content: None,
         }
     }
 

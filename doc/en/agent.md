@@ -94,7 +94,11 @@ start on otherwise.
 For a hosted OpenAI-compatible endpoint, keep `provider = "openai_compatible"` and point
 the connection's `base_url` and `api_key_env` at it, for example OpenAI itself
 (`https://api.openai.com/v1`, `OPENAI_API_KEY`) or OpenRouter
-(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). For an Anthropic
+(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`), or the Gemini API
+(`https://generativelanguage.googleapis.com/v1beta/openai`, `GEMINI_API_KEY`).
+A tool call a model signs — Gemini's thought signature, in the call's
+`extra_content` — is kept in the session log and sent back with the call, as
+the endpoint requires. For an Anthropic
 subscription set `provider = "anthropic_compatible"`, drop `base_url` (the API root is
 built in; set it only for a gateway) and point `api_key_env` at your
 `ANTHROPIC_API_KEY`; `prefer_reasoning = true` then turns on extended thinking. The

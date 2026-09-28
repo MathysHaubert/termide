@@ -98,7 +98,11 @@ Anthropic требует его обязательно, поэтому там п
 Для облачного OpenAI-совместимого сервера оставьте `provider = "openai_compatible"` и
 укажите у подключения `base_url` и `api_key_env`, например сам OpenAI
 (`https://api.openai.com/v1`, `OPENAI_API_KEY`) или OpenRouter
-(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`). Для подписки Anthropic
+(`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) или Gemini API
+(`https://generativelanguage.googleapis.com/v1beta/openai`, `GEMINI_API_KEY`).
+Подпись, которую модель ставит на вызов инструмента (thought signature Gemini
+в `extra_content` вызова), сохраняется в логе сессии и отправляется обратно
+вместе с вызовом, как того требует сервер. Для подписки Anthropic
 задайте `provider = "anthropic_compatible"`, уберите `base_url` (корень API встроен;
 задавайте его только для шлюза) и укажите `api_key_env` с вашим
 `ANTHROPIC_API_KEY`; тогда `prefer_reasoning = true` включает расширенное мышление.

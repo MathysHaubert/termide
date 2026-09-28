@@ -100,6 +100,7 @@ mod tests {
             id: "c".into(),
             name: "skill".into(),
             arguments: args,
+            extra_content: None,
         };
         let ctx = ToolContext::new(PathBuf::from("/"));
         tool.execute(&call, &ctx, &mut |_| {}, &CancelToken::new())

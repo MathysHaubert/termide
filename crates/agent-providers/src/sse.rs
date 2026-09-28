@@ -14,6 +14,7 @@ struct PartialCall {
     id: String,
     name: String,
     arguments: String,
+    extra_content: Option<Value>,
     announced: bool,
 }
 
@@ -95,6 +96,10 @@ impl Accumulator {
                 partial.id = id.to_string();
             }
         }
+        // Gemini's thought signature, sent with the call once and wanted back.
+        if let Some(extra) = call.get("extra_content").filter(|v| !v.is_null()) {
+            partial.extra_content = Some(extra.clone());
+        }
         let function = call.get("function");
         if let Some(name) = function.and_then(|f| f.get("name")).and_then(Value::as_str) {
             if !name.is_empty() {
@@ -160,6 +165,7 @@ impl Accumulator {
                 id,
                 name: partial.name,
                 arguments: parse_arguments(&partial.arguments),
+                extra_content: partial.extra_content,
             }));
         }
 

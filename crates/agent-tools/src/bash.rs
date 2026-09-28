@@ -392,6 +392,7 @@ mod tests {
             id: "b-1".into(),
             name: "bash".into(),
             arguments: args,
+            extra_content: None,
         };
         let ctx = ToolContext::new(dir.to_path_buf());
         let mut updates = Vec::new();

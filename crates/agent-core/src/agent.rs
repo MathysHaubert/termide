@@ -1092,6 +1092,7 @@ pub(crate) mod test_support {
                         id: id.into(),
                         name: name.into(),
                         arguments,
+                        extra_content: None,
                     })
                 })
                 .collect(),
@@ -1919,6 +1920,7 @@ mod tests {
             id: "c".into(),
             name: "bash".into(),
             arguments: serde_json::json!({ "command": command }),
+            extra_content: None,
         };
         let ctx = ToolContext::new(PathBuf::from("/p"));
 

@@ -278,6 +278,7 @@ mod tests {
             id: "c".into(),
             name: "read".into(),
             arguments: json!({}),
+            extra_content: None,
         };
         let messages = vec![
             user("one"),

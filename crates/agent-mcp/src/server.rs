@@ -301,6 +301,7 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
             Value::Object(_) => params["arguments"].clone(),
             _ => json!({}),
         },
+        extra_content: None,
     };
     let cancel = CancelToken::new();
     let key = id.to_string();

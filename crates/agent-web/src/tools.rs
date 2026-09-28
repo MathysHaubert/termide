@@ -282,6 +282,7 @@ mod tests {
             id: "c1".into(),
             name: name.into(),
             arguments,
+            extra_content: None,
         }
     }
 

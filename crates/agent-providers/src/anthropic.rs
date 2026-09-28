@@ -510,6 +510,7 @@ impl Accumulator {
                         id: partial.id.clone(),
                         name: partial.name.clone(),
                         arguments: parse_arguments(&partial.input),
+                        extra_content: None,
                     }));
                 }
                 _ => {}
@@ -648,6 +649,7 @@ mod tests {
             id: "tu_1".into(),
             name: "read".into(),
             arguments: json!({ "path": "a.rs" }),
+            extra_content: None,
         };
         let messages = vec![
             Message::User(UserMessage::text("hi")),
@@ -752,11 +754,13 @@ mod tests {
             id: "u1".into(),
             name: "read".into(),
             arguments: json!({}),
+            extra_content: None,
         };
         let b = ToolCall {
             id: "u2".into(),
             name: "read".into(),
             arguments: json!({}),
+            extra_content: None,
         };
         let messages = vec![
             Message::ToolResult(ToolResultMessage::text(&a, "one")),
