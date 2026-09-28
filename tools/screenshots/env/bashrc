@@ -1,0 +1,7 @@
+# Shell of the recording user: a fixed prompt, no history, nothing personal.
+export PS1='\[\e[1;32m\]demo@demo\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+export HISTFILE=/dev/null
+export PYTHONDONTWRITEBYTECODE=1
+export GIT_AUTHOR_NAME="Demo User" GIT_AUTHOR_EMAIL="demo@example.com"
+export GIT_COMMITTER_NAME="Demo User" GIT_COMMITTER_EMAIL="demo@example.com"
+alias ls='ls --color=auto'

@@ -1,0 +1,17 @@
+# Only what the builder compiles and what the recorder copies.
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!rust-toolchain.toml
+!README.md
+!src/
+!crates/
+!assets/
+!completions/
+!tools/screenshots/env/
+!tools/screenshots/fixtures/
+!tools/screenshots/mock-llm/
+!tools/screenshots/tapes/
+**/target
+assets/screenshots/

@@ -1,0 +1,21 @@
+# Image viewer: expand docs/, view the chart, widen the panel (chords from
+# env/config.toml), then capture.
+sleep 3
+key down
+key down
+key down
+key down
+key right
+sleep 0.8
+key down
+key down
+key v
+sleep 2
+key alt+v
+key alt+z
+key alt+u
+key alt+w
+sleep 0.6
+key alt+j
+sleep 2
+shot image

@@ -1,0 +1,37 @@
+# termide configuration used by every recording. The theme is swapped per tape
+# by setup.sh; everything else stays put.
+[general]
+theme = "windows-xp"
+language = "en"
+icon_mode = "unicode"
+resource_monitor_interval = 1000
+
+[editor]
+show_blame = false
+
+[ai]
+connection = "local"
+prefer_reasoning = true
+
+[ai.connections.local]
+provider = "openai_compatible"
+base_url = "http://127.0.0.1:10000/v1"
+model = "qwen3-coder-30b-a3b"
+
+[ai.permissions]
+mode = "configured"
+
+[ai.permissions.edit]
+"inventory/**" = "allow"
+
+# The agent tape shows the permission card on the test run.
+[ai.permissions.bash]
+"python3 *" = "ask"
+
+# VHS can send Alt only with a letter: no Alt+digit, Alt+Home or F-keys. The
+# layout actions the tapes need get letter chords that termide leaves free.
+[general.keybindings]
+goto_panel_1 = "Alt+J"
+next_group = "Alt+U"
+move_first = "Alt+V"
+toggle_fullscreen_panel = "Alt+Z"

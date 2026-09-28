@@ -1,0 +1,7 @@
+[user]
+	name = Demo User
+	email = demo@example.com
+[init]
+	defaultBranch = main
+[advice]
+	detachedHead = false
