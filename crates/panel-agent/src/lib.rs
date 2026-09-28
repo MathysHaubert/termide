@@ -22,7 +22,7 @@ mod transcript;
 use std::any::Any;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -34,7 +34,7 @@ use termide_agent_core::{
     CompactionPolicy, CompactionPrompts, Decision, GoalPrompt, HandoffPrompt, Hooks, LateTools,
     Mode, ModeHandle, ModelInfo, ModelSpec, PermissionEnvelope, PermissionRules, PersistScope,
     PlanPrompt, PromptError, PromptTemplate, Provider, QuestionEnvelope, Session, SessionSummary,
-    SkillInfo, Tool, ToolRegistry, ToolResultMessage, DEFAULT_AGENT,
+    SkillInfo, Tool, ToolRegistry, DEFAULT_AGENT,
 };
 use termide_config::Config;
 use termide_core::{
@@ -966,20 +966,6 @@ fn truncate_title(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// The file a successful `edit` or `write` changed, from the result details,
-/// so open editors can follow it without waiting for the watcher.
-fn changed_file(result: &ToolResultMessage) -> Option<PathBuf> {
-    if result.is_error || !matches!(result.tool_name.as_str(), "edit" | "write") {
-        return None;
-    }
-    result
-        .details
-        .as_ref()?
-        .get("path")?
-        .as_str()
-        .map(PathBuf::from)
-}
-
 /// The provider's wire protocol as the status line names it.
 fn provider_label(kind: &str) -> &str {
     match kind {
@@ -1254,130 +1240,7 @@ impl Panel for AgentPanel {
     }
 
     fn tick(&mut self) -> Vec<PanelEvent> {
-        let mut changed = false;
-        // A pause's line ticks its length, redrawn once a second; so does a
-        // call's wait on a permission question, until the question is gone.
-        if let Some(start) = self.pause_start {
-            changed |= self.transcript.set_pause_length(millis(start.elapsed()));
-        }
-        if self.context_stale && !self.is_busy() {
-            self.refresh_context();
-            changed = true;
-        }
-        if let Some((start, before)) = self.permission_wait {
-            if matches!(
-                self.pending,
-                Some(Pending::Permission { .. } | Pending::Question { .. })
-            ) {
-                changed |= self
-                    .transcript
-                    .set_tool_wait(before.saturating_add(millis(start.elapsed())), true);
-            } else {
-                self.end_permission_wait();
-                changed = true;
-            }
-        }
-        for event in self.runtime.drain() {
-            self.apply(event);
-            changed = true;
-        }
-        let mut events = self.poll_permissions();
-        events.append(&mut self.poll_questions());
-        events.append(&mut self.pending_events);
-        changed |= self.poll_late_tools();
-        changed |= self.poll_command();
-        let fetched = self.model_fetch.as_ref().map(Receiver::try_recv);
-        match fetched {
-            Some(Ok(result)) => {
-                self.model_fetch = None;
-                events.push(self.model_picker(result));
-            }
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                self.model_fetch = None;
-                events.push(self.model_picker(Err(
-                    termide_i18n::t().agent_model_request_dropped().to_string(),
-                )));
-            }
-            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
-        }
-        // The silent context-window probe: adopt the active model's real
-        // window when it arrives, and stay quiet on failure.
-        match self.context_probe.as_ref().map(Receiver::try_recv) {
-            Some(Ok(Ok(models))) => {
-                self.context_probe = None;
-                changed |= self.adopt_listed_models(&models);
-            }
-            Some(Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected)) => {
-                self.context_probe = None;
-            }
-            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
-        }
-        // An external agent's model becomes known once its handshake finishes
-        // (its adapter starts asynchronously): adopt the current model for the
-        // banner and the Model chip, and note whether it offers a choice.
-        if self.external {
-            if !self.acp_has_models && !self.runtime.available_models().is_empty() {
-                self.acp_has_models = true;
-                changed = true;
-                // Apply the configured pre-selected model once, now that the
-                // agent's models are known.
-                if let Some(pref) = self.pending_preferred_model.take() {
-                    if self.runtime.current_model().as_deref() != Some(pref.as_str()) {
-                        match self.runtime.select_model(pref.clone()) {
-                            Ok(()) => self.model.id = pref,
-                            Err(error) => {
-                                log::warn!("cannot pre-select the model: {error}");
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(id) = self.runtime.current_model() {
-                if id != self.model.id {
-                    self.model.id = id;
-                    changed = true;
-                }
-            }
-            // The context's fill and size, as the agent reports them.
-            if let Some((used, size)) = self.runtime.context_usage() {
-                if (used, size) != (self.context_tokens, self.model.context_window) {
-                    self.context_tokens = used;
-                    self.model.context_window = size;
-                    changed = true;
-                }
-            }
-        }
-        // A loop whose wait has elapsed starts its next iteration once the
-        // panel is free (no run in flight, no card waiting for an answer).
-        let due = self
-            .loop_task
-            .as_ref()
-            .and_then(|t| t.next_at)
-            .is_some_and(|at| at <= Instant::now());
-        if due && !self.is_busy() && self.pending.is_none() {
-            events.extend(self.loop_step());
-            changed = true;
-        }
-        // A goal whose work turn has finished runs the judge once the panel is
-        // free and no judge call is already in flight.
-        let judge_due = self
-            .goal_task
-            .as_ref()
-            .is_some_and(|t| !t.judging && t.judge_at.is_some_and(|at| at <= Instant::now()));
-        if judge_due && !self.is_busy() && self.pending.is_none() {
-            events.extend(self.run_goal_judge());
-            changed = true;
-        }
-        // While the agent works, keep the ticking timer and the block's
-        // spinner moving without waiting for an event (throttled to ~10 fps).
-        if self.is_busy() && self.last_anim.elapsed() >= Duration::from_millis(100) {
-            self.last_anim = Instant::now();
-            changed = true;
-        }
-        if changed || !events.is_empty() {
-            events.push(PanelEvent::NeedsRedraw);
-        }
-        events
+        self.on_tick()
     }
 
     fn handle_command(&mut self, cmd: PanelCommand<'_>) -> CommandResult {

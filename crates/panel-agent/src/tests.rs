@@ -1,6 +1,6 @@
 use super::*;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
@@ -9,8 +9,8 @@ use ratatui::text::Line;
 use termide_agent_core::{
     permission_channel, question_channel, Agent, AgentEvent, AssistantContent, AssistantMessage,
     CancelToken, Message, PermissionAnswer, PermissionPrompter, QuestionAnswer, QuestionReply,
-    Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision, ToolUpdate,
-    Usage, UserMessage,
+    Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision,
+    ToolResultMessage, ToolUpdate, Usage, UserMessage,
 };
 use termide_core::{ConfirmAction, PanelConfig, SegmentKind};
 use termide_ui::{ChoiceAction, ChoiceForm};
