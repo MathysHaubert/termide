@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::paths;
 use crate::protocol::{ClientFrame, ServerFrame};
-use crate::registry::{self, SessionInfo};
+use crate::registry::{self, InstanceInfo};
 
 /// Environment variable naming the socket of the instance a termide is hosted
 /// in. Its presence is also how the app knows to offer the detach action.
@@ -53,7 +53,7 @@ pub fn spawn_detached(project_root: &Path, files: &[PathBuf]) -> Result<String> 
 
     match unsafe { nix::unistd::fork() } {
         Ok(nix::unistd::ForkResult::Parent { child }) => {
-            registry::write_info(&SessionInfo {
+            registry::write_info(&InstanceInfo {
                 id: id.clone(),
                 pid: child.as_raw(),
                 project: project_root.to_path_buf(),

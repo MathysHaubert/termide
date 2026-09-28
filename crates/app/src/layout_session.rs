@@ -46,18 +46,18 @@ use termide_panel_misc::JournalPanel;
 use termide_panel_terminal::Terminal;
 use termide_project::{
     cleanup_unsaved_buffer, load_unsaved_buffer, GroupLayoutMode, PanelGroupState, PanelState,
-    Session,
+    ProjectLayout,
 };
 use termide_theme::Theme;
 
 /// Extension trait for session serialization.
 pub trait LayoutManagerSession {
-    /// Serialize current layout to Session.
-    fn to_state(&mut self, session_dir: &Path) -> Session;
+    /// Serialize current layout to ProjectLayout.
+    fn to_state(&mut self, session_dir: &Path) -> ProjectLayout;
 
-    /// Restore layout from Session.
+    /// Restore layout from ProjectLayout.
     fn from_session(
-        session: Session,
+        session: ProjectLayout,
         session_dir: &Path,
         term_height: u16,
         term_width: u16,
@@ -67,7 +67,7 @@ pub trait LayoutManagerSession {
 }
 
 impl LayoutManagerSession for LayoutManager {
-    fn to_state(&mut self, session_dir: &Path) -> Session {
+    fn to_state(&mut self, session_dir: &Path) -> ProjectLayout {
         let panel_groups: Vec<PanelGroupState> = self
             .panel_groups
             .iter_mut()
@@ -90,14 +90,14 @@ impl LayoutManagerSession for LayoutManager {
             })
             .collect();
 
-        Session {
+        ProjectLayout {
             panel_groups,
             focused_group: self.focus,
         }
     }
 
     fn from_session(
-        session: Session,
+        session: ProjectLayout,
         session_dir: &Path,
         term_height: u16,
         term_width: u16,

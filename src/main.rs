@@ -159,7 +159,7 @@ fn run_diagnostics(custom_config: Option<&std::path::Path>) -> bool {
     if let Some(ref root) = project_root {
         check(
             "project dir",
-            termide_project::Session::get_project_dir(root)
+            termide_project::ProjectLayout::get_project_dir(root)
                 .map(|p| p.display().to_string())
                 .map_err(|e| format!("{e}")),
         );

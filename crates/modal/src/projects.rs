@@ -20,7 +20,7 @@ use crate::{calculate_modal_width, centered_rect_with_size, Modal, ModalResult, 
 
 /// Action returned by the sessions modal
 #[derive(Debug, Clone)]
-pub enum SessionAction {
+pub enum ProjectAction {
     /// Switch to the selected session
     Switch(PathBuf),
     /// Request deletion of the selected session
@@ -29,7 +29,7 @@ pub enum SessionAction {
 
 /// Item representing a session in the list
 #[derive(Debug, Clone)]
-pub struct SessionItem {
+pub struct ProjectItem {
     /// Original project path
     pub project_path: PathBuf,
     /// Display path (potentially shortened)
@@ -44,7 +44,7 @@ pub struct SessionItem {
 #[derive(Debug)]
 pub struct ProjectsModal {
     title: String,
-    items: Vec<SessionItem>,
+    items: Vec<ProjectItem>,
     cursor: usize,
     scroll_offset: usize,
     last_list_area: Option<Rect>,
@@ -60,7 +60,7 @@ const FILTER_ROWS: u16 = 3;
 
 impl ProjectsModal {
     /// Create a new sessions modal
-    pub fn new(title: impl Into<String>, items: Vec<SessionItem>) -> Self {
+    pub fn new(title: impl Into<String>, items: Vec<ProjectItem>) -> Self {
         let filtered_indices = (0..items.len()).collect();
         Self {
             title: title.into(),
@@ -155,7 +155,7 @@ impl ProjectsModal {
     }
 
     /// Get the selected session from filtered list
-    fn get_selected(&self) -> Option<&SessionItem> {
+    fn get_selected(&self) -> Option<&ProjectItem> {
         self.filtered_indices
             .get(self.cursor)
             .and_then(|&i| self.items.get(i))
@@ -163,7 +163,7 @@ impl ProjectsModal {
 }
 
 impl Modal for ProjectsModal {
-    type Result = SessionAction;
+    type Result = ProjectAction;
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         let modal_width = self.calculate_modal_width(area.width);
@@ -325,7 +325,7 @@ impl Modal for ProjectsModal {
                     if item.is_current {
                         Ok(Some(ModalResult::Cancelled))
                     } else {
-                        Ok(Some(ModalResult::Confirmed(SessionAction::Switch(
+                        Ok(Some(ModalResult::Confirmed(ProjectAction::Switch(
                             item.project_path.clone(),
                         ))))
                     }
@@ -338,7 +338,7 @@ impl Modal for ProjectsModal {
             KeyCode::Delete | KeyCode::F(8) => {
                 if let Some(item) = self.get_selected() {
                     if !item.is_current {
-                        Ok(Some(ModalResult::Confirmed(SessionAction::Delete(
+                        Ok(Some(ModalResult::Confirmed(ProjectAction::Delete(
                             item.project_path.clone(),
                         ))))
                     } else {
@@ -412,7 +412,7 @@ impl Modal for ProjectsModal {
                     if item.is_current {
                         return Ok(Some(ModalResult::Cancelled));
                     } else {
-                        return Ok(Some(ModalResult::Confirmed(SessionAction::Switch(
+                        return Ok(Some(ModalResult::Confirmed(ProjectAction::Switch(
                             item.project_path.clone(),
                         ))));
                     }

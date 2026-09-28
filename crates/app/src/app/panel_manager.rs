@@ -23,7 +23,7 @@ impl App {
                 if let Some(filename) = editor.unsaved_buffer_file() {
                     // Get session directory and delete the temporary file
                     if let Ok(session_dir) =
-                        termide_project::Session::get_project_dir(&self.project_root)
+                        termide_project::ProjectLayout::get_project_dir(&self.project_root)
                     {
                         if let Err(e) =
                             termide_project::delete_unsaved_buffer(&session_dir, filename)

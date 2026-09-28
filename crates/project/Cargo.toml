@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Session persistence for termide"
+description = "Saved project layouts for termide"
 
 [dependencies]
 anyhow.workspace = true

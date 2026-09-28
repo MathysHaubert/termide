@@ -1,6 +1,7 @@
-//! Filesystem maintenance for session storage: unsaved-buffer and log
-//! bookkeeping, stale-session cleanup, and session listing. Split out of the
-//! session model; operates purely on paths and the `Session` snapshot.
+//! Filesystem maintenance for the project store: unsaved-buffer and log
+//! bookkeeping, cleanup of stale projects, and the project listing. Split out
+//! of the layout model; operates purely on paths and the `ProjectLayout`
+//! snapshot.
 
 use anyhow::{Context, Result};
 use chrono::Local;
@@ -8,7 +9,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{get_data_dir, PanelState, Session};
+use crate::{get_data_dir, PanelState, ProjectLayout};
 
 /// Generate a unique filename for an unsaved buffer
 ///
@@ -103,7 +104,7 @@ pub fn cleanup_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> 
 }
 
 /// Remove unsaved-*.txt files not referenced in the given session.
-pub fn cleanup_stale_buffers(session_dir: &Path, session: &Session) {
+pub fn cleanup_stale_buffers(session_dir: &Path, session: &ProjectLayout) {
     let active: HashSet<&str> = session
         .panel_groups
         .iter()
@@ -326,7 +327,7 @@ pub fn restore_orphaned_buffers(session_dir: &Path) -> Result<Vec<String>> {
     let session_file = session_dir.join("session.toml");
     let active_buffers: HashSet<String> = if session_file.exists() {
         match fs::read_to_string(&session_file) {
-            Ok(contents) => match toml::from_str::<Session>(&contents) {
+            Ok(contents) => match toml::from_str::<ProjectLayout>(&contents) {
                 Ok(session) => {
                     // Collect all unsaved_buffer_file references from session
                     session
@@ -395,7 +396,7 @@ pub fn delete_unsaved_buffer(session_dir: &Path, filename: &str) -> Result<()> {
 
 /// Information about a discovered session
 #[derive(Debug, Clone)]
-pub struct SessionInfo {
+pub struct ProjectInfo {
     /// Original project path (reconstructed from session directory)
     pub project_path: PathBuf,
     /// Path to session.toml file
@@ -405,7 +406,7 @@ pub struct SessionInfo {
 }
 
 /// List all available sessions, sorted by modification time (newest first)
-pub fn list_all_projects() -> Result<Vec<SessionInfo>> {
+pub fn list_all_projects() -> Result<Vec<ProjectInfo>> {
     let data_dir = get_data_dir()?;
     let sessions_dir = data_dir.join(crate::PROJECTS_DIR);
 
@@ -426,7 +427,7 @@ pub fn list_all_projects() -> Result<Vec<SessionInfo>> {
 fn collect_sessions(
     dir: &Path,
     sessions_base: &Path,
-    sessions: &mut Vec<SessionInfo>,
+    sessions: &mut Vec<ProjectInfo>,
 ) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -454,7 +455,7 @@ fn collect_sessions(
                         .and_then(|m| m.modified())
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                    sessions.push(SessionInfo {
+                    sessions.push(ProjectInfo {
                         project_path,
                         session_path: session_file,
                         modified,
@@ -538,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_serialization() {
-        let session = Session {
+        let session = ProjectLayout {
             panel_groups: vec![
                 PanelGroupState {
                     panels: vec![
@@ -571,7 +572,7 @@ mod tests {
         };
 
         let toml_str = toml::to_string_pretty(&session).unwrap();
-        let restored: Session = toml::from_str(&toml_str).unwrap();
+        let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(restored.focused_group, 0);
         assert_eq!(restored.panel_groups.len(), 2);
@@ -597,7 +598,7 @@ expanded_index = 0
 type = "file_manager"
 path = "/old/style/path"
 "#;
-        let session: Session = toml::from_str(toml_str).unwrap();
+        let session: ProjectLayout = toml::from_str(toml_str).unwrap();
         match &session.panel_groups[0].panels[0] {
             PanelState::FileManager { path_or_url } => {
                 assert_eq!(path_or_url, "/old/style/path");
@@ -612,7 +613,7 @@ path = "/old/style/path"
 
     #[test]
     fn test_sftp_url_round_trip() {
-        let session = Session {
+        let session = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![PanelState::FileManager {
                     path_or_url: "sftp://user@host:22/remote/path".to_string(),
@@ -627,7 +628,7 @@ path = "/old/style/path"
         };
 
         let toml_str = toml::to_string_pretty(&session).unwrap();
-        let restored: Session = toml::from_str(&toml_str).unwrap();
+        let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
 
         match &restored.panel_groups[0].panels[0] {
             PanelState::FileManager { path_or_url } => {
@@ -643,7 +644,7 @@ path = "/old/style/path"
 
     #[test]
     fn test_markdown_panel_round_trip() {
-        let session = Session {
+        let session = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![PanelState::Markdown {
                     path: PathBuf::from("/home/user/project/README.md"),
@@ -661,7 +662,7 @@ path = "/old/style/path"
         // Serialized with the "markdown" type tag.
         assert!(toml_str.contains("type = \"markdown\""), "{toml_str}");
 
-        let restored: Session = toml::from_str(&toml_str).unwrap();
+        let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
         match &restored.panel_groups[0].panels[0] {
             PanelState::Markdown { path } => {
                 assert_eq!(path, &PathBuf::from("/home/user/project/README.md"));
@@ -692,13 +693,13 @@ path = "/old/style/path"
     }
 
     // =========================================================================
-    // Session directory mapping
+    // Project layout directory mapping
     // =========================================================================
 
     #[test]
     fn test_session_dir_mapping() {
         let project = Path::new("/home/user/project");
-        let session_dir = Session::get_project_dir(project).unwrap();
+        let session_dir = ProjectLayout::get_project_dir(project).unwrap();
         // Should contain "sessions/home/user/project"
         let path_str = session_dir.to_string_lossy();
         assert!(path_str.contains(crate::PROJECTS_DIR));
@@ -708,7 +709,7 @@ path = "/old/style/path"
     #[test]
     fn test_session_path_has_toml_extension() {
         let project = Path::new("/home/user/project");
-        let session_path = Session::get_project_path(project).unwrap();
+        let session_path = ProjectLayout::get_project_path(project).unwrap();
         assert!(session_path.to_string_lossy().ends_with("session.toml"));
     }
 
@@ -718,13 +719,13 @@ path = "/old/style/path"
 
     #[test]
     fn test_empty_toml_fails_gracefully() {
-        let result: Result<Session, _> = toml::from_str("");
+        let result: Result<ProjectLayout, _> = toml::from_str("");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_invalid_toml_fails_gracefully() {
-        let result: Result<Session, _> = toml::from_str("this is not valid toml {{{}}}");
+        let result: Result<ProjectLayout, _> = toml::from_str("this is not valid toml {{{}}}");
         assert!(result.is_err());
     }
 
@@ -737,7 +738,7 @@ focused_group = 0
 expanded_index = 0
 panels = []
 "#;
-        let session: Session = toml::from_str(toml_str).unwrap();
+        let session: ProjectLayout = toml::from_str(toml_str).unwrap();
         assert_eq!(session.panel_groups[0].panels.len(), 0);
     }
 
@@ -747,7 +748,7 @@ panels = []
 
     #[test]
     fn test_all_panel_types_round_trip() {
-        let session = Session {
+        let session = ProjectLayout {
             panel_groups: vec![PanelGroupState {
                 panels: vec![
                     PanelState::FileManager {
@@ -790,7 +791,7 @@ panels = []
         };
 
         let toml_str = toml::to_string_pretty(&session).unwrap();
-        let restored: Session = toml::from_str(&toml_str).unwrap();
+        let restored: ProjectLayout = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.panel_groups[0].panels.len(), 11);
     }
 

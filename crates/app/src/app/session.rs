@@ -22,7 +22,7 @@ impl App {
         }
 
         // Get session directory for this project
-        let session_dir = termide_project::Session::get_project_dir(&self.project_root)?;
+        let session_dir = termide_project::ProjectLayout::get_project_dir(&self.project_root)?;
 
         // Ensure all modified unnamed buffers have stable filenames
         for group in &mut self.layout_manager.panel_groups {
@@ -49,10 +49,10 @@ impl App {
     /// Load session from file and restore layout
     pub fn load_session(&mut self) -> Result<()> {
         // Load session for this project
-        let session = termide_project::Session::load(&self.project_root)?;
+        let session = termide_project::ProjectLayout::load(&self.project_root)?;
 
         // Get session directory for restoring temporary buffers
-        let session_dir = termide_project::Session::get_project_dir(&self.project_root)?;
+        let session_dir = termide_project::ProjectLayout::get_project_dir(&self.project_root)?;
 
         // Get terminal dimensions for creating Terminal panels
         // Height: subtract menu (1) + status bar (1) + panel border (1) = 3

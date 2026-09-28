@@ -113,7 +113,7 @@ impl App {
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
-            termide_project::Session::get_project_dir(&project_root)
+            termide_project::ProjectLayout::get_project_dir(&project_root)
                 .map(|dir| {
                     // Cleanup old log files (older than 24 hours)
                     let _ = termide_project::cleanup_old_logs(&dir);
@@ -197,7 +197,7 @@ impl App {
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {
             std::path::PathBuf::from(path)
         } else {
-            termide_project::Session::get_project_dir(&project_root)
+            termide_project::ProjectLayout::get_project_dir(&project_root)
                 .map(|dir| {
                     let _ = termide_project::cleanup_old_logs(&dir);
                     dir.join(termide_project::generate_log_filename())

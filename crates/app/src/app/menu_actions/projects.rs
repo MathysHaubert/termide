@@ -16,7 +16,7 @@ use termide_ui_render::{
 impl App {
     /// Open sessions modal to switch between projects
     pub(in crate::app) fn handle_open_projects_modal(&mut self) -> Result<()> {
-        use termide_modal::{ProjectsModal, SessionItem};
+        use termide_modal::{ProjectItem, ProjectsModal};
         use termide_project::{format_relative_time, list_all_projects};
 
         let t = i18n::t();
@@ -28,7 +28,7 @@ impl App {
         let current_project = std::env::current_dir().unwrap_or_default();
 
         // Convert to SessionItems
-        let items: Vec<SessionItem> = sessions
+        let items: Vec<ProjectItem> = sessions
             .into_iter()
             .map(|info| {
                 let is_current = info.project_path == current_project;
@@ -36,7 +36,7 @@ impl App {
                     termide_core::util::shorten_home_path(&info.project_path.display().to_string());
                 let relative_time = format_relative_time(info.modified);
 
-                SessionItem {
+                ProjectItem {
                     project_path: info.project_path,
                     display_path,
                     relative_time,

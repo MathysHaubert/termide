@@ -39,10 +39,10 @@ pub mod find_bar;
 pub mod info;
 pub mod info_action;
 pub mod input;
+pub mod projects;
 pub mod rename_pattern;
 pub mod save_as;
 pub mod select;
-pub mod sessions;
 pub mod settings;
 
 pub use bookmark_add::{BookmarkAddModal, BookmarkAddResult};
@@ -69,10 +69,10 @@ pub use info_action::{
     ActionButton, InfoActionModal, InfoActionResult, PermAccess, PermissionsState,
 };
 pub use input::{InputModal, Suggest};
+pub use projects::{ProjectAction, ProjectItem, ProjectsModal};
 pub use rename_pattern::RenamePatternModal;
 pub use save_as::{SaveAsModal, SaveAsResult};
 pub use select::SelectModal;
-pub use sessions::{ProjectsModal, SessionAction, SessionItem};
 pub use settings::{SettingsModal, SettingsResult};
 
 /// Active modal window enum.

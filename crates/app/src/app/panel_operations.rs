@@ -361,14 +361,14 @@ impl App {
 
     /// Handle switch session modal result
     pub(super) fn handle_switch_session(&mut self, value: Box<dyn std::any::Any>) -> Result<()> {
-        use termide_modal::SessionAction;
+        use termide_modal::ProjectAction;
 
-        if let Some(action) = value.downcast_ref::<SessionAction>() {
+        if let Some(action) = value.downcast_ref::<ProjectAction>() {
             match action {
-                SessionAction::Switch(path) => {
+                ProjectAction::Switch(path) => {
                     self.switch_to_session(path.clone())?;
                 }
-                SessionAction::Delete(path) => {
+                ProjectAction::Delete(path) => {
                     self.confirm_delete_session(vec![path.clone()], None, None)
                 }
             }
@@ -443,7 +443,7 @@ impl App {
         menu: Option<Vec<usize>>,
     ) -> Result<()> {
         for path in paths {
-            if let Err(e) = termide_project::Session::delete_session(path) {
+            if let Err(e) = termide_project::ProjectLayout::delete_layout(path) {
                 log::error!("Failed to delete session for {:?}: {}", path, e);
                 // Keep the error on screen instead of reopening over it.
                 self.show_error_modal(i18n::t().projects_delete_failed_fmt(&e.to_string()));
@@ -474,13 +474,13 @@ impl App {
     /// If a session already exists, it will be cleared (reset to default panels)
     fn create_new_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
         use termide_panel_file_manager::FileManager;
-        use termide_project::Session;
+        use termide_project::ProjectLayout;
 
         // 1. Save current session before switching
         self.auto_save_session();
 
         // 2. Clear any existing session in the target directory
-        if let Ok(session_dir) = Session::get_project_dir(&new_project_root) {
+        if let Ok(session_dir) = ProjectLayout::get_project_dir(&new_project_root) {
             // Remove session file if it exists (this clears the session)
             let session_file = session_dir.join("session.toml");
             if session_file.exists() {
@@ -552,7 +552,7 @@ impl App {
 
     /// Move current session to a new directory
     fn move_session_to(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
-        use termide_project::Session;
+        use termide_project::ProjectLayout;
 
         let old_project_root = self.project_root.clone();
 
@@ -565,8 +565,8 @@ impl App {
         self.auto_save_session();
 
         // 2. Copy all session data to new location (including unsaved buffers)
-        if let Ok(old_session_dir) = Session::get_project_dir(&old_project_root) {
-            if let Ok(new_session_dir) = Session::get_project_dir(&new_project_root) {
+        if let Ok(old_session_dir) = ProjectLayout::get_project_dir(&old_project_root) {
+            if let Ok(new_session_dir) = ProjectLayout::get_project_dir(&new_project_root) {
                 // Create new session directory if needed
                 if let Err(e) = std::fs::create_dir_all(&new_session_dir) {
                     log::error!(

@@ -1,4 +1,4 @@
-//! Session persistence for termide.
+//! Saved project layouts for termide.
 //!
 //! Saves and restores application state between runs.
 
@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 mod maintenance;
 pub use maintenance::*;
 
-/// Session state for saving and restoring panel layout
+/// The saved layout of a project: its panels, restored on the next start
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
+pub struct ProjectLayout {
     /// Panel groups (vertical columns with accordion)
     pub panel_groups: Vec<PanelGroupState>,
     /// Which group is currently focused (0-based index)
@@ -156,7 +156,7 @@ pub enum PanelState {
     Agent {
         /// Working directory the agent's tools run in
         cwd: PathBuf,
-        /// Session log to continue; absent when the panel ran without one
+        /// Agent session log to continue; absent when the panel ran without one
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<PathBuf>,
         /// Agent definition in use; the default one when absent
@@ -288,7 +288,7 @@ fn delete_project_files(session_dir: &Path, projects_dir: &Path) -> std::io::Res
     Ok(())
 }
 
-impl Session {
+impl ProjectLayout {
     /// Get the storage directory for a specific project
     ///
     /// Creates nested subdirectories matching the project path with root stripped.
@@ -306,7 +306,7 @@ impl Session {
     }
 
     /// Delete the stored state of a specific project.
-    pub fn delete_session(project_root: &Path) -> Result<()> {
+    pub fn delete_layout(project_root: &Path) -> Result<()> {
         let session_dir = Self::get_project_dir(project_root)?;
         let projects_dir = get_data_dir()?.join(PROJECTS_DIR);
         delete_project_files(&session_dir, &projects_dir)
@@ -318,7 +318,7 @@ impl Session {
         let path = Self::get_project_path(project_root)?;
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read session file: {}", path.display()))?;
-        let session: Session = toml::from_str(&contents)
+        let session: ProjectLayout = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse session file: {}", path.display()))?;
         Ok(session)
     }
