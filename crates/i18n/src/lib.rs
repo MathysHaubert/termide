@@ -609,7 +609,7 @@ pub trait Translation: Send + Sync {
     fn settings_header_layout(&self) -> &str;
     fn settings_header_notifications(&self) -> &str;
     fn settings_header_performance(&self) -> &str;
-    fn settings_header_session(&self) -> &str;
+    fn settings_header_instance(&self) -> &str;
     fn settings_header_typing(&self) -> &str;
     fn settings_header_display(&self) -> &str;
     fn settings_header_search(&self) -> &str;

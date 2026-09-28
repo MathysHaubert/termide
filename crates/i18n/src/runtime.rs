@@ -170,7 +170,7 @@ impl Translation for RuntimeTranslation {
         settings_header_layout,
         settings_header_notifications,
         settings_header_performance,
-        settings_header_session,
+        settings_header_instance,
         settings_header_typing,
         settings_header_display,
         settings_header_search,
