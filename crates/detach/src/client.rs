@@ -101,6 +101,11 @@ pub fn attach(id: Option<String>, takeover: bool) -> Result<i32> {
     }
 
     enable_raw_mode().context("Failed to put the terminal into raw mode")?;
+    // The hosted termide re-enters its terminal modes only on the tick after
+    // it learns of the attach, and may paint a whole frame before that. Taken
+    // here, before any output, the alternate screen catches that frame too,
+    // so it is wiped on detach instead of staying on this shell's screen.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen);
 
     let running = Arc::new(AtomicBool::new(true));
     spawn_input_pump(&stream, Arc::clone(&running))?;

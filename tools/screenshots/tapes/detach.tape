@@ -18,8 +18,6 @@ Sleep 1.5s
 Screenshot out/detach-running.png
 Alt+d
 Sleep 2s
-Type "clear" Enter
-Sleep 300ms
 Type "termide --list-instances" Sleep 300ms Enter
 Sleep 1.5s
 Screenshot out/detach-list.png
