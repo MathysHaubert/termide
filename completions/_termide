@@ -30,6 +30,8 @@ _arguments \
   '--diagnostics[Run pre-flight diagnostics and exit]' \
   '--detached[Start a detached instance and print its id]' \
   '--attach[Attach to a detached instance, the most recent without an id]::instance:_termide_instances' \
+  '(-f --force)'{-f,--force}'[With --attach, take the instance over from the attached client]' \
+  '--kill[End a detached instance and exit]:instance:_termide_instances' \
   '--list-instances[List detached instances and exit]' \
   '--completions[Print a shell completion script and exit]:shell:(bash zsh fish)' \
   '--install-completions[Install the completion script for a shell, $SHELL by default]::shell:(bash zsh fish)' \

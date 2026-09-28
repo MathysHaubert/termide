@@ -113,6 +113,8 @@ the way it does in a local instance.
 | `termide --detached file.rs` | Same, opening files as usual |
 | `termide --attach` | Attach to the most recent instance |
 | `termide --attach <ID>` | Attach to a named instance |
+| `termide --attach <ID> --force` (`-f`) | Attach, taking over from a client that is already attached |
+| `termide --kill <ID>` | End an instance, with everything running inside it |
 | `termide --list-instances` | List instances: id, pid, uptime, state, project |
 
 `--list-instances` also cleans up after instances whose host process is gone, so
@@ -120,7 +122,7 @@ a crash never leaves a phantom entry behind.
 
 With shell completion loaded (`termide --completions <shell>`, see
 [Installation](installation.md#shell-completions)), Tab after `--attach`
-offers the ids from this table.
+and `--kill` offers the ids from this table.
 
 ## Detaching
 
@@ -134,11 +136,37 @@ offers the ids from this table.
 Ending a instance is the same as ending any TermIDE: quit it (`Alt+Q`) while
 attached. That stops the host process too, and removes the instance.
 
+When you cannot attach to quit it — the instance is wedged, or you simply want
+it gone — end it from outside:
+
+```bash
+termide --kill my-project
+```
+
+TermIDE inside gets SIGTERM, then SIGKILL if it is still there three seconds
+later; if the host process does not go either, `--kill` kills it too. Unsaved
+changes in that instance are lost, and its shells and jobs end with it. A
+client attached at the time is told the instance ended.
+
 ## Only one client at a time
 
 A second `--attach` to the same instance is refused while another client is
 attached, rather than mirroring the screen to both. Detach the first client (or
 close its terminal) and the next attach succeeds immediately.
+
+When the first client is out of reach — left attached on a locked desktop, or
+behind an SSH connection that hung — take the instance over instead:
+
+```bash
+termide --attach my-project --force   # or -f
+```
+
+The other client is detached with a note that the instance was taken over, and
+the instance repaints for the new terminal. Nothing inside it is disturbed. A
+client that has stopped reading entirely is cut off without the note.
+
+An instance started by an older TermIDE does not understand `--force`: detach
+its client the ordinary way, or end it with `--kill`.
 
 ## Where the instance state lives
 

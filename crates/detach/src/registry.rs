@@ -140,7 +140,7 @@ pub fn remove(id: &str) {
 /// liveness is probed this way rather than by connecting to the socket — a
 /// connect would arrive at the daemon as a client and have to be rejected.
 #[cfg(unix)]
-fn process_is_alive(pid: i32) -> bool {
+pub(crate) fn process_is_alive(pid: i32) -> bool {
     use nix::sys::signal::kill;
     use nix::unistd::Pid;
     // Err(EPERM) means the process exists under another uid, which cannot
@@ -152,7 +152,7 @@ fn process_is_alive(pid: i32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn process_is_alive(_pid: i32) -> bool {
+pub(crate) fn process_is_alive(_pid: i32) -> bool {
     false
 }
 

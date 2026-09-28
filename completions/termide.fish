@@ -21,6 +21,8 @@ complete -c termide -l detached -d 'Start a detached instance and print its id'
 # `-r` so that fish completes the word after `--attach`; the id is optional to
 # termide itself, so files stay on offer as well.
 complete -c termide -l attach -d 'Attach to a detached instance, the most recent without an id' -r -a '(__termide_instances)'
+complete -c termide -s f -l force -d 'With --attach, take the instance over from the attached client'
+complete -c termide -l kill -d 'End a detached instance and exit' -x -a '(__termide_instances)'
 complete -c termide -l list-instances -d 'List detached instances and exit'
 complete -c termide -l completions -d 'Print a shell completion script and exit' -x -a 'bash zsh fish'
 complete -c termide -l install-completions -d 'Install the completion script for a shell, $SHELL by default' -x -a 'bash zsh fish'

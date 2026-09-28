@@ -13,7 +13,9 @@ use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 use crate::paths;
 use crate::protocol::{ClientFrame, ServerFrame};
@@ -32,6 +34,22 @@ pub const ID_ENV: &str = "TERMIDE_DETACH_ID";
 /// first attach resizes to the real terminal and triggers a full redraw.
 const INITIAL_COLS: u16 = 80;
 const INITIAL_ROWS: u16 = 24;
+
+/// How long a takeover waits for the PTY pump to let go of the client before
+/// cutting the old connection from under it.
+///
+/// The pump holds the client lock while it writes, and a client that stopped
+/// reading — a hung SSH link, a suspended terminal — parks that write for as
+/// long as the peer stays silent. That is exactly the client a takeover is for.
+const TAKEOVER_GRACE: Duration = Duration::from_millis(300);
+
+/// Bound on telling a displaced client why it was let go. The notice is a
+/// courtesy; a peer that does not read it must not hold up the new client.
+const TAKEOVER_NOTICE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How long the hosted termide has to exit on SIGTERM before `--kill` sends
+/// SIGKILL.
+pub const KILL_GRACE: Duration = Duration::from_secs(3);
 
 /// Start a detached instance and return its id.
 ///
@@ -128,13 +146,29 @@ fn close_client(stream: Option<UnixStream>) {
     }
 }
 
+/// The attached client, tagged with the connection it arrived on.
+///
+/// The tag is what lets a connection clean up after itself without touching a
+/// successor: a client displaced by a takeover still runs its connection
+/// thread to the end, and releasing "whoever is attached" there would cut off
+/// the client that just took over.
+struct Client {
+    conn: u64,
+    stream: UnixStream,
+}
+
 /// Everything the accept loop and the PTY pump share.
 struct Instance {
     id: String,
-    /// The attached client's socket, or `None` while detached. Writing to it
-    /// is the only thing the PTY pump does with a client, so one mutex over
-    /// the stream is enough.
-    client: Mutex<Option<UnixStream>>,
+    /// The attached client, or `None` while detached. Writing to it is the
+    /// only thing the PTY pump does with a client, so one mutex over the
+    /// stream is enough.
+    client: Mutex<Option<Client>>,
+    /// A second descriptor for the attached client's socket, under a lock that
+    /// is never held across I/O. A takeover shuts the socket down through it
+    /// when the pump is stuck writing with `client` locked.
+    kick: Mutex<Option<UnixStream>>,
+    next_conn: AtomicU64,
     master: Mutex<Box<dyn MasterPty + Send>>,
     pty_writer: Mutex<Box<dyn Write + Send>>,
     /// Pid of the hosted termide, signalled on attach to force a redraw.
@@ -146,17 +180,75 @@ impl Instance {
     fn send(&self, frame: &ServerFrame) {
         let mut guard = self.client.lock().unwrap();
         let failed = match guard.as_mut() {
-            Some(stream) => frame.write_to(stream).is_err(),
+            Some(client) => frame.write_to(&mut client.stream).is_err(),
             None => false,
         };
         if failed {
-            Self::close(guard.take());
-            let _ = registry::set_attached(&self.id, false);
+            self.release(&mut guard, None);
         }
     }
 
-    fn close(stream: Option<UnixStream>) {
-        close_client(stream);
+    /// Drop the attached client — only if it is `conn`, when one is given.
+    fn release(&self, guard: &mut MutexGuard<'_, Option<Client>>, conn: Option<u64>) {
+        if conn.is_some_and(|conn| guard.as_ref().map(|c| c.conn) != Some(conn)) {
+            return;
+        }
+        let Some(client) = guard.take() else {
+            return;
+        };
+        *self.kick.lock().unwrap() = None;
+        close_client(Some(client.stream));
+        let _ = registry::set_attached(&self.id, false);
+    }
+
+    /// Make `stream` the attached client. Without `takeover` a client that is
+    /// already attached wins and this returns `false`; with it, that client is
+    /// told it was taken over and let go.
+    fn claim(&self, conn: u64, stream: &UnixStream, takeover: bool) -> Result<bool> {
+        let mut guard = if takeover {
+            self.lock_client_for_takeover()
+        } else {
+            self.client.lock().unwrap()
+        };
+        if guard.is_some() {
+            if !takeover {
+                return Ok(false);
+            }
+            if let Some(old) = guard.as_mut() {
+                let _ = old.stream.set_write_timeout(Some(TAKEOVER_NOTICE_TIMEOUT));
+                let _ = ServerFrame::TakenOver.write_to(&mut old.stream);
+            }
+            self.release(&mut guard, None);
+        }
+        *guard = Some(Client {
+            conn,
+            stream: stream.try_clone()?,
+        });
+        *self.kick.lock().unwrap() = Some(stream.try_clone()?);
+        Ok(true)
+    }
+
+    /// Lock the client slot for a takeover, cutting the current client off if
+    /// the pump is stuck writing to it.
+    fn lock_client_for_takeover(&self) -> MutexGuard<'_, Option<Client>> {
+        let deadline = Instant::now() + TAKEOVER_GRACE;
+        loop {
+            match self.client.try_lock() {
+                Ok(guard) => return guard,
+                Err(TryLockError::Poisoned(e)) => return e.into_inner(),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(TryLockError::WouldBlock) => break,
+            }
+        }
+        // Shutting the socket down wakes the parked write with an error; the
+        // pump then releases the client itself and lets go of the lock. The
+        // displaced client sees a plain end of stream, with no notice.
+        if let Some(stream) = self.kick.lock().unwrap().as_ref() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        self.client.lock().unwrap()
     }
 
     fn resize(&self, cols: u16, rows: u16) {
@@ -187,14 +279,34 @@ impl Instance {
         }
     }
 
-    fn detach_client(&self) {
+    /// Drop the attached client — only if it is `conn`, when one is given.
+    fn detach_client(&self, conn: Option<u64>) {
         let mut guard = self.client.lock().unwrap();
-        let stream = guard.take();
-        let had_client = stream.is_some();
-        Self::close(stream);
-        if had_client {
-            let _ = registry::set_attached(&self.id, false);
+        self.release(&mut guard, conn);
+    }
+
+    /// End the instance: SIGTERM to the hosted termide, SIGKILL if it is
+    /// still there after [`KILL_GRACE`].
+    ///
+    /// The daemon itself is not signalled. It exits once the reaper sees the
+    /// hosted process go, which also sends `Exited` to an attached client and
+    /// removes the instance from the registry — the same path as a quit.
+    fn kill_hosted(&self) {
+        let Some(pid) = *self.hosted_pid.lock().unwrap() else {
+            return;
+        };
+        use nix::sys::signal::{kill, Signal};
+        let pid = nix::unistd::Pid::from_raw(pid);
+        if let Err(e) = kill(pid, Signal::SIGTERM) {
+            log::warn!("Failed to signal the hosted process: {e}");
+            return;
         }
+        // The escalation cannot hit a recycled pid: the reaper exits the
+        // daemon, this thread with it, as soon as the hosted process is gone.
+        std::thread::spawn(move || {
+            std::thread::sleep(KILL_GRACE);
+            let _ = kill(pid, Signal::SIGKILL);
+        });
     }
 }
 
@@ -259,6 +371,8 @@ fn run_daemon(
     let instance = Arc::new(Instance {
         id: id.to_string(),
         client: Mutex::new(None),
+        kick: Mutex::new(None),
+        next_conn: AtomicU64::new(0),
         master: Mutex::new(pair.master),
         pty_writer: Mutex::new(writer),
         hosted_pid: Mutex::new(child.process_id().map(|p| p as i32)),
@@ -324,23 +438,25 @@ fn serve_connection(instance: Arc<Instance>, stream: UnixStream) -> Result<()> {
         // The hosted termide asking to be released. It is a one-shot
         // connection: no attach, no stream to keep.
         ClientFrame::RequestDetach => {
-            instance.detach_client();
-            return Ok(());
+            instance.detach_client(None);
+            Ok(())
+        }
+        ClientFrame::Kill => {
+            instance.kill_hosted();
+            Ok(())
         }
         ClientFrame::Attach {
             cols,
             rows,
             term,
             caps,
+            takeover,
         } => {
-            {
-                let mut guard = instance.client.lock().unwrap();
-                if guard.is_some() {
-                    let mut stream = stream;
-                    let _ = ServerFrame::Busy.write_to(&mut stream);
-                    return Ok(());
-                }
-                *guard = Some(stream.try_clone()?);
+            let conn = instance.next_conn.fetch_add(1, Ordering::Relaxed);
+            if !instance.claim(conn, &stream, takeover)? {
+                let mut stream = stream;
+                let _ = ServerFrame::Busy.write_to(&mut stream);
+                return Ok(());
             }
 
             // One line the hosted process parses on reattach: the terminal it
@@ -359,15 +475,15 @@ fn serve_connection(instance: Arc<Instance>, stream: UnixStream) -> Result<()> {
             instance.send(&ServerFrame::Attached);
             instance.resize(cols, rows);
             instance.signal_reattach();
+
+            let result = client_loop(&instance, &mut reader);
+            instance.detach_client(Some(conn));
+            result
         }
         // Anything else before an attach is a confused peer; ignoring it costs
         // nothing and keeps a stray connect from disturbing the instance.
-        _ => return Ok(()),
+        _ => Ok(()),
     }
-
-    let result = client_loop(&instance, &mut reader);
-    instance.detach_client();
-    result
 }
 
 fn client_loop(instance: &Arc<Instance>, reader: &mut UnixStream) -> Result<()> {
@@ -382,7 +498,7 @@ fn client_loop(instance: &Arc<Instance>, reader: &mut UnixStream) -> Result<()> 
             ClientFrame::Resize { cols, rows } => instance.resize(cols, rows),
             ClientFrame::Detach => break,
             ClientFrame::RequestDetach => break,
-            ClientFrame::Attach { .. } => {}
+            ClientFrame::Attach { .. } | ClientFrame::Kill => {}
         }
     }
     Ok(())
@@ -430,5 +546,125 @@ mod tests {
         assert_eq!(peer.read(&mut buf).unwrap(), 0, "peer should see EOF");
 
         drop(duplicate);
+    }
+
+    /// An `Instance` over a real PTY with nothing running in it.
+    fn test_instance() -> Arc<Instance> {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: INITIAL_ROWS,
+                cols: INITIAL_COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        Arc::new(Instance {
+            // No sidecar exists under this id, so the registry updates the
+            // claim and release paths make are no-ops.
+            id: "test-takeover-no-sidecar".to_string(),
+            client: Mutex::new(None),
+            kick: Mutex::new(None),
+            next_conn: AtomicU64::new(0),
+            master: Mutex::new(pair.master),
+            pty_writer: Mutex::new(writer),
+            hosted_pid: Mutex::new(None),
+        })
+    }
+
+    fn attached_conn(instance: &Instance) -> Option<u64> {
+        instance.client.lock().unwrap().as_ref().map(|c| c.conn)
+    }
+
+    #[test]
+    fn a_second_attach_is_refused_without_takeover() {
+        let instance = test_instance();
+        let (first, _first_peer) = UnixStream::pair().unwrap();
+        let (second, _second_peer) = UnixStream::pair().unwrap();
+
+        assert!(instance.claim(0, &first, false).unwrap());
+        assert!(!instance.claim(1, &second, false).unwrap());
+        assert_eq!(attached_conn(&instance), Some(0));
+    }
+
+    #[test]
+    fn a_takeover_tells_the_old_client_and_lets_it_go() {
+        let instance = test_instance();
+        let (first, mut first_peer) = UnixStream::pair().unwrap();
+        let (second, _second_peer) = UnixStream::pair().unwrap();
+
+        assert!(instance.claim(0, &first, false).unwrap());
+        assert!(instance.claim(1, &second, true).unwrap());
+        assert_eq!(attached_conn(&instance), Some(1));
+
+        first_peer
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(
+            ServerFrame::read_from(&mut first_peer).unwrap(),
+            Some(ServerFrame::TakenOver)
+        );
+        assert_eq!(ServerFrame::read_from(&mut first_peer).unwrap(), None);
+    }
+
+    // Regression guard: the displaced client's connection thread still runs
+    // to its end and releases "its" client. Releasing whoever is attached
+    // there would cut off the client that has just taken over.
+    #[test]
+    fn a_displaced_connection_cannot_detach_its_successor() {
+        let instance = test_instance();
+        let (first, _first_peer) = UnixStream::pair().unwrap();
+        let (second, _second_peer) = UnixStream::pair().unwrap();
+
+        instance.claim(0, &first, false).unwrap();
+        instance.claim(1, &second, true).unwrap();
+        instance.detach_client(Some(0));
+        assert_eq!(attached_conn(&instance), Some(1));
+
+        // The in-app detach names no connection and drops whoever is there.
+        instance.detach_client(None);
+        assert_eq!(attached_conn(&instance), None);
+    }
+
+    // The case a takeover exists for: a client that stopped reading leaves
+    // the PTY pump parked in a write with the client lock held.
+    #[test]
+    fn a_takeover_is_not_blocked_by_a_client_that_stopped_reading() {
+        let instance = test_instance();
+        let (stuck, _stuck_peer) = UnixStream::pair().unwrap();
+        instance.claim(0, &stuck, false).unwrap();
+
+        let pump = {
+            let instance = Arc::clone(&instance);
+            std::thread::spawn(move || {
+                let chunk = ServerFrame::Output(vec![b'x'; 64 * 1024]);
+                while attached_conn(&instance) == Some(0) {
+                    instance.send(&chunk);
+                }
+            })
+        };
+        // Long enough for the socket buffer to fill and the pump to park.
+        std::thread::sleep(Duration::from_millis(200));
+
+        // On a thread, so that a regression fails the test instead of hanging
+        // it: the claim would wait on the lock for as long as the peer is mute.
+        let (fresh, _fresh_peer) = UnixStream::pair().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        {
+            let instance = Arc::clone(&instance);
+            std::thread::spawn(move || {
+                let _ = done_tx.send(instance.claim(1, &fresh, true).unwrap());
+            });
+        }
+        let claimed = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the takeover stayed blocked behind the stuck pump");
+        assert!(claimed);
+        assert_eq!(attached_conn(&instance), Some(1));
+
+        // The pump is still sending, now to the fresh client, so detach it to
+        // end the loop.
+        instance.detach_client(None);
+        pump.join().unwrap();
     }
 }

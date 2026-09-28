@@ -41,7 +41,10 @@ const EMERGENCY_REPEATS: usize = 3;
 /// run termide and wait for it — `git commit`, `crontab -e` — decide what to
 /// do from that code, so swallowing it would make a failed edit look
 /// successful.
-pub fn attach(id: Option<String>) -> Result<i32> {
+///
+/// With `takeover`, a client that is already attached is let go rather than
+/// this one being refused.
+pub fn attach(id: Option<String>, takeover: bool) -> Result<i32> {
     let instance = match id {
         Some(id) => registry::read_info(&id)
             .with_context(|| format!("No detached instance named '{id}'"))?,
@@ -67,6 +70,7 @@ pub fn attach(id: Option<String>) -> Result<i32> {
         rows,
         term,
         caps,
+        takeover,
     }
     .write_to(&mut writer)?;
 
@@ -76,11 +80,23 @@ pub fn attach(id: Option<String>) -> Result<i32> {
     match ServerFrame::read_from(&mut reader)? {
         Some(ServerFrame::Attached) => {}
         Some(ServerFrame::Busy) => {
-            anyhow::bail!("Instance '{}' already has a client attached", instance.id);
+            anyhow::bail!(
+                "Instance '{id}' already has a client attached; \
+                 take it over with `termide --attach {id} --force`",
+                id = instance.id
+            );
         }
         Some(ServerFrame::Exited(code)) => {
             anyhow::bail!("Instance '{}' exited with code {code}", instance.id);
         }
+        // A host started by an older termide does not know the takeover frame
+        // and closes the connection on it.
+        None if takeover => anyhow::bail!(
+            "Instance '{id}' did not accept the takeover; its host may predate \
+             `--force`. Detach the other client, or end the instance with \
+             `termide --kill {id}`",
+            id = instance.id
+        ),
         _ => anyhow::bail!("Instance '{}' did not accept the attach", instance.id),
     }
 
@@ -100,6 +116,13 @@ pub fn attach(id: Option<String>) -> Result<i32> {
             println!("Detached from instance '{}'.", instance.id);
             Ok(0)
         }
+        Outcome::TakenOver => {
+            println!(
+                "Instance '{}' was taken over by another client.",
+                instance.id
+            );
+            Ok(0)
+        }
         Outcome::Exited(code) => {
             if code == 0 {
                 println!("Instance '{}' ended.", instance.id);
@@ -109,6 +132,48 @@ pub fn attach(id: Option<String>) -> Result<i32> {
             Ok(code)
         }
     }
+}
+
+/// End a detached instance, and every shell, LSP server and job inside it.
+///
+/// The daemon is asked first: it stops the hosted termide with SIGTERM, then
+/// SIGKILL, and goes with it. A daemon that does not go — wedged itself, or
+/// started by a termide that predates `--kill` — is killed from here, which
+/// closes the PTY and hangs the hosted termide up.
+pub fn kill(id: &str) -> Result<()> {
+    let instance =
+        registry::read_info(id).with_context(|| format!("No detached instance named '{id}'"))?;
+
+    if registry::process_is_alive(instance.pid) {
+        if let Ok(mut stream) = UnixStream::connect(crate::paths::socket_path(id)?) {
+            let _ = ClientFrame::Kill.write_to(&mut stream);
+        }
+        if !wait_for_exit(instance.pid, crate::daemon::KILL_GRACE + KILL_MARGIN) {
+            use nix::sys::signal::{kill, Signal};
+            let _ = kill(nix::unistd::Pid::from_raw(instance.pid), Signal::SIGKILL);
+        }
+    }
+
+    // The daemon removes its own files on a clean exit; after a SIGKILL, or
+    // for one that was already dead, nobody else will.
+    registry::remove(id);
+    println!("Instance '{id}' ended.");
+    Ok(())
+}
+
+/// Extra time `kill` gives the daemon beyond its own SIGKILL escalation.
+const KILL_MARGIN: Duration = Duration::from_secs(2);
+
+/// Wait for a process that is not our child to go, up to `timeout`.
+fn wait_for_exit(pid: i32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while registry::process_is_alive(pid) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
 }
 
 /// Ask this terminal what it can do, on the hosted instance's behalf.
@@ -139,6 +204,7 @@ fn probe_terminal() -> ClientCaps {
 
 enum Outcome {
     Detached,
+    TakenOver,
     Exited(i32),
 }
 
@@ -227,6 +293,7 @@ fn output_loop(reader: &mut UnixStream) -> Outcome {
                 }
             }
             Ok(Some(ServerFrame::Exited(code))) => return Outcome::Exited(code),
+            Ok(Some(ServerFrame::TakenOver)) => return Outcome::TakenOver,
             // The daemon closing the socket is how an in-app detach reaches
             // the client: the instance lives on, this client does not.
             Ok(None) => return Outcome::Detached,

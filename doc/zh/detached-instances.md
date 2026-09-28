@@ -100,12 +100,14 @@ termide --attach my-project
 | `termide --detached file.rs` | 同上，并照常打开文件 |
 | `termide --attach` | 接入最近的实例 |
 | `termide --attach <ID>` | 接入指定名称的实例 |
+| `termide --attach <ID> --force`（`-f`） | 接入，并从已接入的客户端手中接管实例 |
+| `termide --kill <ID>` | 结束实例及其中运行的一切 |
 | `termide --list-instances` | 列出实例：ID、pid、运行时长、状态、项目 |
 
 `--list-instances` 还会清理宿主进程已消失的实例，因此崩溃永远不会留下幽灵条目。
 
 加载 shell 补全后（`termide --completions <shell>`，参见
-[安装](installation.md#shell-补全)），在 `--attach` 之后按 Tab 会给出此表中的 ID。
+[安装](installation.md#shell-补全)），在 `--attach` 和 `--kill` 之后按 Tab 会给出此表中的 ID。
 
 ## 分离
 
@@ -119,10 +121,33 @@ termide --attach my-project
 结束实例与结束任何 TermIDE 相同：在接入状态下退出它（`Alt+Q`）。这也会停止宿主
 进程，并移除该实例。
 
+如果无法接入后再退出——实例卡住了，或者只是不再需要——可以从外部结束它：
+
+```bash
+termide --kill my-project
+```
+
+实例中的 TermIDE 会收到 SIGTERM，三秒后仍未退出则收到 SIGKILL；如果宿主进程也没有
+退出，`--kill` 会一并结束它。该实例中未保存的更改会丢失，其中的 shell 和任务也随之
+结束。此时已接入的客户端会被告知实例已结束。
+
 ## 同一时间只允许一个客户端
 
 当另一个客户端已接入时，对同一实例的第二次 `--attach` 会被拒绝，而不是把屏幕镜像
 给两者。分离第一个客户端（或关闭其终端）后，下一次接入会立即成功。
+
+如果第一个客户端无法触及——留在已锁屏的桌面上，或挂在卡住的 SSH 连接之后——可以
+接管实例：
+
+```bash
+termide --attach my-project --force   # 或 -f
+```
+
+另一个客户端会被分离，并提示实例已被接管；实例会为新终端重绘。其中的一切不受影响。
+完全停止读取的客户端会被直接断开，不会收到提示。
+
+由较旧版本 TermIDE 启动的实例不理解 `--force`：请用常规方式分离其客户端，或用
+`--kill` 结束该实例。
 
 ## 实例状态存放在哪里
 

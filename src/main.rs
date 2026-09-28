@@ -48,6 +48,18 @@ struct Cli {
     #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
     attach: Option<String>,
 
+    /// With `--attach`: take the instance over from a client that is already
+    /// attached, instead of being refused. That client is detached.
+    #[cfg(unix)]
+    #[arg(short, long, requires = "attach")]
+    force: bool,
+
+    /// End a detached instance, with every shell and job inside it, and exit.
+    /// Unsaved changes in it are lost.
+    #[cfg(unix)]
+    #[arg(long, value_name = "ID")]
+    kill: Option<String>,
+
     /// List detached instances and exit.
     #[cfg(unix)]
     #[arg(long)]
@@ -191,7 +203,7 @@ fn restore_terminal() {
     termide_core::leave_terminal_modes();
 }
 
-/// Handle `--list-instances`, `--attach` and `--detached`.
+/// Handle `--list-instances`, `--kill`, `--attach` and `--detached`.
 ///
 /// Returns `Some(exit_code)` when one of them ran and the process should stop,
 /// `None` when this is an ordinary launch.
@@ -202,6 +214,16 @@ fn handle_detached_instance_cli(cli: &Cli) -> Result<Option<i32>> {
         return Ok(Some(0));
     }
 
+    if let Some(id) = &cli.kill {
+        return match termide_detach::client::kill(id) {
+            Ok(()) => Ok(Some(0)),
+            Err(e) => {
+                eprintln!("termide: {e:#}");
+                Ok(Some(1))
+            }
+        };
+    }
+
     if let Some(id) = &cli.attach {
         // `--attach` with no value means "the most recent instance".
         let id = if id.is_empty() {
@@ -209,7 +231,7 @@ fn handle_detached_instance_cli(cli: &Cli) -> Result<Option<i32>> {
         } else {
             Some(id.clone())
         };
-        return match termide_detach::client::attach(id) {
+        return match termide_detach::client::attach(id, cli.force) {
             Ok(code) => Ok(Some(code)),
             Err(e) => {
                 eprintln!("termide: {e:#}");
@@ -366,7 +388,7 @@ fn main() -> Result<()> {
         && std::env::var_os(termide_detach::SOCKET_ENV).is_none()
     {
         let id = termide_detach::spawn_detached(&project_root, &[])?;
-        let code = termide_detach::client::attach(Some(id))?;
+        let code = termide_detach::client::attach(Some(id), false)?;
         std::process::exit(code);
     }
 

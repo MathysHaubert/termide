@@ -20,16 +20,23 @@ const TAG_INPUT: u8 = 0x02;
 const TAG_RESIZE: u8 = 0x03;
 const TAG_DETACH: u8 = 0x04;
 const TAG_REQUEST_DETACH: u8 = 0x05;
+/// An attach that displaces the current client. A tag of its own rather than a
+/// flag inside the attach payload: a daemon that predates takeover rejects an
+/// unknown tag outright, where it would silently ignore a flag and answer
+/// `Busy`, and the client could not tell the two apart.
+const TAG_TAKEOVER: u8 = 0x06;
+const TAG_KILL: u8 = 0x07;
 
 const TAG_OUTPUT: u8 = 0x81;
 const TAG_EXITED: u8 = 0x82;
 const TAG_BUSY: u8 = 0x83;
 const TAG_ATTACHED: u8 = 0x84;
+const TAG_TAKEN_OVER: u8 = 0x85;
 
 /// Sent by an attaching client, or by the hosted termide asking to be released.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientFrame {
-    /// Take over the instance at this terminal size.
+    /// Attach to the instance at this terminal size.
     ///
     /// `term` is the client's `$TERM` and `caps` its keyboard capabilities,
     /// both of which the hosted process adopts. It cannot determine either
@@ -41,6 +48,9 @@ pub enum ClientFrame {
         rows: u16,
         term: String,
         caps: ClientCaps,
+        /// Displace a client that is already attached instead of being
+        /// refused with `Busy`.
+        takeover: bool,
     },
     /// Raw bytes from the client's stdin, forwarded to the PTY unchanged.
     Input(Vec<u8>),
@@ -54,6 +64,9 @@ pub enum ClientFrame {
     /// This is how the in-app "detach instance" action works without the
     /// client having to intercept a chord of its own.
     RequestDetach,
+    /// End the instance: stop the hosted termide, and with it the daemon.
+    /// A one-shot connection, like `RequestDetach`.
+    Kill,
 }
 
 /// What the client's terminal can do, as probed by the client itself.
@@ -92,6 +105,8 @@ pub enum ServerFrame {
     Busy,
     /// Attach accepted.
     Attached,
+    /// Another client took the instance over; this one has been let go.
+    TakenOver,
 }
 
 fn write_frame<W: Write>(w: &mut W, tag: u8, payload: &[u8]) -> Result<()> {
@@ -148,13 +163,15 @@ impl ClientFrame {
                 rows,
                 term,
                 caps,
+                takeover,
             } => {
                 let mut payload = Vec::with_capacity(5 + term.len());
                 payload.extend_from_slice(&cols.to_be_bytes());
                 payload.extend_from_slice(&rows.to_be_bytes());
                 payload.push(caps.to_bits());
                 payload.extend_from_slice(term.as_bytes());
-                write_frame(w, TAG_ATTACH, &payload)
+                let tag = if *takeover { TAG_TAKEOVER } else { TAG_ATTACH };
+                write_frame(w, tag, &payload)
             }
             ClientFrame::Input(bytes) => write_frame(w, TAG_INPUT, bytes),
             ClientFrame::Resize { cols, rows } => {
@@ -165,6 +182,7 @@ impl ClientFrame {
             }
             ClientFrame::Detach => write_frame(w, TAG_DETACH, &[]),
             ClientFrame::RequestDetach => write_frame(w, TAG_REQUEST_DETACH, &[]),
+            ClientFrame::Kill => write_frame(w, TAG_KILL, &[]),
         }
     }
 
@@ -174,7 +192,7 @@ impl ClientFrame {
             return Ok(None);
         };
         let frame = match tag {
-            TAG_ATTACH => {
+            TAG_ATTACH | TAG_TAKEOVER => {
                 if payload.len() < 5 {
                     bail!("Attach frame is truncated");
                 }
@@ -183,6 +201,7 @@ impl ClientFrame {
                     rows: u16::from_be_bytes([payload[2], payload[3]]),
                     caps: ClientCaps::from_bits(payload[4]),
                     term: String::from_utf8_lossy(&payload[5..]).into_owned(),
+                    takeover: tag == TAG_TAKEOVER,
                 }
             }
             TAG_INPUT => ClientFrame::Input(payload),
@@ -197,6 +216,7 @@ impl ClientFrame {
             }
             TAG_DETACH => ClientFrame::Detach,
             TAG_REQUEST_DETACH => ClientFrame::RequestDetach,
+            TAG_KILL => ClientFrame::Kill,
             other => bail!("Unknown client frame tag {other:#04x}"),
         };
         Ok(Some(frame))
@@ -210,6 +230,7 @@ impl ServerFrame {
             ServerFrame::Exited(code) => write_frame(w, TAG_EXITED, &code.to_be_bytes()),
             ServerFrame::Busy => write_frame(w, TAG_BUSY, &[]),
             ServerFrame::Attached => write_frame(w, TAG_ATTACHED, &[]),
+            ServerFrame::TakenOver => write_frame(w, TAG_TAKEN_OVER, &[]),
         }
     }
 
@@ -230,6 +251,7 @@ impl ServerFrame {
             }
             TAG_BUSY => ServerFrame::Busy,
             TAG_ATTACHED => ServerFrame::Attached,
+            TAG_TAKEN_OVER => ServerFrame::TakenOver,
             other => bail!("Unknown server frame tag {other:#04x}"),
         };
         Ok(Some(frame))
@@ -252,11 +274,20 @@ mod tests {
                     via_ssh: false,
                     vs16_wide: true,
                 },
+                takeover: false,
+            },
+            ClientFrame::Attach {
+                cols: 80,
+                rows: 24,
+                term: "screen".to_string(),
+                caps: ClientCaps::default(),
+                takeover: true,
             },
             ClientFrame::Input(vec![0x1b, b'[', b'A']),
             ClientFrame::Resize { cols: 80, rows: 24 },
             ClientFrame::Detach,
             ClientFrame::RequestDetach,
+            ClientFrame::Kill,
         ];
 
         let mut buf = Vec::new();
@@ -279,6 +310,7 @@ mod tests {
             ServerFrame::Exited(-1),
             ServerFrame::Busy,
             ServerFrame::Attached,
+            ServerFrame::TakenOver,
         ];
 
         let mut buf = Vec::new();
@@ -335,6 +367,7 @@ mod tests {
                 rows: 24,
                 term: "screen".to_string(),
                 caps,
+                takeover: false,
             }
             .write_to(&mut buf)
             .unwrap();

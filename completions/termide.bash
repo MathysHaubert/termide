@@ -34,11 +34,14 @@ _termide() {
       COMPREPLY=($(compgen -W "$(_termide_instances)" -- "$cur"))
       [[ ${#COMPREPLY[@]} -eq 0 ]] && COMPREPLY=($(compgen -f -- "$cur"))
       return ;;
+    --kill)
+      COMPREPLY=($(compgen -W "$(_termide_instances)" -- "$cur"))
+      return ;;
   esac
 
   if [[ "$cur" == -* ]]; then
     COMPREPLY=($(compgen -W "--log-level --no-lsp --config --diagnostics \
-      --detached --attach --list-instances --completions --install-completions \
+      --detached --attach -f --force --kill --list-instances --completions --install-completions \
       --prompt --agent --output --help --version" -- "$cur"))
   else
     COMPREPLY=($(compgen -f -- "$cur"))
