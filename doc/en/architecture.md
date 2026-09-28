@@ -609,11 +609,11 @@ runtime owns the connection and a chunk-as-command actor (see
 polls pause/cancel flags between dispatches, so a paused transfer
 leaves the actor free to serve other panels' metadata requests.
 
-### 8. Session Management
+### 8. Project Layouts
 
 **Location:** `crates/project/src/lib.rs`
 
-Session persistence allows saving and restoring panel layouts:
+Each project's panel layout is saved and restored (`ProjectLayout`):
 
 **Storage Location:**
 - Linux: `~/.local/share/termide/projects/<project_path>/session.toml`
@@ -623,12 +623,14 @@ A data directory from before the rename, `sessions/`, is moved to `projects/`
 once, on the first start.
 
 **Features:**
-- Automatic session save on exit
+- Automatic layout save on exit
 - Panel layout restoration on startup
-- Session switching via menu (switch between different projects)
-- Session retention with automatic cleanup of old sessions
+- Project switching via the Projects menu
+- Retention (`project_retention_days`) with automatic cleanup of old layouts
 
-**Session File Format:**
+The file keeps its historical name, `session.toml`.
+
+**Layout File Format:**
 ```toml
 focused_group = 0
 

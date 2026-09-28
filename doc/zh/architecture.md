@@ -602,11 +602,11 @@ SFTP/FTP 后端使用不同的模式——一个专用的 tokio 运行时拥有�
 actor（见 `crates/vfs/src/sftp.rs`）。同步工作线程驱动分块循环，并在分发之间
 轮询暂停/取消标志，因此暂停的传输会让 actor 空闲以服务其他面板的元数据请求。
 
-### 8. 会话管理
+### 8. 项目布局
 
 **位置：** `crates/project/src/lib.rs`
 
-会话持久化允许保存和恢复面板布局：
+每个项目的面板布局都会被保存和恢复（`ProjectLayout`）：
 
 **存储位置：**
 - Linux: `~/.local/share/termide/projects/<project_path>/session.toml`
@@ -615,12 +615,14 @@ actor（见 `crates/vfs/src/sftp.rs`）。同步工作线程驱动分块循环�
 重命名之前的数据目录 `sessions/` 会在首次启动时一次性迁移到 `projects/`。
 
 **功能特性：**
-- 退出时自动保存会话
+- 退出时自动保存布局
 - 启动时恢复面板布局
-- 通过菜单切换会话（在不同项目之间切换）
-- 会话保留，自动清理旧会话
+- 通过“项目”菜单切换项目
+- 保留期限（`project_retention_days`），自动清理旧布局
 
-**会话文件格式：**
+该文件沿用历史名称 `session.toml`。
+
+**布局文件格式：**
 ```toml
 focused_group = 0
 
