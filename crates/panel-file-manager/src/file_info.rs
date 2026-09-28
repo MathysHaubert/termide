@@ -23,7 +23,7 @@ pub struct FileInfo {
 impl FileManager {
     /// Get information about the currently selected file
     pub fn get_current_file_info(&mut self) -> Option<FileInfo> {
-        let te = self.tree_entry_at(self.selected)?;
+        let te = self.entry_under_cursor()?;
         let entry = &te.file_entry;
 
         // Handle ".." directory for remote paths
@@ -188,7 +188,7 @@ impl FileManager {
         use std::time::SystemTime;
 
         // Clone the data we need to avoid borrow issues with self
-        let te = match self.tree_entry_at(self.selected) {
+        let te = match self.entry_under_cursor() {
             Some(te) => te.clone(),
             None => return,
         };

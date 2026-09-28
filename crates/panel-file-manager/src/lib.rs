@@ -237,6 +237,14 @@ impl FileManager {
         Some(&self.tree_entries[tree_idx])
     }
 
+    /// The entry under the cursor, unless it is the placeholder shown while a
+    /// directory is still being listed: that row stands for no file, so no
+    /// file action may take it for one.
+    fn entry_under_cursor(&self) -> Option<&tree::TreeEntry> {
+        self.tree_entry_at(self.selected)
+            .filter(|te| !te.is_loading)
+    }
+
     /// Get full path of entry at a visible index.
     fn path_at(&self, vis_idx: usize) -> Option<&PathBuf> {
         let tree_idx = *self.visible_indices.get(vis_idx)?;
@@ -1029,6 +1037,51 @@ mod tests {
     /// passing on Linux, where `/tmp` is a real directory.
     fn canonical_temp_path(temp_dir: &TempDir) -> std::path::PathBuf {
         temp_dir.path().canonicalize().unwrap()
+    }
+
+    /// The row shown while a directory is still being listed stands for no
+    /// file: Enter, F3, F4 and Shift+Enter must not open it, and selection
+    /// and batch operations must not pick it up.
+    #[test]
+    fn the_listing_placeholder_is_no_file() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("sub")).unwrap();
+        std::fs::write(temp_dir.path().join("sub/a.txt"), "x").unwrap();
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        // The listing is read on a worker thread; apply it as `tick()` would.
+        fm.load_directory().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !fm.check_async_reload() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listing never arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let sub = fm.find_entry_index("sub").unwrap();
+        // Expanding lists on a worker thread too, and nothing applies that
+        // listing here, so the placeholder stays.
+        fm.expand_dir(sub);
+        let placeholder = sub + 1;
+        assert!(
+            fm.tree_entry_at(placeholder)
+                .is_some_and(|te| te.is_loading),
+            "the listing is still pending"
+        );
+
+        fm.selected = placeholder;
+        assert!(fm.enter().is_none());
+        assert!(fm.edit_file().is_none());
+        assert!(fm.view_file().is_none());
+        assert!(fm.open_external().is_none());
+        assert!(fm.get_selected_paths().is_empty());
+
+        fm.select_all();
+        assert!(!fm.selection.items.contains(&placeholder));
+        assert!(fm
+            .get_selected_paths()
+            .iter()
+            .all(|p| !p.ends_with("__loading__")));
     }
 
     /// A scrollbar drag must not be undone by the next render: the panel pulls

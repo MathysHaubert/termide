@@ -249,7 +249,7 @@ impl FileManager {
                 }
             }
             FmCommand::RenameFile => {
-                if let Some(te) = self.tree_entry_at(self.selected) {
+                if let Some(te) = self.entry_under_cursor() {
                     let entry = &te.file_entry;
                     // Only allow renaming files and directories (not deleted or special entries)
                     if entry.git_status == GitStatus::Deleted {

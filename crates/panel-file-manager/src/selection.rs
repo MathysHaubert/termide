@@ -94,14 +94,17 @@ impl SelectionState {
 }
 
 impl FileManager {
-    /// Check if entry at visible index is ".." (not selectable)
-    fn is_parent_entry(&self, vis_idx: usize) -> bool {
-        self.entry_at(vis_idx).is_some_and(|e| e.name == "..")
+    /// Whether the row at `vis_idx` can be selected: not "..", and not the
+    /// placeholder shown while a directory is still being listed.
+    fn is_unselectable(&self, vis_idx: usize) -> bool {
+        self.tree_entry_at(vis_idx)
+            .is_some_and(|te| te.file_entry.name == ".." || te.is_loading)
     }
 
-    /// Insert visible index into selection, skipping ".."
+    /// Insert visible index into selection, skipping rows that stand for no
+    /// file
     fn select_index(&mut self, vis_idx: usize) {
-        if !self.is_parent_entry(vis_idx) {
+        if !self.is_unselectable(vis_idx) {
             self.selection.items.insert(vis_idx);
             self.sync_parent_selection(vis_idx);
         }
@@ -165,10 +168,11 @@ impl FileManager {
         self.sync_parent_selection(parent_vis);
     }
 
-    /// Toggle a single visible index in selection, skipping ".."
+    /// Toggle a single visible index in selection, skipping rows that stand
+    /// for no file.
     /// No cascade — used for element-by-element selection (Shift+arrows, page toggle).
     fn toggle_index_single(&mut self, vis_idx: usize) {
-        if self.is_parent_entry(vis_idx) {
+        if self.is_unselectable(vis_idx) {
             return;
         }
         if self.selection.items.contains(&vis_idx) {
@@ -182,7 +186,7 @@ impl FileManager {
     /// Toggle selection of current item and advance cursor (Insert key).
     /// For expanded directories, cascades to all visible descendants and skips past subtree.
     pub(crate) fn toggle_selection(&mut self) {
-        if self.is_parent_entry(self.selected) {
+        if self.is_unselectable(self.selected) {
             self.move_down();
             return;
         }
@@ -191,7 +195,7 @@ impl FileManager {
         if adding {
             self.selection.items.insert(self.selected);
             for i in descendants.clone() {
-                if !self.is_parent_entry(i) {
+                if !self.is_unselectable(i) {
                     self.selection.items.insert(i);
                 }
             }
@@ -216,10 +220,8 @@ impl FileManager {
     pub(crate) fn select_all(&mut self) {
         self.selection.items.clear();
         for vis_idx in 0..self.visible_count() {
-            if let Some(entry) = self.entry_at(vis_idx) {
-                if entry.name != ".." {
-                    self.selection.items.insert(vis_idx);
-                }
+            if !self.is_unselectable(vis_idx) {
+                self.selection.items.insert(vis_idx);
             }
         }
     }
@@ -284,7 +286,7 @@ impl FileManager {
     /// (the directory copy/move/delete already covers them recursively).
     pub fn get_selected_paths(&self) -> Vec<PathBuf> {
         if self.selection.items.is_empty() {
-            if let Some(te) = self.tree_entry_at(self.selected) {
+            if let Some(te) = self.entry_under_cursor() {
                 if te.file_entry.name != ".." && te.file_entry.git_status != GitStatus::Deleted {
                     return vec![te.full_path.clone()];
                 }
@@ -295,7 +297,7 @@ impl FileManager {
         // Collect all selected paths (excluding deleted files)
         let mut paths: Vec<PathBuf> = Vec::with_capacity(self.selection.items.len());
         for &vis_idx in &self.selection.items {
-            if let Some(te) = self.tree_entry_at(vis_idx) {
+            if let Some(te) = self.tree_entry_at(vis_idx).filter(|te| !te.is_loading) {
                 if te.file_entry.name != ".." && te.file_entry.git_status != GitStatus::Deleted {
                     paths.push(te.full_path.clone());
                 }
@@ -325,7 +327,7 @@ impl FileManager {
         let base_path = self.vfs.current_path();
 
         if self.selection.items.is_empty() {
-            if let Some(te) = self.tree_entry_at(self.selected) {
+            if let Some(te) = self.entry_under_cursor() {
                 if te.file_entry.name != ".." && te.file_entry.git_status != GitStatus::Deleted {
                     return vec![base_path.join(&te.file_entry.name)];
                 }
@@ -336,7 +338,7 @@ impl FileManager {
         // Collect all selected tree entries with their full_path for dedup (excluding deleted)
         let mut entries: Vec<(PathBuf, String)> = Vec::with_capacity(self.selection.items.len());
         for &vis_idx in &self.selection.items {
-            if let Some(te) = self.tree_entry_at(vis_idx) {
+            if let Some(te) = self.tree_entry_at(vis_idx).filter(|te| !te.is_loading) {
                 if te.file_entry.name != ".." && te.file_entry.git_status != GitStatus::Deleted {
                     entries.push((te.full_path.clone(), te.file_entry.name.clone()));
                 }

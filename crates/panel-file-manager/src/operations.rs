@@ -255,7 +255,7 @@ impl FileManager {
     /// Handle Enter on the current item: open file/directory or navigate up.
     pub(crate) fn enter(&mut self) -> Option<PanelEvent> {
         // Extract all needed data upfront to avoid borrow conflicts
-        let te = self.tree_entry_at(self.selected)?;
+        let te = self.entry_under_cursor()?;
         let is_deleted = te.file_entry.git_status == GitStatus::Deleted;
         let is_parent = te.file_entry.name == "..";
         let is_dir = te.file_entry.is_dir;
@@ -318,13 +318,13 @@ impl FileManager {
         }
 
         // Re-borrow entry for determine_file_open_event
-        let entry = &self.tree_entry_at(self.selected)?.file_entry;
+        let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::Default)
     }
 
     /// Open file for editing (F4)
     pub(crate) fn edit_file(&mut self) -> Option<PanelEvent> {
-        let te = self.tree_entry_at(self.selected)?;
+        let te = self.entry_under_cursor()?;
         if te.file_entry.git_status == GitStatus::Deleted {
             return None;
         }
@@ -339,13 +339,13 @@ impl FileManager {
             return Some(PanelEvent::OpenRemoteFile(vfs_path.to_url_string()));
         }
 
-        let entry = &self.tree_entry_at(self.selected)?.file_entry;
+        let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::ForceEdit)
     }
 
     /// View file without executing (F3)
     pub(crate) fn view_file(&mut self) -> Option<PanelEvent> {
-        let te = self.tree_entry_at(self.selected)?;
+        let te = self.entry_under_cursor()?;
         if te.file_entry.git_status == GitStatus::Deleted {
             return None;
         }
@@ -360,16 +360,16 @@ impl FileManager {
             return Some(PanelEvent::OpenRemoteFile(vfs_path.to_url_string()));
         }
 
-        let entry = &self.tree_entry_at(self.selected)?.file_entry;
+        let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::View)
     }
 
     /// Force open file with system default application (Shift+Enter)
     pub(crate) fn open_external(&mut self) -> Option<PanelEvent> {
-        let te = self.tree_entry_at(self.selected)?;
+        let te = self.entry_under_cursor()?;
         let full_path = te.full_path.clone();
 
-        let entry = &self.tree_entry_at(self.selected)?.file_entry;
+        let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::External)
     }
 
@@ -382,6 +382,8 @@ impl FileManager {
     /// under the cursor: its children are what the user sees below
     /// it, so the new entry goes inside it.
     pub(crate) fn create_target_dir(&self) -> (std::path::PathBuf, Option<termide_vfs::VfsPath>) {
+        // The listing placeholder counts here: its parent is the directory
+        // being expanded, where the user expects the new entry.
         if let Some(te) = self.tree_entry_at(self.selected) {
             // ".." always anchors at current_path. An expanded
             // directory is its own target; any other nested entry
