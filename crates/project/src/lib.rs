@@ -196,44 +196,57 @@ pub(crate) fn get_data_dir() -> Result<PathBuf> {
 
 /// Directory holding every project's saved layout.
 ///
-/// Before the rename this was `sessions`; the old tree is moved across on
-/// first use so saved layouts survive an upgrade.
+/// Before the rename this was `sessions`; [`migrate_legacy_layouts`] moves
+/// the old tree across at startup so saved layouts survive an upgrade.
 pub(crate) const PROJECTS_DIR: &str = "projects";
 const LEGACY_PROJECTS_DIR: &str = "sessions";
 
-/// Move `<data>/sessions` to `<data>/projects` once, if the old tree is
-/// there and the new one is not. Failures are logged, never fatal: a fresh
-/// directory is created instead and only the old layouts are lost.
-fn migrate_legacy_dir(data_dir: &Path) {
+/// Move the saved layouts of a termide older than the rename into place.
+///
+/// Runs once at startup, before the logger is up, so the outcome is returned
+/// for the caller to log rather than logged here. Run on every launch: an
+/// older termide may have written `sessions/` again since the last one.
+pub fn migrate_legacy_layouts() -> Vec<(log::Level, String)> {
+    match get_data_dir() {
+        Ok(data_dir) => migrate_legacy_dir(&data_dir),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Move `<data>/sessions` to `<data>/projects`, or fold it into `projects`
+/// when both exist. Failures are reported, never fatal: a fresh directory is
+/// created instead and only the old layouts are lost.
+fn migrate_legacy_dir(data_dir: &Path) -> Vec<(log::Level, String)> {
     let legacy = data_dir.join(LEGACY_PROJECTS_DIR);
     let current = data_dir.join(PROJECTS_DIR);
     if !legacy.is_dir() {
-        return;
+        return Vec::new();
     }
+    let (from, to) = (legacy.display(), current.display());
     if !current.exists() {
-        match std::fs::rename(&legacy, &current) {
-            Ok(()) => log::info!(
-                "moved saved layouts from {} to {}",
-                legacy.display(),
-                current.display()
+        return vec![match std::fs::rename(&legacy, &current) {
+            Ok(()) => (
+                log::Level::Info,
+                format!("moved saved layouts from {from} to {to}"),
             ),
-            Err(e) => log::warn!(
-                "could not move {} to {}: {e}",
-                legacy.display(),
-                current.display()
+            Err(e) => (
+                log::Level::Warn,
+                format!("could not move {from} to {to}: {e}"),
             ),
-        }
-        return;
+        }];
     }
     // Both exist: an older termide kept writing to the legacy directory after
     // the move. Fold what it left into the current one and drop the shell.
-    if let Err(e) = merge_move(&legacy, &current) {
-        log::warn!(
-            "could not fold {} into {}: {e}",
-            legacy.display(),
-            current.display()
-        );
-    }
+    vec![match merge_move(&legacy, &current) {
+        Ok(()) => (
+            log::Level::Info,
+            format!("folded saved layouts from {from} into {to}"),
+        ),
+        Err(e) => (
+            log::Level::Warn,
+            format!("could not fold {from} into {to}: {e}"),
+        ),
+    }]
 }
 
 /// Move everything under `src` into `dst`, recursing into directories that
@@ -295,9 +308,9 @@ impl ProjectLayout {
     /// Example (Unix):    /home/user/project1 -> ~/.local/share/termide/projects/home/user/project1/
     /// Example (Windows): C:\Users\user\proj  -> %APPDATA%\termide\projects\Users\user\proj\
     pub fn get_project_dir(project_root: &Path) -> Result<PathBuf> {
-        let data_dir = get_data_dir()?;
-        migrate_legacy_dir(&data_dir);
-        Ok(data_dir.join(PROJECTS_DIR).join(project_key(project_root)))
+        Ok(get_data_dir()?
+            .join(PROJECTS_DIR)
+            .join(project_key(project_root)))
     }
 
     /// Get the path to the layout file (`session.toml`) of a specific project
@@ -436,8 +449,10 @@ mod tests {
             .set_modified(old)
             .unwrap();
 
-        migrate_legacy_dir(tmp.path());
+        let notes = migrate_legacy_dir(tmp.path());
 
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].0, log::Level::Info, "{}", notes[0].1);
         assert!(!legacy.exists());
         let read = |rel: &str| std::fs::read_to_string(current.join(rel)).unwrap();
         assert_eq!(read("home/u/only-legacy/session.toml"), "legacy only");
@@ -445,8 +460,27 @@ mod tests {
         assert_eq!(read("home/u/only-current/session.toml"), "current only");
 
         // Idempotent: nothing left to do.
-        migrate_legacy_dir(tmp.path());
+        assert!(migrate_legacy_dir(tmp.path()).is_empty());
         assert!(current.join("home/u/both/session.toml").is_file());
+    }
+    /// The first launch after the upgrade finds only `sessions/` and moves
+    /// the whole tree, reporting it for the journal.
+    #[test]
+    fn legacy_layouts_move_to_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = tmp.path().join(LEGACY_PROJECTS_DIR);
+        let current = tmp.path().join(PROJECTS_DIR);
+        std::fs::create_dir_all(legacy.join("home/u/proj")).unwrap();
+        std::fs::write(legacy.join("home/u/proj/session.toml"), "layout").unwrap();
+
+        let notes = migrate_legacy_dir(tmp.path());
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].0, log::Level::Info, "{}", notes[0].1);
+        assert!(!legacy.exists());
+        let moved = std::fs::read_to_string(current.join("home/u/proj/session.toml")).unwrap();
+        assert_eq!(moved, "layout");
+        assert!(migrate_legacy_dir(tmp.path()).is_empty());
     }
     #[test]
     fn project_key_mirrors_the_path_without_its_root() {

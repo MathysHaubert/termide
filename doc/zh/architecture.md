@@ -612,7 +612,7 @@ actor（见 `crates/vfs/src/sftp.rs`）。同步工作线程驱动分块循环�
 - Linux: `~/.local/share/termide/projects/<project_path>/session.toml`
 - macOS: `~/Library/Application Support/termide/projects/<project_path>/session.toml`
 
-重命名之前的数据目录 `sessions/` 会在首次启动时一次性迁移到 `projects/`。
+重命名之前的数据目录 `sessions/` 会在首次启动时迁移到 `projects/`。此后旧版 termide 再写入 `sessions/` 的内容，会在下次启动时合并到 `projects/`，同名文件保留较新的一份。每次迁移及失败都会记录在 **日志** 面板中。
 
 **功能特性：**
 - 退出时自动保存布局
@@ -641,7 +641,7 @@ type = "editor"
 path = "/home/user/project/main.rs"
 ```
 
-旧会话中的 `mode = "accordion"` 字段仍会被读取，并在加载时一次性迁移为全屏预设（当前代码不再写入该字段）。
+旧项目布局中的 `mode = "accordion"` 字段仍会被读取，并在加载时一次性迁移为全屏预设（当前代码不再写入该字段）。
 
 ### 9. VFS（远程文件系统）
 

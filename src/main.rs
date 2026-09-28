@@ -431,6 +431,11 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // Saved layouts of a termide older than the projects rename. Only the
+    // process that goes on to run the UI does this, so its report reaches
+    // the journal with the config warnings below.
+    let migration_notes = termide_project::migrate_legacy_layouts();
+
     // Check for git on the system
     let git_available = check_git_available();
 
@@ -509,6 +514,9 @@ fn main() -> Result<()> {
     // — these end up in the Journal panel where users actually look.
     for msg in config_load_warnings {
         log::warn!("{}", msg);
+    }
+    for (level, msg) in migration_notes {
+        log::log!(level, "{}", msg);
     }
 
     // Log git availability to journal (not to stderr)

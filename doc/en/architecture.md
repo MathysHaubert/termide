@@ -620,7 +620,9 @@ Each project's panel layout is saved and restored (`ProjectLayout`):
 - macOS: `~/Library/Application Support/termide/projects/<project_path>/session.toml`
 
 A data directory from before the rename, `sessions/`, is moved to `projects/`
-once, on the first start.
+on the first start. Whatever an older termide writes to `sessions/` after that
+is folded into `projects/` on the next start, the newer of two copies of a file
+winning. The **Journal** panel reports each move and any failure.
 
 **Features:**
 - Automatic layout save on exit
