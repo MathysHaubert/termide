@@ -130,11 +130,14 @@ impl AgentPanel {
                 }
             }
             AgentEvent::TurnStart | AgentEvent::TurnEnd => {}
-            AgentEvent::MessageStart => {
+            AgentEvent::MessageStart { prompt_tokens } => {
                 // The reasoning and answer blocks are created lazily on their
                 // first delta, so the reasoning lands above the answer and a
-                // prefill with neither shows only the spinner.
-                self.activity = Some(Activity::new(Phase::Prefill));
+                // prefill with neither shows only the live footer.
+                self.activity = Some(Activity {
+                    prompt_tokens,
+                    ..Activity::new(Phase::Prefill)
+                });
             }
             AgentEvent::MessageUpdate(StreamEvent::TextDelta(delta)) => {
                 self.note_generation(delta.chars().count());
@@ -143,6 +146,16 @@ impl AgentPanel {
             AgentEvent::MessageUpdate(StreamEvent::ThinkingDelta(delta)) => {
                 self.note_generation(delta.chars().count());
                 self.transcript.stream_thinking(&delta);
+            }
+            AgentEvent::MessageUpdate(StreamEvent::PrefillProgress {
+                processed,
+                total,
+                cached,
+            }) => {
+                if let Some(activity) = self.activity.as_mut().filter(|a| a.phase == Phase::Prefill)
+                {
+                    activity.prefill = Some((processed, total, cached));
+                }
             }
             AgentEvent::MessageUpdate(StreamEvent::Retry {
                 attempt,

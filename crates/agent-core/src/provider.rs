@@ -89,6 +89,14 @@ pub enum StreamEvent {
     ToolCallEnd {
         id: String,
     },
+    /// How far the server has read the prompt, from a server that reports
+    /// it (llama.cpp's `prompt_progress`): `processed` of `total` tokens,
+    /// `cached` of them served from its cache.
+    PrefillProgress {
+        processed: u64,
+        total: u64,
+        cached: u64,
+    },
     /// The request failed before any content arrived and will be retried
     /// after `delay_ms`.
     Retry {

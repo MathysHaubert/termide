@@ -651,6 +651,7 @@ settings_ai_connection_hint_codex = "Codex ให้บริการโมเ�
 settings_ai_connection_hint_gemini_cli = "Gemini CLI ให้บริการโมเดลผ่านการลงชื่อเข้าใช้ของตนเอง และใช้พรอมต์ระบบกับเครื่องมือของตนเอง termide แปลงโหมดสิทธิ์เป็นโหมดของ Gemini CLI และตัดสินว่า Gemini CLI จะถามอะไร ลูปการสนทนายังเป็นของ Gemini CLI: บีบอัดบริบทเอง ไม่หยุดระหว่างขั้นตอน ไม่มี prefill หรือการจับเวลาการสร้าง"
 settings_ai_connection_name = "ชื่อ"
 settings_ai_connection_default = "ใช้เป็นค่าเริ่มต้น"
+settings_ai_connection_prefill_progress = "ความคืบหน้าของ prefill (llama.cpp)"
 settings_ai_connection_name_taken = "การเชื่อมต่อแต่ละรายการต้องมีชื่อไม่ซ้ำกัน"
 settings_web_backend = "แบ็กเอนด์เว็บ"
 menu_ai_show_browser = "แสดงหน้าต่างเบราว์เซอร์"

@@ -982,7 +982,9 @@ fn activity_follows_the_events_and_totals_accumulate() {
     let mut panel = panel(vec![reply("hi")]);
     assert!(panel.activity.is_none());
     panel.apply(AgentEvent::AgentStart);
-    panel.apply(AgentEvent::MessageStart);
+    panel.apply(AgentEvent::MessageStart {
+        prompt_tokens: None,
+    });
     assert_eq!(panel.activity.map(|a| a.phase), Some(Phase::Prefill));
     panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
         "hello".into(),
@@ -1015,7 +1017,9 @@ fn the_live_footer_shows_generation_meta_and_a_clock() {
     };
     let mut panel = panel(vec![]);
     panel.apply(AgentEvent::AgentStart);
-    panel.apply(AgentEvent::MessageStart);
+    panel.apply(AgentEvent::MessageStart {
+        prompt_tokens: None,
+    });
     // Prefill: the run clock alone — an animated glyph and the time since
     // the request, with no dividing rule and no generation line yet.
     let lines = text_of(&panel);
@@ -1028,9 +1032,7 @@ fn the_live_footer_shows_generation_meta_and_a_clock() {
     );
     assert!(!lines[0].contains("🕒") && !lines[0].contains('╌'));
 
-    // Once tokens stream, the `✍️` generation line joins the clock. The
-    // `⏫` prefill line does not appear live (input tokens are only known
-    // at the end).
+    // Once tokens stream, the `✍️` generation line joins the clock.
     panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
         "hello there".into(),
     )));
@@ -1051,6 +1053,54 @@ fn the_live_footer_shows_generation_meta_and_a_clock() {
     let lines = text_of(&panel);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(!lines[0].contains('✍'), "{lines:?}");
+}
+
+#[test]
+fn the_live_footer_shows_the_prefill_until_the_first_token() {
+    let text_of = |panel: &AgentPanel| -> Vec<String> {
+        panel
+            .live_footer_lines(60)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+            .collect()
+    };
+    let mut panel = panel(vec![]);
+    panel.apply(AgentEvent::AgentStart);
+    panel.apply(AgentEvent::MessageStart {
+        prompt_tokens: Some(48_000),
+    });
+    // The model reads the prompt: a `⏫` line with the estimate, above the
+    // run clock.
+    let lines = text_of(&panel);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines[0].contains("⏫") && lines[0].contains("↑~48k"),
+        "{lines:?}"
+    );
+
+    // A server reporting its progress: a bar and the tokens read of the
+    // total in place of the estimate.
+    panel.apply(AgentEvent::MessageUpdate(StreamEvent::PrefillProgress {
+        processed: 24_000,
+        total: 48_000,
+        cached: 12_000,
+    }));
+    let lines = text_of(&panel);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines[0].contains("▰▰▰▰▱▱▱▱") && lines[0].contains("↑24k/48k"),
+        "{lines:?}"
+    );
+    assert!(!lines[0].contains('~'), "{lines:?}");
+
+    // The first token ends the prefill: the `✍️` line takes its place.
+    panel.apply(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
+        "hello".into(),
+    )));
+    let lines = text_of(&panel);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains('✍'), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.contains('⏫')), "{lines:?}");
 }
 
 #[test]
@@ -3021,7 +3071,9 @@ fn up_takes_the_queue_back_into_the_input() {
 fn a_call_that_fails_before_its_first_token_shows_no_cost() {
     let mut panel = AgentPanel::new(setup(vec![]));
     panel.apply(AgentEvent::AgentStart);
-    panel.apply(AgentEvent::MessageStart);
+    panel.apply(AgentEvent::MessageStart {
+        prompt_tokens: None,
+    });
     let failed = AssistantMessage::failed("p", "m", StopReason::Error, "connection refused");
     panel.apply(AgentEvent::MessageEnd(Message::Assistant(failed)));
     let answer = panel
@@ -4069,7 +4121,9 @@ impl Backend for External {
         events.push(AgentEvent::AgentStart);
         events.push(AgentEvent::MessageEnd(Message::User(message)));
         // Like an ACP adapter: the message starts with its first text.
-        events.push(AgentEvent::MessageStart);
+        events.push(AgentEvent::MessageStart {
+            prompt_tokens: None,
+        });
         events.push(AgentEvent::MessageUpdate(StreamEvent::TextDelta(
             "from outside".into(),
         )));

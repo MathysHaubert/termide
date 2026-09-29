@@ -801,7 +801,8 @@ crate: the surface used is small, and the crate would bring tokio.
 One wire format first: OpenAI-compatible streaming chat completions
 (`crates/agent-providers`), which covers llama.cpp, Ollama, vLLM, omlx,
 OpenRouter and most gateways. Vendor differences are data in `Compat`
-(`max_tokens_field`, `reasoning_effort`, `send_reasoning`, `extra_body`), the
+(`max_tokens_field`, `reasoning_effort`, `send_reasoning`, `prefill_progress`,
+`extra_body`), the
 way pi's per-model `compat` table works, instead of one code path per vendor.
 
 Reasoning between turns: Anthropic requires thinking blocks to be echoed with

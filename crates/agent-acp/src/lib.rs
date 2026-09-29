@@ -961,7 +961,9 @@ impl Shared {
                     .unwrap_or_else(PoisonError::into_inner);
                 if open.is_none() {
                     *open = Some(String::new());
-                    let _ = self.events.send(AgentEvent::MessageStart);
+                    let _ = self.events.send(AgentEvent::MessageStart {
+                        prompt_tokens: None,
+                    });
                 }
                 if let Some(buffer) = open.as_mut() {
                     buffer.push_str(&text);
@@ -982,7 +984,9 @@ impl Shared {
                         .open_message
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner) = Some(String::new());
-                    let _ = self.events.send(AgentEvent::MessageStart);
+                    let _ = self.events.send(AgentEvent::MessageStart {
+                        prompt_tokens: None,
+                    });
                 }
                 let _ = self
                     .events
@@ -1912,7 +1916,7 @@ mod tests {
             .map(|e| match e {
                 AgentEvent::AgentStart => "start".into(),
                 AgentEvent::TurnStart => "turn".into(),
-                AgentEvent::MessageStart => "msg-start".into(),
+                AgentEvent::MessageStart { .. } => "msg-start".into(),
                 AgentEvent::MessageUpdate(StreamEvent::TextDelta(t)) => format!("text:{t}"),
                 AgentEvent::MessageUpdate(StreamEvent::ThinkingDelta(_)) => "think".into(),
                 AgentEvent::MessageUpdate(_) => "update".into(),

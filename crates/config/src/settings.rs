@@ -169,6 +169,11 @@ pub struct Connection {
     /// [`DEFAULT_CONTEXT_WINDOW_FALLBACK`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window_fallback: Option<u64>,
+    /// Ask an `openai_compatible` server for its prompt-processing progress
+    /// (llama.cpp's `return_progress`), for a live prefill bar. Off by
+    /// default: servers that do not know the field may reject the request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefill_progress: bool,
 }
 
 impl Default for Connection {
@@ -179,6 +184,7 @@ impl Default for Connection {
             model: String::new(),
             api_key_env: String::new(),
             context_window_fallback: None,
+            prefill_progress: false,
         }
     }
 }

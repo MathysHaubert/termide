@@ -47,6 +47,20 @@ impl Accumulator {
         if let Some(usage) = chunk.get("usage").filter(|u| !u.is_null()) {
             self.usage = parse_usage(usage);
         }
+        // llama.cpp's prompt-processing progress (asked for with
+        // `return_progress`) rides on chunks before the first token; it is not
+        // content, so a failure after it can still be retried.
+        if let Some(progress) = chunk.get("prompt_progress").filter(|p| p.is_object()) {
+            let field = |key| progress.get(key).and_then(Value::as_u64).unwrap_or(0);
+            let total = field("total");
+            if total > 0 {
+                on_event(StreamEvent::PrefillProgress {
+                    processed: field("processed").min(total),
+                    total,
+                    cached: field("cache").min(total),
+                });
+            }
+        }
         let Some(choice) = chunk
             .get("choices")
             .and_then(Value::as_array)
@@ -281,6 +295,45 @@ data: [DONE]
         }));
         // The keepalive chunk with empty content produced no text event.
         assert!(!events.contains(&StreamEvent::TextDelta(String::new())));
+    }
+
+    #[test]
+    fn llama_cpp_prompt_progress_is_reported_and_is_not_content() {
+        // llama.cpp with `return_progress`: progress chunks with an empty
+        // delta before the first token.
+        let transcript = r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":null}],"prompt_progress":{"total":48000,"cache":30000,"processed":39000,"time_ms":5200.5}}
+data: {"choices":[{"index":0,"delta":{},"finish_reason":null}],"prompt_progress":{"total":48000,"cache":30000,"processed":48000,"time_ms":9800.1}}
+data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}
+data: [DONE]
+"#;
+        let (_, events) = replay(transcript);
+        let progress: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::PrefillProgress { .. }))
+            .collect();
+        assert_eq!(
+            progress,
+            vec![
+                &StreamEvent::PrefillProgress {
+                    processed: 39_000,
+                    total: 48_000,
+                    cached: 30_000
+                },
+                &StreamEvent::PrefillProgress {
+                    processed: 48_000,
+                    total: 48_000,
+                    cached: 30_000
+                },
+            ]
+        );
+
+        let mut acc = Accumulator::default();
+        let chunk: Value = serde_json::from_str(
+            r#"{"choices":[],"prompt_progress":{"total":10,"cache":0,"processed":5}}"#,
+        )
+        .unwrap();
+        acc.feed(&chunk, &mut |_| {});
+        assert!(!acc.received_content);
     }
 
     #[test]

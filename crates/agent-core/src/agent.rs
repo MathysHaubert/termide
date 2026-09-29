@@ -296,7 +296,12 @@ pub enum AgentEvent {
     AgentStart,
     TurnStart,
     /// The model call started; `MessageUpdate`s follow until `MessageEnd`.
-    MessageStart,
+    MessageStart {
+        /// Rough size of the prompt the model is about to read, in tokens:
+        /// the last reported usage plus an estimate for what was appended
+        /// after it. `None` from a backend that cannot tell.
+        prompt_tokens: Option<u64>,
+    },
     MessageUpdate(StreamEvent),
     /// A message was appended to the transcript.
     MessageEnd(Message),
@@ -644,7 +649,9 @@ impl Agent {
             let _ = self.compact(CompactionReason::Threshold, None, cancel, emit);
         }
 
-        emit(AgentEvent::MessageStart);
+        emit(AgentEvent::MessageStart {
+            prompt_tokens: Some(context_tokens(&self.messages)),
+        });
         let mut retried_after_overflow = false;
         let assistant = loop {
             let reply = self.call_model(cancel, emit);
@@ -1223,6 +1230,25 @@ mod tests {
                 "hello".into()
             )))
         );
+    }
+
+    #[test]
+    fn the_model_call_announces_the_prompt_size() {
+        let (mut agent, _) = agent(
+            ScriptedProvider::new(vec![text_reply("hello")]),
+            ToolRegistry::new(),
+        );
+        // No usage reported yet: the estimate is the prompt's characters
+        // over four.
+        let events = collect(&mut agent, &"x".repeat(400), &mut NoHooks);
+        let starts: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::MessageStart { prompt_tokens } => Some(*prompt_tokens),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![Some(100)]);
     }
 
     #[test]

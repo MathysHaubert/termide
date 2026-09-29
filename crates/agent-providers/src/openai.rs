@@ -23,6 +23,9 @@ pub struct Compat {
     /// Echo previous `reasoning_content` back in assistant messages. Off by
     /// default: DeepSeek rejects it, most servers ignore it.
     pub send_reasoning: bool,
+    /// Ask for prompt-processing progress while streaming (llama.cpp's
+    /// `return_progress`). Off by default: OpenAI rejects unknown fields.
+    pub prefill_progress: bool,
     /// Merged into every request body last; the escape hatch for anything
     /// not modelled here (`chat_template_kwargs`, `temperature`, ...).
     pub extra_body: Map<String, Value>,
@@ -34,6 +37,7 @@ impl Default for Compat {
             max_tokens_field: "max_tokens".into(),
             reasoning_effort: false,
             send_reasoning: false,
+            prefill_progress: false,
             extra_body: Map::new(),
         }
     }
@@ -111,6 +115,9 @@ impl OpenAiCompatProvider {
         body.insert("messages".into(), Value::Array(messages));
         body.insert("stream".into(), json!(true));
         body.insert("stream_options".into(), json!({ "include_usage": true }));
+        if self.compat.prefill_progress {
+            body.insert("return_progress".into(), json!(true));
+        }
         // No limit configured: leave the reply's length to the model.
         if let Some(max_tokens) = request.model.max_tokens {
             body.insert(self.compat.max_tokens_field.clone(), json!(max_tokens));
@@ -546,6 +553,7 @@ mod tests {
         let mut compat = Compat {
             reasoning_effort: true,
             send_reasoning: true,
+            prefill_progress: true,
             ..Compat::default()
         };
         compat.extra_body.insert("temperature".into(), json!(0.2));
@@ -591,6 +599,7 @@ mod tests {
         assert_eq!(body["max_tokens"], 512);
         assert_eq!(body["reasoning_effort"], "high");
         assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["return_progress"], true);
         assert_eq!(body["tools"][0]["function"]["name"], "read");
         let messages = body["messages"].as_array().unwrap();
         assert_eq!(messages[0]["role"], "system");
@@ -608,6 +617,7 @@ mod tests {
         );
 
         let plain = OpenAiCompatProvider::new("p", "http://x/v1").build_body(&request);
+        assert!(plain.get("return_progress").is_none());
         assert!(plain.get("reasoning_effort").is_none());
         assert!(plain["messages"][2].get("reasoning_content").is_none());
     }

@@ -116,12 +116,37 @@ impl AgentPanel {
         };
         let dim = Style::default().fg(self.colors.disabled);
         let mut lines: Vec<Line<'static>> = Vec::new();
+        // Until the first token, a prefill line in the shape of a finished
+        // block's `⏫` meta: the time the model has been reading and what it
+        // reads. A server that reports its progress gets a bar, the tokens
+        // read of the total and the speed over those not served from its
+        // cache; any other gets the loop's estimate of the prompt (the exact
+        // count arrives with the turn's usage). A long context re-read after
+        // reopening a session otherwise shows nothing but the run clock.
+        // An external agent's message starts with its first text, so it has
+        // no prefill to show.
+        if activity.phase == Phase::Prefill && !self.external {
+            let prefill_ms = activity.msg_start.elapsed().as_millis() as u32;
+            let dur = transcript::fmt_dur(prefill_ms);
+            let text = match (activity.prefill, activity.prompt_tokens) {
+                (Some((processed, total, cached)), _) => Some(format!(
+                    "⏫ {dur} {} (↑{}/{}, {})",
+                    context_bar(processed * 100 / total.max(1)),
+                    format_tokens(processed),
+                    format_tokens(total),
+                    transcript::fmt_speed(processed.saturating_sub(cached), prefill_ms)
+                )),
+                (None, Some(prompt)) => Some(format!("⏫ {dur} (↑~{})", format_tokens(prompt))),
+                (None, None) => None,
+            };
+            if let Some(text) = text {
+                lines.push(transcript::right_meta(width, vec![Span::styled(text, dim)]));
+            }
+        }
         // While tokens stream (an answer or reasoning), a generation line in the
         // same shape as a finished block's `✍️` meta, with the live estimate.
-        // Input tokens are only known once the turn ends, so the `⏫` prefill
-        // line waits for the finished block. Only while tokens stream: once a
-        // tool runs the message's first token is still known (the cost needs
-        // it), but nothing is being generated.
+        // Only while tokens stream: once a tool runs the message's first token
+        // is still known (the cost needs it), but nothing is being generated.
         // An external agent sends its text in bursts and reports no tokens, so
         // there is no generation to time: none is shown for it.
         if let (Phase::Generating, Some(first_token), false) =

@@ -30,6 +30,7 @@ base_url = "http://127.0.0.1:10000/v1"
 model = "Qwen3.8-Flash-Next-oQ4e-mtp"  # left out: the provider's first model
 # api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 # context_window_fallback = 32000  # used only when the server does not report a window
+# prefill_progress = true          # ask a llama.cpp server for its prompt-processing progress
 
 [ai.connections.cloud]
 provider = "anthropic_compatible"
@@ -40,8 +41,12 @@ api_key_env = "ANTHROPIC_API_KEY"
 provider = "codex"                 # a CLI agent needs nothing else
 ```
 
-A connection carries `provider`, `base_url`, `model`, `api_key_env` and
-`context_window_fallback`; what it leaves out takes that field's default.
+A connection carries `provider`, `base_url`, `model`, `api_key_env`,
+`context_window_fallback` and, for `openai_compatible`, `prefill_progress`;
+what it leaves out takes that field's default. `prefill_progress` sends
+`return_progress` with each request, which llama.cpp answers with its
+prompt-processing progress; it is off by default because servers that do not
+know the field (OpenAI's own API among them) may reject the request.
 Everything else in `[ai]` — the output limit, reasoning, permissions,
 compaction and the rest — applies whichever connection a session runs on.
 
@@ -49,7 +54,8 @@ The settings modal (the gear, or the command palette) has all of it under
 **AI**. **Connections** comes first: each row names a connection with its
 provider and model, the one new sessions start on marked `●`. `Enter` or a
 click opens a connection on a page of its own — name, provider, base URL, API
-key variable, model, context window and **Use by default** (new sessions start
+key variable, model, context window, **Prefill progress (llama.cpp)** (for an
+OpenAI-compatible one) and **Use by default** (new sessions start
 on it) — and **[ Back to list ]**, `Esc` or `Backspace` returns to the list;
 **+ Add connection** adds an OpenAI-compatible one, and
 **[ Delete connection ]** on the page, or `Del` on its row, removes one.
@@ -343,9 +349,15 @@ the prefill phase (`⏫ 6s (↑42k, 7k tok/s)`) and the generation phase
 and average speed; large counts are abbreviated (`40k`, `1.2M`). A turn with no
 reasoning shows those on the answer instead.
 While a turn is still running, the same right-aligned meta zone shows the live
-figures: a `✍️` generation line with the running duration, estimated tokens and
-speed, and below it the run clock. The `⏫` prefill line waits for the finished block, since the
-input token count is only known once the turn ends. Reopening a
+figures: until the first token, a `⏫` prefill line with how long the model has
+been reading the prompt and an estimate of its size (`⏫ 14s (↑~48k)`), or, from
+a server that reports its progress (`prefill_progress`), a bar with the tokens
+read so far and the speed over those not served from its cache
+(`⏫ 14s ▰▰▰▰▱▱▱▱ (↑24k/48k, 1k tok/s)`); once
+tokens stream, a `✍️` generation line with the running duration, estimated
+tokens and speed; and below either the run clock. The exact input count and
+prefill speed come with the finished block. An external agent shows no live
+prefill line, as its message starts with its first text. Reopening a
 conversation restores each block's time, its reasoning, the turn's
 prefill/generation lines and each tool call's duration from the log.
 
@@ -709,6 +721,10 @@ together (see [The agent directory](#the-agent-directory)).
   Sessions are created by running an agent, so they have no create rows.
 - Each session row shows, dim on the right, when it was last worked on
   (e.g. "2h ago").
+- An agent, skill or prompt with a description is listed as `name ·
+  description` (the agent's `description` in `agent.toml`, the `description`
+  front matter of a `SKILL.md` or prompt); a row too long for the menu ends
+  in `…`.
 
 Below the sections, once an agent panel has been opened, **Show browser
 window** puts the agents' web browser on screen to watch it work (see

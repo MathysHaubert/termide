@@ -843,6 +843,9 @@ pub trait Translation: Send + Sync {
     /// Settings modal: the switch that makes a connection the default, the
     /// one new sessions start on.
     fn settings_ai_connection_default(&self) -> &str;
+    /// Settings modal: the switch that asks an OpenAI-compatible server for
+    /// its prompt-processing progress.
+    fn settings_ai_connection_prefill_progress(&self) -> &str;
     /// Settings modal: a connection left without a name, or with another's.
     fn settings_ai_connection_name_taken(&self) -> &str;
     /// Settings modal: the permission mode new agent sessions start in.

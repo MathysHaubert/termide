@@ -617,7 +617,7 @@ impl Subagents {
             let budget = budget.clone();
             let mut emit = |event: AgentEvent| {
                 match &event {
-                    AgentEvent::MessageStart => {
+                    AgentEvent::MessageStart { .. } => {
                         turns += 1;
                         if turns > SUBAGENT_MAX_TURNS {
                             budget.cancel();
@@ -906,6 +906,7 @@ fn build_provider(
                     .with_api_key(api_key)
                     .with_compat(Compat {
                         reasoning_effort: reasoning,
+                        prefill_progress: settings.prefill_progress,
                         ..Compat::default()
                     }),
             )

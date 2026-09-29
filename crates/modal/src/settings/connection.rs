@@ -19,7 +19,8 @@ pub(super) const BASE_URL: usize = 2;
 pub(super) const API_KEY_ENV: usize = 3;
 pub(super) const MODEL: usize = 4;
 pub(super) const CONTEXT_WINDOW: usize = 5;
-pub(super) const DEFAULT: usize = 6;
+pub(super) const PREFILL_PROGRESS: usize = 6;
+pub(super) const DEFAULT: usize = 7;
 
 /// The connection page, while one is open.
 #[derive(Debug, Clone)]
@@ -90,10 +91,24 @@ pub(super) fn connection_fields() -> Vec<FieldDescriptor> {
             field_type: FieldType::OptionalNumber,
         },
         FieldDescriptor {
+            label: t.settings_ai_connection_prefill_progress(),
+            field_type: FieldType::Bool,
+        },
+        FieldDescriptor {
             label: t.settings_ai_connection_default(),
             field_type: FieldType::Bool,
         },
     ]
+}
+
+/// Whether the connection talks to an OpenAI-compatible endpoint: neither a
+/// CLI agent nor the Messages API.
+fn speaks_openai(connection: &Connection) -> bool {
+    !connection.is_cli()
+        && !matches!(
+            connection.provider.as_str(),
+            "anthropic_compatible" | "anthropic"
+        )
 }
 
 /// The name a connection gets from its provider until the user names it.
@@ -147,10 +162,12 @@ impl SettingsModal {
     }
 
     /// The rows of the connection page. A CLI agent brings its endpoint,
-    /// key and window, so only its model (pre-selected over ACP) applies.
+    /// key and window, so only its model (pre-selected over ACP) applies;
+    /// prefill progress is an OpenAI-compatible request field.
     pub(super) fn connection_page_rows(&self) -> Vec<ContentRow> {
         use ContentRow::{ConnectionButtons, Field, Header, Spacer};
         let cli = self.edited().is_some_and(Connection::is_cli);
+        let openai = self.edited().is_some_and(speaks_openai);
         let mut rows = vec![
             Header(i18n::t().settings_header_connection()),
             Field(NAME),
@@ -162,6 +179,9 @@ impl SettingsModal {
         rows.push(Field(MODEL));
         if !cli {
             rows.push(Field(CONTEXT_WINDOW));
+        }
+        if openai {
+            rows.push(Field(PREFILL_PROGRESS));
         }
         rows.extend([Field(DEFAULT), Spacer, ConnectionButtons]);
         rows
@@ -327,6 +347,7 @@ impl SettingsModal {
                 },
                 |n| n.to_string(),
             ),
+            PREFILL_PROGRESS => bool_str(connection.prefill_progress),
             DEFAULT => bool_str(self.config.ai.default_connection() == self.open_connection_name()),
             _ => String::new(),
         }
@@ -351,10 +372,18 @@ impl SettingsModal {
         }
     }
 
-    /// Toggle the page's switch: whether new sessions start on this
-    /// connection. Exactly one is the default: turned off, the default moves
-    /// to the first other connection by name; the only one stays on.
+    /// Toggle one of the page's switches: prefill progress, or whether new
+    /// sessions start on this connection. Exactly one is the default: turned
+    /// off, the default moves to the first other connection by name; the
+    /// only one stays on.
     pub(super) fn toggle_connection_field(&mut self, index: usize) {
+        if index == PREFILL_PROGRESS {
+            if let Some(connection) = self.edited_mut() {
+                connection.prefill_progress = !connection.prefill_progress;
+                self.mark_dirty();
+            }
+            return;
+        }
         if index != DEFAULT {
             return;
         }
@@ -500,6 +529,9 @@ impl SettingsModal {
             connection.base_url = defaults.base_url;
             connection.api_key_env = defaults.api_key_env;
             connection.context_window_fallback = defaults.context_window_fallback;
+        }
+        if !speaks_openai(connection) {
+            connection.prefill_progress = false;
         }
         let auto = self.connection_edit.as_ref().is_some_and(|e| e.auto_named);
         if let (true, Some(old)) = (auto, self.open_connection_name().map(str::to_string)) {
@@ -953,6 +985,24 @@ mod tests {
         // An endpoint termide runs whole has none.
         modal.open_connection("local".into());
         assert!(modal.connection_hint().is_none());
+    }
+
+    #[test]
+    fn prefill_progress_is_an_openai_compatible_switch() {
+        let mut modal = ai_modal(with_local());
+        modal.open_connection("local".into());
+        assert_eq!(modal.connection_value(PREFILL_PROGRESS), "false");
+        modal.toggle_connection_field(PREFILL_PROGRESS);
+        assert!(modal.config.ai.connections["local"].prefill_progress);
+        assert!(modal.dirty);
+        // The Messages API has no such field: the switch leaves the page and
+        // the file.
+        modal.apply_connection_enum(PROVIDER, "anthropic_compatible");
+        let name = modal.open_connection_name().unwrap().to_string();
+        assert!(!modal.config.ai.connections[&name].prefill_progress);
+        assert!(!modal
+            .content_rows()
+            .contains(&ContentRow::Field(PREFILL_PROGRESS)));
     }
 
     #[test]

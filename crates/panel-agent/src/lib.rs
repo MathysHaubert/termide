@@ -361,6 +361,12 @@ struct Activity {
     msg_start: Instant,
     /// When the first token of the current message arrived.
     first_token: Option<Instant>,
+    /// The loop's estimate of the prompt the model is reading, for the live
+    /// prefill line; `None` when the backend cannot tell.
+    prompt_tokens: Option<u64>,
+    /// How far the server has read the prompt, `(processed, total, cached)`
+    /// in tokens, from a server that reports it.
+    prefill: Option<(u64, u64, u64)>,
 }
 
 impl Activity {
@@ -372,6 +378,8 @@ impl Activity {
             gen_chars: 0,
             msg_start: now,
             first_token: None,
+            prompt_tokens: None,
+            prefill: None,
         }
     }
 
