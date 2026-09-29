@@ -329,12 +329,18 @@ impl<'a> Dropdown<'a> {
             // " " + label
             let mut cursor_x = inner.x;
             cursor_x += render_text_cells(buf, cursor_x, row_y, " ", inner.width, base_style);
-            let label_width = str_display_width(&item.label) as u16;
+            // A label wider than the capped box ends in an ellipsis instead
+            // of being cut off under the 3-column suffix.
+            let label = termide_ui::path_utils::truncate_right(
+                &item.label,
+                inner.width.saturating_sub(cursor_x - inner.x + 3) as usize,
+            );
+            let label_width = str_display_width(&label) as u16;
             cursor_x += render_text_cells(
                 buf,
                 cursor_x,
                 row_y,
-                &item.label,
+                &label,
                 inner.width.saturating_sub(cursor_x - inner.x),
                 base_style,
             );
@@ -1037,6 +1043,21 @@ mod overflow_tests {
             .collect();
         let mut buf = Buffer::empty(Rect::new(0, 0, 57, 15));
         Dropdown::new(&items, 29, 33, 1, theme).render(&mut buf);
+    }
+
+    // A label wider than the capped dropdown ends in an ellipsis just before
+    // the suffix column rather than running under it.
+    #[test]
+    fn long_label_is_ellipsized() {
+        let theme = Theme::get_by_name("default");
+        let items = vec![DropdownItem::new("x".repeat(80), "id")];
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 5));
+        let dropdown = Dropdown::new(&items, 0, 0, 0, theme);
+        let width = dropdown.width();
+        dropdown.render(&mut buf);
+        let row: String = (0..width).map(|x| buf[(x, 1)].symbol()).collect();
+        // border, space, label ... ellipsis, 3-column suffix, border
+        assert!(row.ends_with("…   │"), "{row:?}");
     }
 }
 

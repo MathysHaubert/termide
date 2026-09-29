@@ -476,7 +476,8 @@ impl AppState {
         let t = termide_i18n::t();
 
         let dirs = self.ai_dirs();
-        let mut listed: Vec<(String, bool)> = match section {
+        // (name, description, is_project)
+        let mut listed: Vec<(String, String, bool)> = match section {
             AiSection::Sessions => return self.ai_session_items(),
             AiSection::Agents => dirs
                 .agents()
@@ -487,7 +488,8 @@ impl AppState {
                         .agent_dir(&name)
                         .map(|p| p.starts_with(&self.project_root))
                         .unwrap_or(false);
-                    (name, is_project)
+                    let description = dirs.spec(&name).description;
+                    (name, description, is_project)
                 })
                 .collect(),
             AiSection::Skills => dirs
@@ -495,7 +497,7 @@ impl AppState {
                 .into_iter()
                 .map(|s| {
                     let is_project = s.path.starts_with(&self.project_root);
-                    (s.name, is_project)
+                    (s.name, s.description, is_project)
                 })
                 .collect(),
             AiSection::Prompts => dirs
@@ -506,7 +508,7 @@ impl AppState {
                         .prompt_path(&p.name)
                         .map(|path| path.starts_with(&self.project_root))
                         .unwrap_or(false);
-                    (p.name, is_project)
+                    (p.name, p.description, is_project)
                 })
                 .collect(),
         };
@@ -516,16 +518,24 @@ impl AppState {
             DropdownItem::separator(),
         ];
         // Project-local first (bold), then global; each group alphabetical.
-        listed.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let has_project = listed.iter().any(|(_, p)| *p);
-        let has_global = listed.iter().any(|(_, p)| !*p);
+        listed.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        let has_project = listed.iter().any(|(_, _, p)| *p);
+        let has_global = listed.iter().any(|(_, _, p)| !*p);
         let mut pushed_sep = false;
-        for (name, is_project) in listed {
+        for (name, description, is_project) in listed {
             if !is_project && has_project && has_global && !pushed_sep {
                 items.push(DropdownItem::separator());
                 pushed_sep = true;
             }
-            let mut item = DropdownItem::new(name.clone(), format!("item:{name}"));
+            // The key keeps the bare name; the label adds the one-line
+            // description the same way the panel's pickers show it.
+            let description = description.lines().next().unwrap_or("").trim();
+            let label = if description.is_empty() {
+                name.clone()
+            } else {
+                format!("{name} · {description}")
+            };
+            let mut item = DropdownItem::new(label, format!("item:{name}"));
             if is_project {
                 item = item.with_project();
             }
