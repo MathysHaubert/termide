@@ -877,4 +877,15 @@ mod packing {
         let result = pack_all(&[src], &dir.path().join("out.rar"));
         assert!(matches!(result, Err(VfsError::InvalidPath(_))));
     }
+
+    #[test]
+    fn an_iso_image_is_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        let dest = dir.path().join("out.iso");
+        let result = pack_all(&[src], &dest);
+        assert!(matches!(result, Err(VfsError::NotSupported(_))));
+        assert!(!dest.exists());
+        assert!(temp_leftovers(dir.path()).is_empty());
+    }
 }

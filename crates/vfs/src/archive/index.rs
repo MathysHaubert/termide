@@ -18,6 +18,8 @@ pub(crate) enum EntrySource {
     Zip(usize),
     /// Ordinal of the entry in the tar stream.
     Tar(usize),
+    /// Position in the extent lists of an ISO image.
+    Iso(usize),
 }
 
 #[derive(Debug, Clone)]

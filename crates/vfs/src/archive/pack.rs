@@ -191,6 +191,9 @@ pub fn pack(
     let written = match format {
         ArchiveFormat::Zip => write_zip(items, file, &mut state),
         ArchiveFormat::Tar(compression) => write_tar(items, file, compression, &mut state),
+        ArchiveFormat::Iso => Err(VfsError::NotSupported(
+            "ISO images can be browsed, not packed".to_string(),
+        )),
     };
     if let Err(e) = written {
         return Err(state.aborted.take().unwrap_or(e));

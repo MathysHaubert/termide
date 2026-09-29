@@ -1,7 +1,7 @@
 //! Archive format detection.
 
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Compression wrapped around a tar stream.
@@ -26,7 +26,13 @@ pub enum ArchiveFormat {
     Zip,
     /// A tar stream, possibly compressed.
     Tar(TarCompression),
+    /// An ISO 9660 image, with Joliet and Rock Ridge.
+    Iso,
 }
+
+/// Offset of the `CD001` identifier of the first ISO 9660 volume
+/// descriptor, which follows a 32 KiB system area.
+const ISO_MAGIC_OFFSET: u64 = 16 * 2048 + 1;
 
 /// Name suffixes recognised as archives, longest first so `.tar.gz` wins
 /// over a hypothetical `.gz`.
@@ -46,6 +52,7 @@ const SUFFIXES: &[(&str, ArchiveFormat)] = &[
     (".war", ArchiveFormat::Zip),
     (".apk", ArchiveFormat::Zip),
     (".whl", ArchiveFormat::Zip),
+    (".iso", ArchiveFormat::Iso),
 ];
 
 impl ArchiveFormat {
@@ -60,11 +67,18 @@ impl ArchiveFormat {
             .map(|&(_, format)| format)
     }
 
+    /// Whether [`pack`](super::pack::pack) can write this format; ISO
+    /// images are only read.
+    pub fn can_pack(self) -> bool {
+        !matches!(self, Self::Iso)
+    }
+
     /// Detect the format from the file's leading bytes, falling back to the
     /// name for an old-style tar without the `ustar` magic.
     pub fn detect(path: &Path) -> io::Result<Option<Self>> {
+        let mut file = File::open(path)?;
         let mut head = [0u8; 512];
-        let len = read_up_to(&mut BufReader::new(File::open(path)?), &mut head)?;
+        let len = read_up_to(&mut file, &mut head)?;
         let head = &head[..len];
 
         let by_magic = if head.starts_with(b"PK\x03\x04")
@@ -82,6 +96,10 @@ impl ArchiveFormat {
             Some(Self::Tar(TarCompression::Zstd))
         } else if head.get(257..262) == Some(b"ustar") {
             Some(Self::Tar(TarCompression::None))
+        } else if has_iso_magic(&mut file)? {
+            // Checked last: a hybrid image starts with a boot sector that
+            // none of the magics above can match.
+            Some(Self::Iso)
         } else {
             None
         };
@@ -92,6 +110,12 @@ impl ArchiveFormat {
                 .then_some(Self::Tar(TarCompression::None))
         }))
     }
+}
+
+fn has_iso_magic(file: &mut File) -> io::Result<bool> {
+    file.seek(SeekFrom::Start(ISO_MAGIC_OFFSET))?;
+    let mut magic = [0u8; 5];
+    Ok(read_up_to(file, &mut magic)? == magic.len() && &magic == b"CD001")
 }
 
 fn read_up_to(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
@@ -125,6 +149,10 @@ mod tests {
             ArchiveFormat::from_file_name("app.jar"),
             Some(ArchiveFormat::Zip)
         );
+        assert_eq!(
+            ArchiveFormat::from_file_name("Debian.ISO"),
+            Some(ArchiveFormat::Iso)
+        );
         assert_eq!(ArchiveFormat::from_file_name("notes.txt"), None);
         assert_eq!(ArchiveFormat::from_file_name(".zip"), None);
         assert_eq!(ArchiveFormat::from_file_name("log.gz"), None);
@@ -138,6 +166,15 @@ mod tests {
         assert_eq!(
             ArchiveFormat::detect(&misnamed).unwrap(),
             Some(ArchiveFormat::Tar(TarCompression::Gzip))
+        );
+
+        let mut image = vec![0u8; 40_000];
+        image[ISO_MAGIC_OFFSET as usize..][..5].copy_from_slice(b"CD001");
+        let iso = dir.path().join("disc.img");
+        std::fs::write(&iso, image).unwrap();
+        assert_eq!(
+            ArchiveFormat::detect(&iso).unwrap(),
+            Some(ArchiveFormat::Iso)
         );
 
         let text = dir.path().join("notes.zip");

@@ -46,7 +46,7 @@ impl App {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if ArchiveFormat::from_file_name(&name).is_none() {
+        if !ArchiveFormat::from_file_name(&name).is_some_and(ArchiveFormat::can_pack) {
             self.show_error_modal(t.fm_pack_unknown_format(&name));
             return Ok(());
         }

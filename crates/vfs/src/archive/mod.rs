@@ -1,9 +1,10 @@
-//! Read-only archive provider: a zip or tar file browsed as a directory tree.
+//! Read-only archive provider: a zip or tar file or an ISO image browsed as a
+//! directory tree.
 //!
 //! "Connecting" reads the archive's table of contents into memory, so
 //! listing and metadata are instant afterwards. Reading an entry goes back to
-//! the file: directly for zip, by streaming from the start for tar. Every
-//! mutating operation fails with [`VfsError::NotSupported`].
+//! the file: directly for zip and ISO, by streaming from the start for tar.
+//! Every mutating operation fails with [`VfsError::NotSupported`].
 //!
 //! An archive on a remote host or inside another archive is read from a
 //! local copy the manager fetches on connect; the copy lives as long as the
@@ -12,6 +13,7 @@
 mod extract;
 mod format;
 mod index;
+mod iso;
 mod names;
 pub mod pack;
 mod source;

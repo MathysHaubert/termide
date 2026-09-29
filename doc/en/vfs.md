@@ -144,6 +144,7 @@ to the directory holding it, with the cursor back on the archive.
 |--------|-------|
 | ZIP    | `.zip`, `.jar`, `.war`, `.apk`, `.whl` |
 | tar    | `.tar`, `.tar.gz` / `.tgz`, `.tar.bz2` / `.tbz2`, `.tar.xz` / `.txz`, `.tar.zst` / `.tzst` |
+| ISO 9660 | `.iso` |
 
 The format is detected from the file's content; the name only decides
 which files `Enter` opens this way. Opening reads the archive's table
@@ -166,6 +167,13 @@ ZIP names are read as UTF-8 whenever they are valid UTF-8 (macOS writes
 them so without saying). Older archives from Windows store names in the
 system's code page; one whose names look like Cyrillic in CP866 is read
 as CP866, anything else as CP437, the encoding the ZIP format names.
+
+An ISO image shows its Rock Ridge tree (POSIX names, permissions and
+symbolic links) when it has one, otherwise its Joliet tree (long
+Unicode names), otherwise the bare ISO 9660 names such as `README.TXT`.
+UDF is not read: an image that keeps its files only in UDF — Windows
+installation images, DVD-Video, Blu-ray — shows just the small ISO 9660
+part next to it, usually a lone `README.TXT`.
 
 Archives are **read-only**. Opening a file from one works as for a
 remote file (a temporary copy), and copying with `C` / `F5` to a

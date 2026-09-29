@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::format::{ArchiveFormat, TarCompression};
 use super::index::{normalize_entry_name, ArchiveIndex, EntrySource, NodeKind};
+use super::iso::{self, Extent, ExtentReader};
 use super::names;
 use crate::error::{VfsError, VfsResult};
 use crate::types::{VfsFileType, VfsMetadata};
@@ -36,6 +37,12 @@ pub(crate) enum Backend {
         path: PathBuf,
         compression: TarCompression,
     },
+    /// An ISO image stores each file uncompressed in one or more extents.
+    /// The mutex serialises readers over the shared file handle.
+    Iso {
+        file: Mutex<File>,
+        files: Vec<Vec<Extent>>,
+    },
 }
 
 /// Read the table of contents of `path`.
@@ -61,6 +68,16 @@ pub(crate) fn open(path: &Path, format: ArchiveFormat) -> VfsResult<(ArchiveInde
                 Backend::Tar {
                     path: path.to_path_buf(),
                     compression,
+                },
+            ))
+        }
+        ArchiveFormat::Iso => {
+            let (index, files) = iso::open(path)?;
+            Ok((
+                index,
+                Backend::Iso {
+                    file: Mutex::new(File::open(path)?),
+                    files,
                 },
             ))
         }
@@ -130,7 +147,7 @@ impl Backend {
                     .iter()
                     .filter_map(|s| match s {
                         EntrySource::Tar(ordinal) => Some(*ordinal),
-                        EntrySource::Zip(_) => None,
+                        EntrySource::Zip(_) | EntrySource::Iso(_) => None,
                     })
                     .collect();
                 if wanted.is_empty() {
@@ -149,6 +166,24 @@ impl Backend {
                 Err(VfsError::Archive(
                     "archive ended before all entries were read".into(),
                 ))
+            }
+            Backend::Iso { file, files } => {
+                for &source in sources {
+                    let EntrySource::Iso(i) = source else {
+                        continue;
+                    };
+                    let extents = files
+                        .get(i)
+                        .ok_or_else(|| VfsError::Archive("unknown ISO entry".into()))?;
+                    let mut file = file
+                        .lock()
+                        .map_err(|_| VfsError::Archive("ISO reader lock poisoned".into()))?;
+                    visit(
+                        source,
+                        &mut ArchiveRead(&mut ExtentReader::new(&mut file, extents)),
+                    )?;
+                }
+                Ok(())
             }
         }
     }
@@ -319,7 +354,7 @@ fn tar_stream(path: &Path, compression: TarCompression) -> VfsResult<Box<dyn Rea
     })
 }
 
-fn metadata(
+pub(crate) fn metadata(
     file_type: VfsFileType,
     size: u64,
     modified: Option<SystemTime>,
@@ -356,7 +391,7 @@ fn dos_time(dt: zip::DateTime) -> Option<SystemTime> {
 
 /// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's
 /// `days_from_civil`).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;
