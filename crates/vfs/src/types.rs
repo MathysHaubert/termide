@@ -21,6 +21,9 @@ pub enum VfsProtocol {
     Smb,
     /// NFS (Network File System) via FUSE mount.
     Nfs,
+    /// An archive file browsed as a directory tree. The archive itself is
+    /// [`VfsPath::container`]; [`VfsPath::path`] is the path inside it.
+    Archive,
 }
 
 impl VfsProtocol {
@@ -33,6 +36,7 @@ impl VfsProtocol {
             Self::Ftps => "ftps",
             Self::Smb => "smb",
             Self::Nfs => "nfs",
+            Self::Archive => "archive",
         }
     }
 
@@ -45,11 +49,14 @@ impl VfsProtocol {
             "ftps" => Some(Self::Ftps),
             "smb" | "cifs" => Some(Self::Smb),
             "nfs" => Some(Self::Nfs),
+            "archive" => Some(Self::Archive),
             _ => None,
         }
     }
 
-    /// Check if this protocol requires network connectivity.
+    /// Check if paths of this protocol are served by a VFS provider rather
+    /// than the local filesystem: every network protocol, and archives even
+    /// when the archive file itself is local.
     pub fn is_remote(&self) -> bool {
         !matches!(self, Self::Local)
     }
@@ -68,8 +75,14 @@ pub struct VfsPath {
     pub port: Option<u16>,
     /// Username for remote paths.
     pub username: Option<String>,
-    /// The actual path component.
+    /// The actual path component. For an archive path this is the absolute
+    /// path inside the archive, `/` being the archive root.
     pub path: PathBuf,
+    /// The archive file an [`VfsProtocol::Archive`] path lives in; `None` for
+    /// every other protocol. It is a full `VfsPath` so that an archive on a
+    /// remote host, or inside another archive, stays expressible. Archive
+    /// paths carry no host, port or username of their own.
+    pub container: Option<Box<VfsPath>>,
 }
 
 impl VfsPath {
@@ -81,6 +94,7 @@ impl VfsPath {
             port: None,
             username: None,
             path: path.as_ref().to_path_buf(),
+            container: None,
         }
     }
 
@@ -92,6 +106,20 @@ impl VfsPath {
             port: None,
             username: None,
             path: path.as_ref().to_path_buf(),
+            container: None,
+        }
+    }
+
+    /// Create a path inside the archive file `container`. A relative `inner`
+    /// is taken from the archive root.
+    pub fn archive(container: VfsPath, inner: impl AsRef<Path>) -> Self {
+        Self {
+            protocol: VfsProtocol::Archive,
+            host: None,
+            port: None,
+            username: None,
+            path: Path::new("/").join(inner),
+            container: Some(Box::new(container)),
         }
     }
 
@@ -117,6 +145,29 @@ impl VfsPath {
         self.protocol.is_remote()
     }
 
+    /// Check if this is a path inside an archive.
+    pub fn is_archive(&self) -> bool {
+        self.protocol == VfsProtocol::Archive
+    }
+
+    /// The archive file this path lives in, for an archive path.
+    pub fn container(&self) -> Option<&VfsPath> {
+        self.container.as_deref()
+    }
+
+    /// The same filesystem location (connection or archive) with a different
+    /// path component.
+    pub fn with_path(&self, path: impl Into<PathBuf>) -> Self {
+        Self {
+            protocol: self.protocol,
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            path: path.into(),
+            container: self.container.clone(),
+        }
+    }
+
     /// Get the path component.
     pub fn path(&self) -> &Path {
         &self.path
@@ -128,36 +179,37 @@ impl VfsPath {
     }
 
     /// Get the parent path.
-    /// Returns None if already at root.
+    /// Returns None if already at root. The root of an archive has no parent
+    /// either: leaving the archive goes through [`VfsPath::container`].
     pub fn parent(&self) -> Option<VfsPath> {
         let parent = self.path.parent()?;
         // For root path "/" parent() returns Some("") - treat as no parent
         if parent.as_os_str().is_empty() || parent == self.path {
             return None;
         }
-        Some(VfsPath {
-            protocol: self.protocol,
-            host: self.host.clone(),
-            port: self.port,
-            username: self.username.clone(),
-            path: parent.to_path_buf(),
-        })
+        Some(self.with_path(parent))
     }
 
     /// Join a path component.
     pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
-        VfsPath {
-            protocol: self.protocol,
-            host: self.host.clone(),
-            port: self.port,
-            username: self.username.clone(),
-            path: self.path.join(path),
-        }
+        self.with_path(self.path.join(path))
     }
 
     /// Convert to a URL string.
+    ///
+    /// An archive path is `archive://<container>!<inner>`, e.g.
+    /// `archive:///home/x/a.zip!/docs`. `!` and `%` are percent-encoded in
+    /// the container part, so the first `!` always ends it and the string
+    /// parses back to the same path.
     pub fn to_url_string(&self) -> String {
-        if self.is_local() {
+        if let Some(container) = self.container() {
+            format!(
+                "{}://{}!{}",
+                VfsProtocol::Archive.scheme(),
+                crate::url::encode_archive_container(&container.to_url_string()),
+                self.path.display()
+            )
+        } else if self.is_local() {
             self.path.display().to_string()
         } else {
             let mut url = format!("{}://", self.protocol.scheme());
@@ -184,8 +236,17 @@ impl VfsPath {
     /// Get a connection key for caching providers.
     /// This uniquely identifies a connection (protocol + host + port + user).
     /// Uses effective_port() to normalize keys (e.g., sftp://host and sftp://host:22 are the same).
+    /// An open archive is its own connection, keyed by where the archive file
+    /// lives and its path there.
     pub fn connection_key(&self) -> String {
-        if self.is_local() {
+        if let Some(container) = self.container() {
+            format!(
+                "{}:{}{}",
+                VfsProtocol::Archive.scheme(),
+                container.connection_key(),
+                container.path.display()
+            )
+        } else if self.is_local() {
             "local".to_string()
         } else {
             format!(
@@ -203,13 +264,22 @@ impl VfsPath {
     /// Delegates to a free function taking only non-sensitive fields
     /// to avoid CodeQL taint propagation through `&self.username`.
     pub fn log_safe_key(&self) -> String {
+        if let Some(container) = self.container() {
+            let name = container.path.file_name().unwrap_or_default();
+            return format!(
+                "{}:{}/{}",
+                VfsProtocol::Archive.scheme(),
+                container.log_safe_key(),
+                name.to_string_lossy()
+            );
+        }
         log_safe_connection_key(self.protocol, self.host.as_deref(), self.effective_port())
     }
 
     /// Get the default port for this protocol.
     pub fn default_port(&self) -> Option<u16> {
         match self.protocol {
-            VfsProtocol::Local => None,
+            VfsProtocol::Local | VfsProtocol::Archive => None,
             VfsProtocol::Sftp => Some(22),
             VfsProtocol::Ftp => Some(21),
             VfsProtocol::Ftps => Some(990),

@@ -213,13 +213,7 @@ impl App {
         base: &VfsPath,
         path: PathBuf,
     ) -> VfsPath {
-        VfsPath {
-            protocol: base.protocol,
-            host: base.host.clone(),
-            port: base.port,
-            username: base.username.clone(),
-            path,
-        }
+        base.with_path(path)
     }
 
     /// Find a remote file manager panel (searches all panels, not just active).

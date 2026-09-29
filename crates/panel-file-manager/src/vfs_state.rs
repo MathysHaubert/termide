@@ -312,6 +312,11 @@ impl VfsState {
                     "NFS connections not yet fully implemented".to_string(),
                 ));
             }
+            VfsProtocol::Archive => {
+                return Err(VfsError::NotSupported(
+                    "Browsing archives is not implemented yet".to_string(),
+                ));
+            }
             VfsProtocol::Local => {
                 // Local paths don't need connection
                 return Err(VfsError::InvalidPath(
