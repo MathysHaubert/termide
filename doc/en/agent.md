@@ -166,8 +166,13 @@ right, what the agent is set up with — its connection, model, agent name, the
 tools it may use and the directory it works in. The connection, the model, the
 agent and the tools are shown bold in the accent colour: a click on any opens the same
 picker its status-bar chip does, so you can set the session up before you
-start. The banner gives way to the conversation as soon as you send your first
-message.
+start. Below them, the `sessions` rows list this directory's other sessions,
+newest first, filling the space the panel has and scrolling through the rest
+with the wheel. A click opens one in place of the empty session; from the
+keyboard, `Tab` moves into the list, the arrows, `PgUp`/`PgDn` and
+`Home`/`End` walk it, `Enter` opens the session under the cursor, and `Tab`
+or `Esc` goes back to the prompt. The banner gives way to the conversation as
+soon as you send your first message.
 
 The **Tools** chip (and the banner's `tools` line) opens a checklist of what
 the session may use: the built-in tools, the skills, and each MCP server's
@@ -206,7 +211,7 @@ you have named or sent even one message to is always kept.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | New line in the input |
 | `Esc` | Stop the running task; with nothing running, clear the input |
 | `Ctrl+O` | Expand or collapse every block, and new blocks after them |
-| `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `→`/`←` unfold or fold it as in the file manager's tree, `o` opens it in its own panel |
+| `Tab` | Move focus between the input and the chat; in the chat, `↑`/`↓` pick a block, `Space`/`Enter` fold or unfold it, `→`/`←` unfold or fold it as in the file manager's tree, `o` opens it in its own panel; on a fresh session's banner, `↑`/`↓` pick a recent session and `Enter` opens it |
 | Click a block | Focus the chat and select that block (the selected block is shown inverted, success and error colours keeping their hue); click it again to fold or unfold it |
 | `Ctrl+C` | Copy: the selected prompt text, or — with a block selected in the chat — the block's text |
 | `Ctrl+X` / `Ctrl+V` | Cut / paste the prompt selection |

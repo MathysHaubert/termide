@@ -2122,7 +2122,7 @@ fn clicking_a_banner_field_reopens_its_picker() {
     let (rect, _) = panel
         .banner_hits
         .iter()
-        .find(|(_, action)| *action == AGENT_ACTION)
+        .find(|(_, hit)| *hit == BannerHit::Action(AGENT_ACTION))
         .copied()
         .expect("the agent field is clickable");
     let click = MouseEvent {
@@ -2139,6 +2139,147 @@ fn clicking_a_banner_field_reopens_its_picker() {
         )),
         "clicking the agent field opens the agent picker, got {events:?}"
     );
+}
+
+#[test]
+fn a_fresh_banner_offers_recent_sessions_to_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut panel = AgentPanel::new(AgentPanelSetup {
+        session_dir: Some(dir.path().to_path_buf()),
+        ..setup(vec![reply("one"), reply("two")])
+    });
+    // The very first session has nothing else to offer.
+    let all = render_text(&mut panel, 80, 24).join("\n");
+    assert!(!all.contains("sessions"), "{all}");
+    let first_path = panel.session_path().unwrap().to_path_buf();
+    type_text(&mut panel, "first task");
+    panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    settle(&mut panel);
+    type_text(&mut panel, "more");
+    panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    settle(&mut panel);
+
+    // A new session lists the used one, but not itself (it is empty).
+    panel.handle_status_action(NEW_SESSION_ACTION);
+    let all = render_text(&mut panel, 80, 24).join("\n");
+    assert!(all.contains("sessions"), "{all}");
+    assert!(all.contains("first task"), "{all}");
+    let (rect, _) = panel
+        .banner_hits
+        .iter()
+        .find(|(_, hit)| *hit == BannerHit::Session(0))
+        .copied()
+        .expect("the recent session is clickable");
+    assert_eq!(
+        panel
+            .banner_hits
+            .iter()
+            .filter(|(_, hit)| matches!(hit, BannerHit::Session(_)))
+            .count(),
+        1
+    );
+
+    // A click on it opens it in place of the fresh one.
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rect.x + 1,
+        row: rect.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    panel.handle_mouse(click, Rect::new(0, 0, 80, 24));
+    assert_eq!(panel.session_path().unwrap(), first_path);
+    assert!(matches!(
+        &panel.transcript().items()[0],
+        Item::User { text, .. } if text == "first task"
+    ));
+    // With a conversation on screen, the banner and its list are gone.
+    assert!(panel.recent_sessions.is_empty());
+}
+
+#[test]
+fn tab_walks_the_banner_sessions_and_enter_opens_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut panel = AgentPanel::new(AgentPanelSetup {
+        session_dir: Some(dir.path().to_path_buf()),
+        ..setup(vec![reply("one"), reply("two"), reply("three")])
+    });
+    let mut first_path = None;
+    for prompt in ["first task", "second task", "third task"] {
+        first_path.get_or_insert_with(|| panel.session_path().unwrap().to_path_buf());
+        type_text(&mut panel, prompt);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        panel.handle_status_action(NEW_SESSION_ACTION);
+    }
+    assert_eq!(panel.recent_sessions.len(), 3);
+
+    // Tall enough, all are listed, newest first.
+    let all = render_text(&mut panel, 80, 24).join("\n");
+    assert!(
+        all.find("third task") < all.find("second task")
+            && all.find("second task") < all.find("first task"),
+        "{all}"
+    );
+
+    // A short panel shows one row; Tab takes the keyboard into the list,
+    // the cursor starts on the newest, and walking down scrolls.
+    let all = render_text(&mut panel, 80, 12).join("\n");
+    assert!(
+        all.contains("third task") && !all.contains("first task"),
+        "{all}"
+    );
+    panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(panel.chat_focus);
+    panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+    panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+    panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(panel.recent_selected, 2, "the cursor stops at the end");
+    let all = render_text(&mut panel, 80, 12).join("\n");
+    assert!(
+        all.contains("first task") && !all.contains("third task"),
+        "{all}"
+    );
+    // Typing goes nowhere while the list has the keyboard; Esc hands it back.
+    type_text(&mut panel, "x");
+    assert!(panel.input_text().is_empty());
+    panel.handle_key(chord(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!panel.chat_focus);
+
+    // Back in the list the cursor is where it was; Home goes to the top,
+    // End to the bottom, and Enter opens the session under it and returns
+    // the keyboard to the prompt.
+    panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+    panel.handle_key(chord(KeyCode::Home, KeyModifiers::NONE));
+    assert_eq!(panel.recent_selected, 0);
+    panel.handle_key(chord(KeyCode::End, KeyModifiers::NONE));
+    panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(panel.session_path(), first_path.as_deref());
+    assert!(!panel.chat_focus);
+}
+
+#[test]
+fn the_wheel_scrolls_the_banner_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut panel = AgentPanel::new(AgentPanelSetup {
+        session_dir: Some(dir.path().to_path_buf()),
+        ..setup(vec![reply("one"), reply("two")])
+    });
+    for prompt in ["first task", "second task"] {
+        type_text(&mut panel, prompt);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        panel.handle_status_action(NEW_SESSION_ACTION);
+    }
+    let _ = render_text(&mut panel, 80, 12);
+    panel.handle_scroll(1, Rect::new(0, 0, 80, 12));
+    let all = render_text(&mut panel, 80, 12).join("\n");
+    assert!(
+        all.contains("first task") && !all.contains("second task"),
+        "{all}"
+    );
+    // Past the end it stops.
+    panel.handle_scroll(5, Rect::new(0, 0, 80, 12));
+    assert_eq!(panel.recent_top, 1);
 }
 
 fn ask_in_worker(

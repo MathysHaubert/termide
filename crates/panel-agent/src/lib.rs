@@ -71,6 +71,14 @@ const ROLLBACK_ACTION: &str = "agent_rollback";
 const NEW_SESSION_ACTION: &str = "agent_new_session";
 /// Context-menu action that opens the session picker.
 const RESUME_ACTION: &str = "agent_resume";
+/// What a click on a welcome-banner row does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BannerHit {
+    /// Runs the status action, as the matching status-bar chip does.
+    Action(&'static str),
+    /// Opens the recent session at this index of `recent_sessions`.
+    Session(usize),
+}
 /// Status chip and context-menu action that opens the model picker.
 const MODEL_ACTION: &str = "agent_model";
 /// Status/banner action that switches the connection.
@@ -449,6 +457,17 @@ pub struct AgentPanel {
     session_dir: Option<PathBuf>,
     /// Sessions offered by the last picker, in the order they were shown.
     session_choices: Vec<SessionSummary>,
+    /// This directory's other non-empty sessions, newest first, that the
+    /// welcome banner of a fresh session offers to open. Read when the panel
+    /// opens or switches session, not per frame; empty otherwise.
+    recent_sessions: Vec<SessionSummary>,
+    /// The recent session the keyboard cursor is on while the chat focus is
+    /// in the banner's list, an index into `recent_sessions`.
+    recent_selected: usize,
+    /// First recent session the banner's list shows.
+    recent_top: usize,
+    /// Rows the banner's list had at the last render, for paging.
+    recent_rows: usize,
     cwd: PathBuf,
     agent: String,
     catalog: Arc<dyn AgentCatalog>,
@@ -572,7 +591,8 @@ pub struct AgentPanel {
     /// Serial number for the next paste placeholder.
     paste_seq: usize,
     /// Keyboard focus is in the chat, not the input: `Tab` toggles it, then
-    /// the arrows pick a block and Space/Enter fold it.
+    /// the arrows pick a block and Space/Enter fold it — or, while the welcome
+    /// banner lists recent sessions, pick one and Enter opens it.
     chat_focus: bool,
     /// The block the chat focus is on, an index into the transcript items.
     selected: usize,
@@ -658,10 +678,11 @@ pub struct AgentPanel {
     transcript_area: Rect,
     input_area: Rect,
     scrollbars: ScrollBars,
-    /// Clickable fields drawn in the welcome banner, each with the status
-    /// action a click on it triggers (re-pick the model, the agent). Rebuilt
-    /// every render; empty once the session has content and the banner is gone.
-    banner_hits: Vec<(Rect, &'static str)>,
+    /// Clickable rows drawn in the welcome banner, each with what a click on
+    /// it does (re-pick the model or the agent, open a recent session).
+    /// Rebuilt every render; empty once the session has content and the
+    /// banner is gone.
+    banner_hits: Vec<(Rect, BannerHit)>,
     /// The `/name`s more than one kind defined when the panel opened, for
     /// the welcome banner; a click there explains them.
     shadowed: Vec<String>,
@@ -775,6 +796,10 @@ impl AgentPanel {
             session,
             session_dir: setup.session_dir,
             session_choices: Vec::new(),
+            recent_sessions: Vec::new(),
+            recent_selected: 0,
+            recent_top: 0,
+            recent_rows: 0,
             cwd: setup.cwd,
             model,
             configured_model: setup.model,
@@ -888,6 +913,7 @@ impl AgentPanel {
         } else {
             panel.notice_slash_conflicts();
         }
+        panel.refresh_recent_sessions();
         panel
     }
 
@@ -1242,7 +1268,11 @@ impl Panel for AgentPanel {
     }
 
     fn handle_scroll(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
-        self.scroll_by(delta);
+        if self.recent_list_shown() {
+            self.scroll_recent(delta);
+        } else {
+            self.scroll_by(delta);
+        }
         vec![PanelEvent::NeedsRedraw]
     }
 

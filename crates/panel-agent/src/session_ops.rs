@@ -144,7 +144,70 @@ impl AgentPanel {
         self.pause_requested = false;
         self.stop_requested = false;
         self.context_tokens = 0;
+        self.refresh_recent_sessions();
         true
+    }
+
+    /// Re-read the sessions the welcome banner offers: while the session is
+    /// fresh, this directory's others that hold a conversation (or a name),
+    /// newest first; nothing once there is a conversation to show instead.
+    pub(crate) fn refresh_recent_sessions(&mut self) {
+        self.recent_sessions = if self.is_fresh() {
+            let current = self.session.as_ref().map(Session::path);
+            self.session_list()
+                .into_iter()
+                .filter(|summary| {
+                    Some(summary.path.as_path()) != current
+                        && (summary.message_count > 0 || summary.name.is_some())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.recent_selected = 0;
+        self.recent_top = 0;
+    }
+
+    /// Whether the welcome banner is up and lists recent sessions, so `Tab`
+    /// can take the keyboard into that list and the wheel scrolls it.
+    pub(crate) fn recent_list_shown(&self) -> bool {
+        self.transcript.items().is_empty() && !self.recent_sessions.is_empty()
+    }
+
+    /// Scroll the banner's list by `delta` rows. With the keyboard in the
+    /// list the cursor moves along, since the list keeps it in view.
+    pub(crate) fn scroll_recent(&mut self, delta: i32) {
+        if self.chat_focus {
+            self.move_recent_selection(delta as isize);
+            return;
+        }
+        let max_top = self
+            .recent_sessions
+            .len()
+            .saturating_sub(self.recent_rows.max(1));
+        self.recent_top = self
+            .recent_top
+            .saturating_add_signed(delta as isize)
+            .min(max_top);
+    }
+
+    /// Move the banner list's cursor by `delta` rows, clamped to the list,
+    /// and scroll it into view.
+    pub(crate) fn move_recent_selection(&mut self, delta: isize) {
+        let last = self.recent_sessions.len().saturating_sub(1);
+        self.recent_selected = self.recent_selected.saturating_add_signed(delta).min(last);
+        self.scroll_recent_selection_into_view();
+    }
+
+    /// Bring the banner list's cursor on screen, scrolling as little as
+    /// possible.
+    pub(crate) fn scroll_recent_selection_into_view(&mut self) {
+        let rows = self.recent_rows.max(1);
+        if self.recent_selected < self.recent_top {
+            self.recent_top = self.recent_selected;
+        } else if self.recent_selected >= self.recent_top + rows {
+            self.recent_top = self.recent_selected + 1 - rows;
+        }
     }
 
     /// Sessions of this project, newest first.
@@ -229,6 +292,23 @@ impl AgentPanel {
             return false;
         };
         self.session_choices.clear();
+        self.open_session(&summary)
+    }
+
+    /// Open the recent session the welcome banner offered at `index`. The
+    /// keyboard goes back to the prompt, so the conversation continues there.
+    pub(crate) fn open_recent_session(&mut self, index: usize) -> bool {
+        let Some(summary) = self.recent_sessions.get(index).cloned() else {
+            return false;
+        };
+        self.chat_focus = false;
+        self.open_session(&summary)
+    }
+
+    /// Switch to the session `summary` lists, unless it is already open. A
+    /// session another panel holds, or one gone from disk, is refused with a
+    /// notice.
+    fn open_session(&mut self, summary: &SessionSummary) -> bool {
         if self.session.as_ref().map(Session::path) == Some(summary.path.as_path()) {
             return true; // already open
         }

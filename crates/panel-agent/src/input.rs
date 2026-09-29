@@ -8,10 +8,10 @@ use termide_ui::textarea::TextArea;
 use termide_ui::{ChoiceAction, CompletionAction, CompletionItem, CompletionList, FieldEdit};
 
 use crate::{
-    select, transcript, AgentPanel, FoldMode, Item, NoticeKind, Paste, RunButton, CLEAR_COMMAND,
-    COMPACT_COMMAND, CONTINUE_COMMAND, GOAL_COMMAND, HANDOFF_COMMAND, LOOP_COMMAND, NAME_COMMAND,
-    NEW_COMMAND, NEW_SESSION_ACTION, PAUSE_COMMAND, PROMPT_COMMAND, RENAME_ACTION, RENAME_COMMAND,
-    RESUME_ACTION, UNDO_COMMAND, USAGE_COMMAND,
+    select, transcript, AgentPanel, BannerHit, FoldMode, Item, NoticeKind, Paste, RunButton,
+    CLEAR_COMMAND, COMPACT_COMMAND, CONTINUE_COMMAND, GOAL_COMMAND, HANDOFF_COMMAND, LOOP_COMMAND,
+    NAME_COMMAND, NEW_COMMAND, NEW_SESSION_ACTION, PAUSE_COMMAND, PROMPT_COMMAND, RENAME_ACTION,
+    RENAME_COMMAND, RESUME_ACTION, UNDO_COMMAND, USAGE_COMMAND,
 };
 
 /// A paste past either bound is held as a short placeholder rather than
@@ -837,6 +837,26 @@ impl AgentPanel {
         // Chat focus: the arrows walk the blocks, Space/Enter fold the one
         // under the cursor and ←/→ fold or unfold it as in the file manager's
         // tree, Tab or Esc hands focus back to the input.
+        // On the welcome banner the chat focus walks its recent sessions
+        // instead: the arrows, the page keys and Home/End move the cursor,
+        // Enter opens the session under it.
+        if self.chat_focus && self.recent_list_shown() {
+            let page = self.recent_rows.max(1) as isize;
+            match key.code {
+                KeyCode::Tab | KeyCode::Esc => self.chat_focus = false,
+                KeyCode::Up if !ctrl => self.move_recent_selection(-1),
+                KeyCode::Down if !ctrl => self.move_recent_selection(1),
+                KeyCode::PageUp => self.move_recent_selection(-page),
+                KeyCode::PageDown => self.move_recent_selection(page),
+                KeyCode::Home => self.move_recent_selection(isize::MIN),
+                KeyCode::End => self.move_recent_selection(isize::MAX),
+                KeyCode::Enter => {
+                    self.open_recent_session(self.recent_selected);
+                }
+                _ => return vec![],
+            }
+            return vec![PanelEvent::NeedsRedraw];
+        }
         if self.chat_focus {
             let count = self.transcript.items().len();
             match key.code {
@@ -908,6 +928,13 @@ impl AgentPanel {
             self.chat_focus = true;
             self.follow = false;
             self.selected = last_block;
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        // With no conversation yet, Tab moves focus into the banner's list of
+        // recent sessions, when it has one.
+        if key.code == KeyCode::Tab && self.recent_list_shown() {
+            self.chat_focus = true;
+            self.scroll_recent_selection_into_view();
             return vec![PanelEvent::NeedsRedraw];
         }
 
@@ -1119,7 +1146,8 @@ impl AgentPanel {
                     }
                 }
                 // A click on a re-pickable field in the welcome banner opens its
-                // picker — the same one its status-bar chip opens.
+                // picker — the same one its status-bar chip opens — and one on
+                // a recent session opens that session.
                 let banner_hit = self
                     .banner_hits
                     .iter()
@@ -1128,9 +1156,14 @@ impl AgentPanel {
                             && event.column < rect.x + rect.width
                             && event.row == rect.y
                     })
-                    .map(|(_, action)| *action);
-                if let Some(action) = banner_hit {
-                    return self.handle_status_action(action);
+                    .map(|(_, hit)| *hit);
+                match banner_hit {
+                    Some(BannerHit::Action(action)) => return self.handle_status_action(action),
+                    Some(BannerHit::Session(index)) => {
+                        self.open_recent_session(index);
+                        return vec![PanelEvent::NeedsRedraw];
+                    }
+                    None => {}
                 }
                 let area = self.transcript_area;
                 let inside = event.column >= area.x

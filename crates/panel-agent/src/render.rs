@@ -5,13 +5,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use termide_agent_core::civil_date;
 use termide_core::{RenderContext, SegmentKind, StatusSegment, ThemeColors};
 use termide_ui::ScrollBar;
 
 use crate::toolset::TOOLSET_ACTION;
 use crate::{
-    format_tokens, provider_label, shorten_path, transcript, AgentPanel, Phase, RunButton,
-    AGENT_ACTION, CONNECTION_ACTION, MODEL_ACTION, MODE_ACTION, REASONING_ACTION,
+    format_tokens, provider_label, shorten_path, transcript, truncate_title, AgentPanel, BannerHit,
+    Phase, RunButton, AGENT_ACTION, CONNECTION_ACTION, MODEL_ACTION, MODE_ACTION, REASONING_ACTION,
     SLASH_CONFLICTS_ACTION,
 };
 
@@ -257,9 +258,9 @@ impl AgentPanel {
             ])
         };
         let cwd = shorten_path(&self.cwd, (info_w as usize).saturating_sub(12));
-        // Each entry is a line and, when it names a choice that can be re-picked
-        // by clicking, the status action that click triggers.
-        let info: Vec<(Line<'static>, Option<&'static str>)> = vec![
+        // Each entry is a line and, when clicking it does something (re-pick a
+        // choice, open a session), what that click does.
+        let info: Vec<(Line<'static>, Option<BannerHit>)> = vec![
             (Line::styled("termide", accent), None),
             (
                 Line::styled(termide_i18n::t().agent_banner_subtitle(), dim),
@@ -272,13 +273,18 @@ impl AgentPanel {
                     self.connection_display(),
                     self.connections.is_some(),
                 ),
-                self.connections.is_some().then_some(CONNECTION_ACTION),
+                self.connections
+                    .is_some()
+                    .then_some(BannerHit::Action(CONNECTION_ACTION)),
             ),
             (
                 field("model", self.model_display(), true),
-                Some(MODEL_ACTION),
+                Some(BannerHit::Action(MODEL_ACTION)),
             ),
-            (field("agent", self.agent.clone(), true), Some(AGENT_ACTION)),
+            (
+                field("agent", self.agent.clone(), true),
+                Some(BannerHit::Action(AGENT_ACTION)),
+            ),
         ];
         // What the session may use, re-pickable before the first request,
         // when switching it off keeps it out of the context altogether.
@@ -287,7 +293,7 @@ impl AgentPanel {
             let (on, all) = self.toolset_counts();
             info.push((
                 field("tools", format!("{on}/{all}"), true),
-                Some(TOOLSET_ACTION),
+                Some(BannerHit::Action(TOOLSET_ACTION)),
             ));
         }
         info.push((field("cwd", cwd, false), None));
@@ -302,8 +308,36 @@ impl AgentPanel {
                     Span::styled(format!("{:<12}", "shadowed"), dim),
                     Span::styled(names.join(", "), Style::default().fg(colors.warning)),
                 ]),
-                Some(SLASH_CONFLICTS_ACTION),
+                Some(BannerHit::Action(SLASH_CONFLICTS_ACTION)),
             ));
+        }
+        // This directory's other sessions, newest first, one click (or
+        // Tab, the arrows and Enter) away: as many rows as the panel's height
+        // leaves, scrolling through the rest.
+        let total = self.recent_sessions.len();
+        let rows = total.min((area.height as usize).saturating_sub(info.len() + 1));
+        self.recent_rows = rows;
+        let list_start = info.len() + 1;
+        if rows > 0 {
+            self.recent_top = self.recent_top.min(total - rows);
+            if self.chat_focus {
+                self.scroll_recent_selection_into_view();
+            }
+            info.push((Line::from(""), None));
+            let first = self.recent_top;
+            for (index, summary) in self.recent_sessions[first..first + rows]
+                .iter()
+                .enumerate()
+                .map(|(row, summary)| (first + row, summary))
+            {
+                let label = if index == first { "sessions" } else { "" };
+                let value = format!(
+                    "{} · {}",
+                    civil_date(summary.modified),
+                    truncate_title(&summary.label())
+                );
+                info.push((field(label, value, true), Some(BannerHit::Session(index))));
+            }
         }
 
         let banner_h = info.len().max(LOGO.len()) as u16;
@@ -326,7 +360,7 @@ impl AgentPanel {
             }
         }
         let info_top = top + (banner_h - info.len() as u16) / 2;
-        for (i, (line, action)) in info.iter().enumerate() {
+        for (i, (line, hit)) in info.iter().enumerate() {
             let y = info_top + i as u16;
             if y >= bottom {
                 break;
@@ -335,7 +369,7 @@ impl AgentPanel {
             // The whole field row is the click target, so the label is as good
             // as the value; an external agent still routes the click, and its
             // action answers with the "unsupported" notice.
-            if let Some(action) = action {
+            if let Some(hit) = hit {
                 self.banner_hits.push((
                     Rect {
                         x: info_x,
@@ -343,9 +377,31 @@ impl AgentPanel {
                         width: info_w,
                         height: 1,
                     },
-                    action,
+                    *hit,
                 ));
             }
+            // The session under the keyboard cursor is shown inverted, like
+            // a selected chat block; its label column stays plain.
+            if self.chat_focus && *hit == Some(BannerHit::Session(self.recent_selected)) {
+                for x in info_x + 12.min(info_w)..info_x + info_w {
+                    buf[(x, y)].set_style(Style::default().fg(colors.bg).bg(colors.fg));
+                }
+            }
+        }
+        // A list longer than its rows gets a scrollbar in the gutter beside it.
+        if rows > 0 {
+            let list_y = info_top + list_start as u16;
+            ScrollBar::render(
+                buf,
+                area.x + area.width - 1,
+                list_y,
+                (rows as u16).min(bottom.saturating_sub(list_y)),
+                self.recent_top,
+                rows,
+                total,
+                colors,
+                self.chat_focus,
+            );
         }
     }
 
