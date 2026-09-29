@@ -4,6 +4,7 @@ mod conflict;
 mod cross_protocol;
 mod download;
 mod local;
+mod pack;
 mod remote_delete;
 mod upload;
 
@@ -15,6 +16,7 @@ pub use conflict::{ConflictAction, ConflictContext};
 pub use cross_protocol::{CrossProtocolDirection, CrossProtocolWorker};
 pub use download::DownloadWorker;
 pub use local::{LocalCopyWorker, LocalDeleteWorker};
+pub use pack::PackWorker;
 pub use remote_delete::RemoteDeleteWorker;
 pub use upload::UploadWorker;
 
