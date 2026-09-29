@@ -90,9 +90,24 @@ pub enum VfsError {
     #[cfg(feature = "nfs")]
     #[error("NFS mount error: {0}")]
     NfsMount(String),
+
+    /// An archive could not be read: corrupt, truncated, encrypted or using
+    /// an unsupported compression method.
+    #[cfg(feature = "archive")]
+    #[error("Archive error: {0}")]
+    Archive(String),
 }
 
 impl VfsError {
+    /// True when an archive could not be read (corrupt, truncated,
+    /// encrypted, unsupported), as opposed to a connection problem.
+    pub fn is_archive_error(&self) -> bool {
+        #[cfg(feature = "archive")]
+        return matches!(self, VfsError::Archive(_));
+        #[cfg(not(feature = "archive"))]
+        false
+    }
+
     /// True when the error means the remote *session* is gone (timed out,
     /// reset, closed) rather than a benign per-operation failure like
     /// permission-denied or not-found. Callers use this to offer a reconnect
@@ -100,6 +115,12 @@ impl VfsError {
     /// error both surface as a protocol error (`Sftp`/`Ftp`/`Smb`), so the
     /// distinction is the wording / IO kind.
     pub fn is_connection_lost(&self) -> bool {
+        // A truncated archive reports "unexpected EOF", which is about the
+        // file, not a session.
+        #[cfg(feature = "archive")]
+        if matches!(self, VfsError::Archive(_)) {
+            return false;
+        }
         if matches!(self, VfsError::ConnectionFailed(_) | VfsError::Timeout(_)) {
             return true;
         }

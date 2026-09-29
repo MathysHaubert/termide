@@ -27,6 +27,16 @@ webpki-roots = "1"
 # SMB support (optional, may require system libraries)
 pavao = { version = "0.2", optional = true }
 
+# Archive support — pure-Rust decoders only (no C zstd/xz/bzip2), so
+# musl-static builds keep needing no C toolchain. zip's deflate goes
+# through flate2's default miniz_oxide backend.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2", "deflate64", "bzip2", "lzma", "xz"], optional = true }
+tar = { version = "0.4", default-features = false, optional = true }
+flate2 = { version = "1", optional = true }
+bzip2 = { version = "0.6", optional = true }
+lzma-rust2 = { version = "0.16", default-features = false, features = ["std", "xz", "optimization"], optional = true }
+ruzstd = { version = "0.9", optional = true }
+
 # For temp file management
 tempfile.workspace = true
 
@@ -34,11 +44,12 @@ tempfile.workspace = true
 dirs.workspace = true
 
 [features]
-default = ["sftp", "ftp"]
+default = ["sftp", "ftp", "archive"]
 sftp = []
 ftp = []
 smb = ["pavao"]
 nfs = []
+archive = ["dep:zip", "dep:tar", "dep:flate2", "dep:bzip2", "dep:lzma-rust2", "dep:ruzstd"]
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -48,3 +59,7 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# Encoders to build test archives.
+lzma-rust2 = { version = "0.16", default-features = false, features = ["std", "xz", "encoder"] }
+bzip2 = "0.6"
+
