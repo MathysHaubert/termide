@@ -27,6 +27,7 @@ pub(crate) fn build_fm_hotkey_table(config: &Config) -> HotkeyTable {
     t.insert("create_file", &kb.create_file);
     t.insert("delete", &kb.delete);
     t.insert("info", &kb.info);
+    t.insert("pack", &kb.pack);
 
     // Search
     t.insert("search", &kb.search);
@@ -237,6 +238,7 @@ impl FileManager {
                     self.modal_request = Some((action, ActiveModal::Input(Box::new(modal))));
                 }
             }
+            FmCommand::Pack => self.request_pack(),
             FmCommand::MoveFiles => {
                 let paths = self.get_selected_paths();
                 if !paths.is_empty() {

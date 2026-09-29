@@ -223,6 +223,22 @@ fn is_source_file(filename: &str) -> bool {
         || filename.eq_ignore_ascii_case(".env")
 }
 
+/// Archive suffixes the pack prompt offers, the default first.
+const PACK_EXTENSIONS: [&str; 5] = [".zip", ".tar.gz", ".tar.zst", ".tar.xz", ".tar.bz2"];
+
+/// The archive name for packing `path` alone: a directory keeps its name,
+/// a file drops its last extension (`report.pdf` → `report`).
+fn archive_stem(path: &std::path::Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    if path.is_dir() {
+        return name.into_owned();
+    }
+    match path.file_stem().map(|s| s.to_string_lossy()) {
+        Some(stem) if !stem.is_empty() => stem.into_owned(),
+        _ => name.into_owned(),
+    }
+}
+
 /// Validate that a user-provided file/directory name does not escape the parent directory.
 /// Rejects names containing `..`, absolute paths, and path separators.
 fn validate_entry_name(name: &str) -> Result<()> {
@@ -343,6 +359,50 @@ impl FileManager {
         self.current_path = self.vfs.path_buf();
         let _ = self.load_directory();
         true
+    }
+
+    /// Ask where to pack the selection (P). The archive defaults to the
+    /// selection's own directory; the dropdown offers each writable format.
+    pub(crate) fn request_pack(&mut self) {
+        let t = termide_i18n::t();
+        if self.vfs.is_remote() {
+            self.show_info_modal(t.modal_error_title(), t.fm_pack_local_only());
+            return;
+        }
+        let sources = self.get_selected_paths();
+        let (prompt, dir, stem) = match &sources[..] {
+            [] => return,
+            [single] => (
+                t.fm_pack_prompt(&single.file_name().unwrap_or_default().to_string_lossy()),
+                single.parent().unwrap_or(&self.current_path).to_path_buf(),
+                archive_stem(single),
+            ),
+            many => (
+                t.fm_pack_prompt_multiple(many.len()),
+                self.current_path.clone(),
+                self.current_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "archive".to_string()),
+            ),
+        };
+        let options: Vec<termide_modal::SelectOption> = PACK_EXTENSIONS
+            .iter()
+            .map(|ext| {
+                let value = dir.join(format!("{stem}{ext}")).display().to_string();
+                termide_modal::SelectOption {
+                    display: value.clone(),
+                    value,
+                }
+            })
+            .collect();
+        let default = options[0].value.clone();
+        let modal =
+            termide_modal::EditableSelectModal::new(t.modal_pack_title(), prompt, default, options);
+        self.modal_request = Some((
+            termide_state::PendingAction::PackPaths { sources },
+            termide_modal::ActiveModal::EditableSelect(Box::new(modal)),
+        ));
     }
 
     /// Open file for editing (F4)

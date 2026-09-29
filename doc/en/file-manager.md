@@ -51,6 +51,7 @@ In tree view, selecting a directory with `Insert` cascades the selection to all 
 | `Delete` / `F8`   | Delete selected files/directories          |
 | `C` / `F5`        | Copy selected files/directories            |
 | `M` / `F6`        | Move/rename files/directories              |
+| `P`               | Pack selected files/directories into an [archive](vfs.md#packing) |
 | `E` / `F4`        | Open file in editor                        |
 | `R` / `F2`        | Rename file/directory                      |
 | `V` / `F3`        | View file (preview without executing)      |

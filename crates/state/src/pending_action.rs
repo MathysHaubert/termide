@@ -39,6 +39,9 @@ pub enum PendingAction {
         create_symlink: bool,
         create_relative_symlink: bool,
     },
+    /// Pack files/directories into a new archive; the modal answers with
+    /// the archive path.
+    PackPaths { sources: Vec<PathBuf> },
     /// Move files/directories (one or multiple)
     MovePath {
         sources: Vec<PathBuf>,

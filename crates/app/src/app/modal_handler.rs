@@ -411,6 +411,9 @@ impl App {
                 } => {
                     self.handle_move_path(sources, target_directory, value)?;
                 }
+                PendingAction::PackPaths { sources } => {
+                    self.handle_pack_paths(sources, value)?;
+                }
                 PendingAction::BatchFileOperation { operation } => {
                     self.process_batch_operation(operation);
                 }

@@ -293,6 +293,10 @@ pub trait Translation: Send + Sync {
     // File operation status
     fn status_file_created(&self, name: &str) -> String;
     fn status_dir_created(&self, name: &str) -> String;
+    fn fm_pack_prompt(&self, name: &str) -> String;
+    fn fm_pack_prompt_multiple(&self, count: usize) -> String;
+    fn fm_pack_unknown_format(&self, name: &str) -> String;
+    fn fm_pack_exists(&self, name: &str) -> String;
     fn status_file_saved(&self, name: &str) -> String;
     fn status_error_save(&self, error: &str) -> String;
     fn status_file_reloaded(&self) -> &str;
@@ -1134,6 +1138,11 @@ pub trait Translation: Send + Sync {
     fn modal_error_title(&self) -> &str;
     /// Status shown when a command would change a browsed archive.
     fn fm_archive_read_only(&self) -> &str;
+    fn help_desc_pack(&self) -> &str;
+    fn op_type_pack(&self) -> &str;
+    fn modal_pack_title(&self) -> &str;
+    /// Shown when packing is asked for in a remote or archive panel.
+    fn fm_pack_local_only(&self) -> &str;
 
     // Git panel strings
     fn git_no_repo(&self) -> &str;

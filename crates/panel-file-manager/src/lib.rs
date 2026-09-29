@@ -1155,6 +1155,48 @@ mod tests {
         );
     }
 
+    /// P offers an archive next to the selection in every writable format;
+    /// inside an archive it is refused instead.
+    #[test]
+    fn pack_prompts_for_an_archive_next_to_the_selection() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("docs")).unwrap();
+        std::fs::write(temp_dir.path().join("report.pdf"), "x").unwrap();
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+        let dir = canonical_temp_path(&temp_dir);
+
+        fm.selected = fm.find_entry_index("report.pdf").unwrap();
+        fm.execute_command(keyboard::FmCommand::Pack);
+        match fm.modal_request.take() {
+            Some((PendingAction::PackPaths { sources }, ActiveModal::EditableSelect(modal))) => {
+                assert_eq!(sources, [dir.join("report.pdf")]);
+                assert_eq!(modal.value(), dir.join("report.zip").display().to_string());
+            }
+            other => panic!("expected the pack prompt, got {:?}", other.map(|(a, _)| a)),
+        }
+
+        fm.selected = fm.find_entry_index("docs").unwrap();
+        fm.execute_command(keyboard::FmCommand::Pack);
+        match fm.modal_request.take() {
+            Some((PendingAction::PackPaths { .. }, ActiveModal::EditableSelect(modal))) => {
+                assert_eq!(modal.value(), dir.join("docs.zip").display().to_string());
+            }
+            other => panic!("expected the pack prompt, got {:?}", other.map(|(a, _)| a)),
+        }
+
+        fm.vfs.set_path(termide_vfs::VfsPath::archive(
+            termide_vfs::VfsPath::local(dir.join("a.zip")),
+            "/",
+        ));
+        fm.execute_command(keyboard::FmCommand::Pack);
+        assert!(matches!(
+            fm.modal_request.take(),
+            Some((PendingAction::VfsMessage, ActiveModal::InfoAction(_)))
+        ));
+    }
+
     /// A scrollbar drag must not be undone by the next render: the panel pulls
     /// `scroll_offset` back toward `selected` while drawing, so the command has
     /// to move the cursor into the new viewport as wheel scrolling does.

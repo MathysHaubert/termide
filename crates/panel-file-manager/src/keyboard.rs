@@ -49,6 +49,8 @@ pub enum FmCommand {
     EditFile,
     ViewFile,
     OpenExternal,
+    /// Pack the selection into a new archive.
+    Pack,
 
     // Search
     Search,
@@ -130,6 +132,9 @@ impl FmCommand {
         }
         if hotkeys.matches("info", &key) {
             return Self::ShowFileInfo;
+        }
+        if hotkeys.matches("pack", &key) {
+            return Self::Pack;
         }
         if hotkeys.matches("search", &key) {
             return Self::Search;

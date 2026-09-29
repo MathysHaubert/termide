@@ -122,6 +122,11 @@ impl EditableSelectModal {
         self
     }
 
+    /// The text in the input, as it would be confirmed.
+    pub fn value(&self) -> &str {
+        self.suggestion_input.text()
+    }
+
     /// Whether the checkbox is checked
     pub fn is_checkbox_checked(&self) -> bool {
         self.checkboxes.first().is_some_and(|c| c.checked)

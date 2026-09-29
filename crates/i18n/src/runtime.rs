@@ -748,6 +748,10 @@ impl Translation for RuntimeTranslation {
         modal_confirm_title,
         modal_error_title,
         fm_archive_read_only,
+        help_desc_pack,
+        op_type_pack,
+        modal_pack_title,
+        fm_pack_local_only,
         git_no_repo,
         git_branch_detached,
         git_refreshed,
@@ -1237,6 +1241,22 @@ impl Translation for RuntimeTranslation {
 
     fn status_dir_created(&self, name: &str) -> String {
         self.format("status_dir_created", &[("name", name)])
+    }
+
+    fn fm_pack_prompt(&self, name: &str) -> String {
+        self.format("fm_pack_prompt", &[("name", name)])
+    }
+
+    fn fm_pack_prompt_multiple(&self, count: usize) -> String {
+        self.format("fm_pack_prompt_multiple", &[("count", &count.to_string())])
+    }
+
+    fn fm_pack_unknown_format(&self, name: &str) -> String {
+        self.format("fm_pack_unknown_format", &[("name", name)])
+    }
+
+    fn fm_pack_exists(&self, name: &str) -> String {
+        self.format("fm_pack_exists", &[("name", name)])
     }
 
     fn status_file_saved(&self, name: &str) -> String {
