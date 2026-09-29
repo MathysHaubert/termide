@@ -995,6 +995,35 @@ impl FileManager {
         ));
     }
 
+    /// Ask for the password of the encrypted archive whose root is `archive`;
+    /// `wrong` says the last one was rejected.
+    fn request_archive_password(&mut self, archive: termide_vfs::VfsPath, wrong: bool) {
+        let t = termide_i18n::t();
+        let name = archive
+            .container()
+            .and_then(|c| c.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let prompt = if wrong {
+            t.fm_archive_password_wrong(&name)
+        } else {
+            t.fm_archive_password_prompt(&name)
+        };
+        let modal =
+            termide_modal::InputModal::new(t.modal_archive_password_title(), &prompt).password();
+        self.modal_request = Some((
+            PendingAction::ArchivePassword { archive },
+            ActiveModal::Input(Box::new(modal)),
+        ));
+    }
+
+    /// Open the encrypted archive whose root is `archive` with `password`,
+    /// the answer to [`Self::request_archive_password`].
+    pub fn open_archive_with_password(&mut self, archive: termide_vfs::VfsPath, password: String) {
+        self.navigation.prepare_for_going_down();
+        self.vfs.enter_archive_with_password(archive, password);
+    }
+
     /// Reconnect the current remote path with a fresh session (drops the dead
     /// provider first). Driven by the recovery dialog's "Reconnect" button.
     pub fn reconnect_remote(&mut self) {
@@ -1081,6 +1110,218 @@ mod tests {
             .get_selected_paths()
             .iter()
             .all(|p| !p.ends_with("__loading__")));
+    }
+
+    fn wait_for_local_listing(fm: &mut FileManager) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !fm.check_async_reload() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listing never arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_vfs(fm: &mut FileManager) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while fm.vfs.has_pending_operation() {
+            assert!(std::time::Instant::now() < deadline, "VFS never answered");
+            fm.on_tick();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn names(fm: &FileManager) -> Vec<String> {
+        (0..fm.visible_count())
+            .filter_map(|i| fm.entry_at(i).map(|e| e.name.clone()))
+            .collect()
+    }
+
+    /// Enter on an archive browses it like a directory; `..` at its root
+    /// comes back with the cursor on the archive; nothing inside can be
+    /// changed.
+    #[test]
+    fn an_archive_opens_like_a_directory_and_is_read_only() {
+        use std::io::Write;
+        let temp_dir = TempDir::new().unwrap();
+        let archive = temp_dir.path().join("pack.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file("docs/readme.md", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"hi").unwrap();
+        zip.finish().unwrap();
+        std::fs::write(temp_dir.path().join("other.txt"), "x").unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+
+        fm.selected = fm.find_entry_index("pack.zip").unwrap();
+        assert!(fm.enter().is_none(), "an archive is not opened as a file");
+        wait_for_vfs(&mut fm);
+        assert!(fm.vfs.at_archive_root());
+        assert_eq!(names(&fm), ["..", "docs"]);
+
+        fm.execute_command(keyboard::FmCommand::DeleteFiles);
+        assert!(
+            matches!(
+                fm.modal_request.take(),
+                Some((PendingAction::VfsMessage, ActiveModal::InfoAction(_)))
+            ),
+            "a read-only notice, not a delete confirmation"
+        );
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        assert!(fm.enter().is_none());
+        assert!(fm.vfs.is_local());
+        wait_for_local_listing(&mut fm);
+        assert_eq!(fm.current_path, canonical_temp_path(&temp_dir));
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("pack.zip"),
+            "the cursor comes back to the archive"
+        );
+    }
+
+    /// An archive inside an archive opens with Enter too, and `..` walks
+    /// back out one level at a time, the cursor landing on what was left.
+    #[test]
+    fn a_nested_archive_opens_and_is_left_level_by_level() {
+        use std::io::Write;
+        fn zip_with(path: &std::path::Path, name: &str, data: &[u8]) {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(data).unwrap();
+            zip.finish().unwrap();
+        }
+        let temp_dir = TempDir::new().unwrap();
+        let inner = temp_dir.path().join("inner.zip");
+        zip_with(&inner, "deep/readme.md", b"hi");
+        let outer = temp_dir.path().join("outer.zip");
+        zip_with(&outer, "inner.zip", &std::fs::read(&inner).unwrap());
+        std::fs::remove_file(&inner).unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+
+        fm.selected = fm.find_entry_index("outer.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "inner.zip"]);
+
+        fm.selected = fm.find_entry_index("inner.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "deep"]);
+        assert!(fm.vfs.current_path().container().unwrap().is_archive());
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "inner.zip"]);
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("inner.zip")
+        );
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        fm.enter();
+        wait_for_local_listing(&mut fm);
+        assert!(fm.vfs.is_local());
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("outer.zip")
+        );
+    }
+
+    /// An encrypted archive asks for its password, asks again after a wrong
+    /// one, and opens with the right one.
+    #[test]
+    fn an_encrypted_archive_asks_for_its_password() {
+        use std::io::Write;
+        let temp_dir = TempDir::new().unwrap();
+        let archive = temp_dir.path().join("locked.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file(
+            "secret.txt",
+            zip::write::SimpleFileOptions::default()
+                .with_aes_encryption(zip::AesMode::Aes256, "hunter2"),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.finish().unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+        let asked = |fm: &mut FileManager| match fm.modal_request.take() {
+            Some((PendingAction::ArchivePassword { archive }, ActiveModal::Input(_))) => archive,
+            other => panic!(
+                "expected a password prompt, got {:?}",
+                other.map(|(a, _)| a)
+            ),
+        };
+
+        fm.selected = fm.find_entry_index("locked.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        fm.on_tick();
+        let root = asked(&mut fm);
+        assert!(fm.vfs.is_local(), "the panel stays in the directory");
+
+        fm.open_archive_with_password(root, "wrong".to_string());
+        wait_for_vfs(&mut fm);
+        fm.on_tick();
+        let root = asked(&mut fm);
+
+        fm.open_archive_with_password(root, "hunter2".to_string());
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "secret.txt"]);
+    }
+
+    /// P offers an archive next to the selection in every writable format;
+    /// inside an archive it is refused instead.
+    #[test]
+    fn pack_prompts_for_an_archive_next_to_the_selection() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("docs")).unwrap();
+        std::fs::write(temp_dir.path().join("report.pdf"), "x").unwrap();
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+        let dir = canonical_temp_path(&temp_dir);
+
+        fm.selected = fm.find_entry_index("report.pdf").unwrap();
+        fm.execute_command(keyboard::FmCommand::Pack);
+        match fm.modal_request.take() {
+            Some((PendingAction::PackPaths { sources }, ActiveModal::EditableSelect(modal))) => {
+                assert_eq!(sources, [dir.join("report.pdf")]);
+                assert_eq!(modal.value(), dir.join("report.zip").display().to_string());
+            }
+            other => panic!("expected the pack prompt, got {:?}", other.map(|(a, _)| a)),
+        }
+
+        fm.selected = fm.find_entry_index("docs").unwrap();
+        fm.execute_command(keyboard::FmCommand::Pack);
+        match fm.modal_request.take() {
+            Some((PendingAction::PackPaths { .. }, ActiveModal::EditableSelect(modal))) => {
+                assert_eq!(modal.value(), dir.join("docs.zip").display().to_string());
+            }
+            other => panic!("expected the pack prompt, got {:?}", other.map(|(a, _)| a)),
+        }
+
+        fm.vfs.set_path(termide_vfs::VfsPath::archive(
+            termide_vfs::VfsPath::local(dir.join("a.zip")),
+            "/",
+        ));
+        fm.execute_command(keyboard::FmCommand::Pack);
+        assert!(matches!(
+            fm.modal_request.take(),
+            Some((PendingAction::VfsMessage, ActiveModal::InfoAction(_)))
+        ));
     }
 
     /// A scrollbar drag must not be undone by the next render: the panel pulls

@@ -5,7 +5,7 @@
 use anyhow::Result;
 
 use super::super::App;
-use super::batch_handler::{make_copy_or_move_request, source_name};
+use super::batch_handler::make_copy_or_move_request;
 use crate::state::{
     ActiveModal, BatchOperation, BatchOperationType, ConflictMode, PendingAction,
     PendingRemoteDelete,
@@ -34,10 +34,11 @@ impl App {
                         let item_name_ow = path_utils::get_file_name_string(&source);
 
                         // Execute operation - only use remote path when source or dest is remote
-                        let needs_remote_ow = is_remote_dest_ow || !source.exists();
+                        let needs_remote_ow =
+                            is_remote_dest_ow || operation.source_is_remote(&source);
                         if needs_remote_ow {
-                            if let Some((vfs_manager, vfs_current_path)) =
-                                self.find_remote_file_manager_info()
+                            if let Some((vfs_manager, vfs_current_path, vfs_source)) =
+                                self.remote_batch_source(&operation, &source)
                             {
                                 // Resolve final_dest using VFS stat to distinguish file vs directory
                                 let final_dest = if is_remote_dest_ow {
@@ -70,12 +71,12 @@ impl App {
                                         operation.destination_is_directory(),
                                     )
                                 };
-                                let src_name = source_name(&source);
-                                let vfs_source = vfs_current_path.join(&src_name);
 
                                 let is_move = operation.operation_type == BatchOperationType::Move;
 
-                                let request = if is_remote_dest_ow && source.exists() {
+                                let request = if is_remote_dest_ow
+                                    && !operation.source_is_remote(&source)
+                                {
                                     // Local source → remote destination: upload with overwrite
                                     let vfs_dest = Self::vfs_path_with_connection(
                                         &vfs_current_path,
@@ -316,17 +317,11 @@ impl App {
                     // directory for subsequent files in the batch. Instead, run the
                     // operation for this single file using new_dest directly
                     // (same approach as the Overwrite handler).
-                    let needs_remote_rn = is_remote_dest || !source.exists();
+                    let needs_remote_rn = is_remote_dest || operation.source_is_remote(&source);
                     if needs_remote_rn {
-                        if let Some((vfs_manager, vfs_current_path)) =
-                            self.find_remote_file_manager_info()
+                        if let Some((vfs_manager, vfs_current_path, vfs_source)) =
+                            self.remote_batch_source(&operation, &source)
                         {
-                            let source_name = source
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let vfs_source = vfs_current_path.join(&source_name);
-
                             let is_move = operation.operation_type == BatchOperationType::Move;
 
                             let request = if is_remote_dest {

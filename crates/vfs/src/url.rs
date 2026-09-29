@@ -14,6 +14,9 @@ use crate::types::{VfsPath, VfsProtocol};
 /// - `ftp://host/path` - FTP
 /// - `smb://server/share/path` - SMB/CIFS
 /// - `nfs://server/export/path` - NFS
+/// - `archive://<container>!<inner>` - a path inside an archive file, e.g.
+///   `archive:///home/x/a.zip!/docs`; `<container>` is any URL above with
+///   `!` and `%` percent-encoded, a missing `!<inner>` means the archive root
 pub fn parse_vfs_url(url: &str) -> VfsResult<VfsPath> {
     let url = url.trim();
 
@@ -47,6 +50,10 @@ pub fn parse_vfs_url(url: &str) -> VfsResult<VfsPath> {
             return Ok(VfsPath::local(path));
         }
         return Ok(VfsPath::local(PathBuf::from(url)));
+    }
+
+    if let Some(rest) = strip_archive_scheme(url) {
+        return parse_archive_url(rest);
     }
 
     // Parse URL with scheme
@@ -103,6 +110,68 @@ pub fn parse_vfs_url(url: &str) -> VfsResult<VfsPath> {
     Ok(vfs_path)
 }
 
+/// The part after `archive://`, if `url` has that scheme.
+fn strip_archive_scheme(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    (VfsProtocol::from_scheme(scheme) == Some(VfsProtocol::Archive)).then_some(rest)
+}
+
+/// Parse `<container>!<inner>`, the part of an archive URL after the scheme.
+/// The inner path is taken verbatim: only the container part is encoded.
+fn parse_archive_url(rest: &str) -> VfsResult<VfsPath> {
+    let (container, inner) = rest.split_once('!').unwrap_or((rest, "/"));
+    let container = decode_archive_container(container)?;
+    if container.is_empty() {
+        return Err(VfsError::InvalidUrl(
+            "Archive URL without an archive file".to_string(),
+        ));
+    }
+    let container = parse_vfs_url(&container)?;
+    if container.file_name().is_none() {
+        return Err(VfsError::InvalidUrl(format!(
+            "Archive container is not a file: {container}"
+        )));
+    }
+    Ok(VfsPath::archive(container, inner))
+}
+
+/// Percent-encode the two characters that would make an archive URL's
+/// container part ambiguous: `!` ends it, `%` starts an escape.
+pub(crate) fn encode_archive_container(container: &str) -> String {
+    let mut out = String::with_capacity(container.len());
+    for c in container.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '!' => out.push_str("%21"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Reverse [`encode_archive_container`].
+fn decode_archive_container(container: &str) -> VfsResult<String> {
+    let mut out = String::with_capacity(container.len());
+    let mut rest = container;
+    while let Some(pos) = rest.find('%') {
+        out.push_str(&rest[..pos]);
+        let escape = rest.get(pos..pos + 3);
+        match escape {
+            Some("%25") => out.push('%'),
+            Some("%21") => out.push('!'),
+            _ => {
+                return Err(VfsError::InvalidUrl(format!(
+                    "Unexpected escape in archive container: {}",
+                    escape.unwrap_or(&rest[pos..])
+                )))
+            }
+        }
+        rest = &rest[pos + 3..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// Check if a string looks like a VFS URL (vs plain local path).
 pub fn is_vfs_url(s: &str) -> bool {
     let s = s.trim();
@@ -137,6 +206,14 @@ impl UrlComponents {
             return Some(Self {
                 protocol: VfsProtocol::Local,
                 display_host: String::new(),
+                display_path: vfs_path.path.display().to_string(),
+            });
+        }
+
+        if let Some(container) = vfs_path.container() {
+            return Some(Self {
+                protocol: VfsProtocol::Archive,
+                display_host: container.to_url_string(),
                 display_path: vfs_path.path.display().to_string(),
             });
         }
@@ -281,5 +358,104 @@ mod tests {
         assert!(path.connection_key().contains("alice"));
         assert!(!path.log_safe_key().contains("alice"));
         assert_eq!(path.log_safe_key(), "sftp://***@host1:22");
+    }
+
+    #[test]
+    fn archive_url_names_the_container_and_the_inner_path() {
+        let path = parse_vfs_url("archive:///home/x/a.zip!/docs/readme.md").unwrap();
+        assert!(path.is_archive());
+        assert!(path.is_remote());
+        assert_eq!(path.container(), Some(&VfsPath::local("/home/x/a.zip")));
+        assert_eq!(path.path, PathBuf::from("/docs/readme.md"));
+        assert_eq!(path.host, None);
+        assert_eq!(
+            path.to_url_string(),
+            "archive:///home/x/a.zip!/docs/readme.md"
+        );
+    }
+
+    #[test]
+    fn archive_url_without_inner_path_is_the_archive_root() {
+        let path = parse_vfs_url("archive:///a.tar.gz").unwrap();
+        assert_eq!(path.path, PathBuf::from("/"));
+        assert_eq!(path.to_url_string(), "archive:///a.tar.gz!/");
+        assert_eq!(parse_vfs_url("archive:///a.tar.gz!").unwrap(), path);
+    }
+
+    #[test]
+    fn archive_url_round_trips_bang_and_percent_in_names() {
+        let container = VfsPath::local("/tmp/wow!50%.zip");
+        let path = VfsPath::archive(container, "/a!b/100%");
+        let url = path.to_url_string();
+        assert_eq!(url, "archive:///tmp/wow%2150%25.zip!/a!b/100%");
+        assert_eq!(parse_vfs_url(&url).unwrap(), path);
+    }
+
+    #[test]
+    fn archive_url_on_a_remote_host() {
+        let url = "archive://sftp://user@host:2222/srv/a.zip!/etc";
+        let path = parse_vfs_url(url).unwrap();
+        let container = path.container().unwrap();
+        assert_eq!(container.protocol, VfsProtocol::Sftp);
+        assert_eq!(container.username.as_deref(), Some("user"));
+        assert_eq!(container.path, PathBuf::from("/srv/a.zip"));
+        assert_eq!(path.to_url_string(), url);
+        assert!(is_vfs_url(url));
+    }
+
+    #[test]
+    fn archive_inside_an_archive_round_trips() {
+        let outer = VfsPath::archive(VfsPath::local("/a.zip"), "/lib/b.tar");
+        let inner = VfsPath::archive(outer, "/src");
+        let url = inner.to_url_string();
+        assert_eq!(url, "archive://archive:///a.zip%21/lib/b.tar!/src");
+        assert_eq!(parse_vfs_url(&url).unwrap(), inner);
+    }
+
+    #[test]
+    fn archive_url_rejects_a_missing_or_bad_container() {
+        assert!(parse_vfs_url("archive://!/x").is_err());
+        assert!(parse_vfs_url("archive:///").is_err());
+        assert!(parse_vfs_url("archive:///a%2.zip!/").is_err());
+        assert!(parse_vfs_url("archive:///a%41.zip!/").is_err());
+    }
+
+    #[test]
+    fn archive_path_navigation_stays_inside_the_archive() {
+        let root = VfsPath::archive(VfsPath::local("/x/a.zip"), "docs");
+        assert_eq!(root.path, PathBuf::from("/docs"));
+
+        let file = root.join("readme.md");
+        assert_eq!(file.container(), root.container());
+        assert_eq!(file.parent(), Some(root.clone()));
+
+        let top = root.parent().unwrap();
+        assert_eq!(top.path, PathBuf::from("/"));
+        assert_eq!(top.parent(), None);
+        assert_eq!(top.container(), Some(&VfsPath::local("/x/a.zip")));
+    }
+
+    #[test]
+    fn archive_connection_key_is_per_archive_file() {
+        let a = VfsPath::local("/x/a.zip");
+        let in_a = VfsPath::archive(a.clone(), "/one");
+        let elsewhere_in_a = VfsPath::archive(a, "/two/three");
+        let in_b = VfsPath::archive(VfsPath::local("/x/b.zip"), "/one");
+
+        assert_eq!(in_a.connection_key(), elsewhere_in_a.connection_key());
+        assert_ne!(in_a.connection_key(), in_b.connection_key());
+        assert_ne!(
+            in_a.connection_key(),
+            VfsPath::local("/x/a.zip").connection_key()
+        );
+    }
+
+    #[test]
+    fn archive_log_safe_key_redacts_the_container_username() {
+        let container =
+            VfsPath::remote(VfsProtocol::Sftp, "host1", "/srv/a.zip").with_username("alice");
+        let path = VfsPath::archive(container, "/");
+        assert!(path.connection_key().contains("alice"));
+        assert_eq!(path.log_safe_key(), "archive:sftp://***@host1:22/a.zip");
     }
 }

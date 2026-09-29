@@ -23,6 +23,8 @@ pub enum OperationType {
     MoveDownload,
     /// Delete file(s)
     Delete,
+    /// Pack files into a new archive
+    Pack,
     /// Background command (.bg.) — ⚙ icon
     CommandBackground,
     /// Background command with result modal (.report.) — 📋 icon

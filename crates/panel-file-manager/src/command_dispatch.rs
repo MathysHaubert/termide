@@ -27,6 +27,7 @@ pub(crate) fn build_fm_hotkey_table(config: &Config) -> HotkeyTable {
     t.insert("create_file", &kb.create_file);
     t.insert("delete", &kb.delete);
     t.insert("info", &kb.info);
+    t.insert("pack", &kb.pack);
 
     // Search
     t.insert("search", &kb.search);
@@ -69,6 +70,15 @@ impl FileManager {
 
         let mut events = Vec::new();
 
+        // Say so up front rather than let the operation fail half-way (a
+        // move would extract and then fail to delete the source). A modal,
+        // because the status bar keeps the file info over an info message.
+        if self.vfs.current_path().is_archive() && command.modifies_directory() {
+            let t = termide_i18n::t();
+            self.show_info_modal(t.modal_error_title(), t.fm_archive_read_only());
+            return events;
+        }
+
         match command {
             // Navigation
             FmCommand::MoveUp => self.move_up(),
@@ -97,6 +107,7 @@ impl FileManager {
                 // navigate_up returns None if already at root - don't refresh in that case
                 if self.at_local_drive_root() {
                     events.push(PanelEvent::OpenDirectorySwitcher);
+                } else if self.leave_archive() {
                 } else if let Some(dir_name) = self.vfs.navigate_up() {
                     self.navigation.save_for_going_up(dir_name);
                     // Sync local path with VfsState
@@ -227,6 +238,7 @@ impl FileManager {
                     self.modal_request = Some((action, ActiveModal::Input(Box::new(modal))));
                 }
             }
+            FmCommand::Pack => self.request_pack(),
             FmCommand::MoveFiles => {
                 let paths = self.get_selected_paths();
                 if !paths.is_empty() {

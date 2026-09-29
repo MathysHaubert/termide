@@ -193,6 +193,7 @@ pub fn enumerate_bindings(config: &Config) -> Vec<(BindingLocation, ParsedKeyBin
     push(&mut out, "file_manager", "create_file", &f.create_file);
     push(&mut out, "file_manager", "delete", &f.delete);
     push(&mut out, "file_manager", "info", &f.info);
+    push(&mut out, "file_manager", "pack", &f.pack);
     push(&mut out, "file_manager", "search", &f.search);
     push(
         &mut out,

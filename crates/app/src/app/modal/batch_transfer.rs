@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use super::super::App;
 use super::batch_handler::{make_copy_or_move_request, source_name};
-use crate::state::{ActiveModal, BatchOperation, BatchOperationType, PendingAction};
+use crate::state::{
+    ActiveModal, BatchOperation, BatchOperationType, PendingAction, SourceLocation,
+};
 use crate::PanelExt;
 use termide_file_ops::{OperationPath, OperationRequest};
 use termide_modal::ConflictModal;
@@ -39,6 +41,24 @@ impl App {
         ))
     }
 
+    /// Where the entries selected in the active panel live.
+    fn active_panel_source_location(&self) -> SourceLocation {
+        let Some(fm) = self.layout_manager.active_panel().and_then(|p| {
+            p.as_any()
+                .downcast_ref::<termide_panel_file_manager::FileManager>()
+        }) else {
+            return SourceLocation::Unknown;
+        };
+        if fm.is_remote() {
+            SourceLocation::Vfs {
+                manager: fm.vfs_state().manager_arc(),
+                directory: fm.vfs_state().current_path().clone(),
+            }
+        } else {
+            SourceLocation::Local
+        }
+    }
+
     /// Parse a VFS URL, logging and setting error on failure.
     fn parse_remote_url(&mut self, remote_url: &str) -> Option<VfsPath> {
         match termide_vfs::parse_vfs_url(remote_url) {
@@ -59,6 +79,15 @@ impl App {
         target_directory: Option<PathBuf>,
         value: Box<dyn std::any::Any>,
     ) -> Result<()> {
+        // A typed destination answers the copy/move prompt of the active
+        // panel, the one the sources were selected in. A bare confirmation
+        // answers a paste, which runs in the destination panel instead.
+        let source_location = if value.is::<String>() {
+            self.active_panel_source_location()
+        } else {
+            SourceLocation::Unknown
+        };
+
         // Extract destination string first to check if it's a remote URL
         let destination_str: Option<String> = if let Some(confirmed) = value.downcast_ref::<bool>()
         {
@@ -132,7 +161,8 @@ impl App {
 
         // Create and start batch operation
         let batch_op = BatchOperation::new(operation_type, sources, absolute_destination)
-            .with_destination_directory(destination_is_directory);
+            .with_destination_directory(destination_is_directory)
+            .with_source_location(source_location);
 
         self.process_batch_operation(batch_op);
         Ok(())

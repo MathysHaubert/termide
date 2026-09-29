@@ -337,6 +337,10 @@ impl HelpGenerator {
                 description: t.help_desc_show_hover().to_string(),
             },
             HelpEntry {
+                keys: Self::format_keys(&kb.pack),
+                description: t.help_desc_pack().to_string(),
+            },
+            HelpEntry {
                 keys: Self::format_keys(&kb.search),
                 description: t.help_desc_search().to_string(),
             },

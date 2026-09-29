@@ -293,6 +293,18 @@ pub trait Translation: Send + Sync {
     // File operation status
     fn status_file_created(&self, name: &str) -> String;
     fn status_dir_created(&self, name: &str) -> String;
+    fn fm_pack_prompt(&self, name: &str) -> String;
+    fn fm_pack_prompt_multiple(&self, count: usize) -> String;
+    fn fm_pack_unknown_format(&self, name: &str) -> String;
+    fn fm_pack_exists(&self, name: &str) -> String;
+    fn fm_archive_password_prompt(&self, name: &str) -> String;
+    /// Re-asks after the archive rejected the password.
+    fn fm_archive_password_wrong(&self, name: &str) -> String;
+    fn status_vfs_connecting(&self, host: &str) -> String;
+    /// Status while an archive's table of contents is read.
+    fn status_vfs_opening(&self, name: &str) -> String;
+    /// "3 items": the source of an operation over several entries.
+    fn status_item_count(&self, count: usize) -> String;
     fn status_file_saved(&self, name: &str) -> String;
     fn status_error_save(&self, error: &str) -> String;
     fn status_file_reloaded(&self) -> &str;
@@ -1132,6 +1144,18 @@ pub trait Translation: Send + Sync {
     // Modal titles
     fn modal_confirm_title(&self) -> &str;
     fn modal_error_title(&self) -> &str;
+    /// Status shown when a command would change a browsed archive.
+    fn fm_archive_read_only(&self) -> &str;
+    fn help_desc_pack(&self) -> &str;
+    fn op_type_pack(&self) -> &str;
+    fn modal_pack_title(&self) -> &str;
+    /// Shown when packing is asked for in a remote or archive panel.
+    fn fm_pack_local_only(&self) -> &str;
+    fn modal_archive_password_title(&self) -> &str;
+    fn status_vfs_resolving_link(&self) -> &str;
+    fn status_vfs_loading(&self) -> &str;
+    fn status_vfs_connected(&self) -> &str;
+    fn status_vfs_cancelled(&self) -> &str;
 
     // Git panel strings
     fn git_no_repo(&self) -> &str;

@@ -83,6 +83,11 @@ allow = [
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
+    # `libbz2-rs-sys` (pure-Rust bzip2, behind `bzip2` ← termide-vfs
+    # archive support) keeps the original libbzip2 license: BSD-style,
+    # notice-preserving, no copyleft — the same obligations as the
+    # BSD-3-Clause entry above.
+    "bzip2-1.0.6",
     "MPL-2.0",
     "CC0-1.0",
     "0BSD",

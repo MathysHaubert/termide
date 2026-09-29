@@ -49,6 +49,8 @@ pub enum FmCommand {
     EditFile,
     ViewFile,
     OpenExternal,
+    /// Pack the selection into a new archive.
+    Pack,
 
     // Search
     Search,
@@ -75,6 +77,20 @@ pub enum FmCommand {
 }
 
 impl FmCommand {
+    /// Whether the command changes the entries of the directory it runs in,
+    /// which a read-only location (an archive) refuses.
+    pub fn modifies_directory(&self) -> bool {
+        matches!(
+            self,
+            Self::NewFile
+                | Self::NewDirectory
+                | Self::DeleteFiles
+                | Self::MoveFiles
+                | Self::RenameFile
+                | Self::SearchReplace
+        )
+    }
+
     /// Parse a KeyEvent into an FmCommand.
     ///
     /// Configurable actions are resolved via HotkeyTable.
@@ -116,6 +132,9 @@ impl FmCommand {
         }
         if hotkeys.matches("info", &key) {
             return Self::ShowFileInfo;
+        }
+        if hotkeys.matches("pack", &key) {
+            return Self::Pack;
         }
         if hotkeys.matches("search", &key) {
             return Self::Search;

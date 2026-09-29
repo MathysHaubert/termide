@@ -133,6 +133,75 @@ operation fails and the panel shows a recovery dialog with three choices:
 directory), or **Close panel**. Pressing `Esc` dismisses the dialog and
 leaves the panel on its last listing. The panel never loops on the error.
 
+## Archives
+
+Archive files open in the file manager like directories: `Enter` on
+one lists its contents, and `..` (or `Backspace`) at its root returns
+to the directory holding it, with the cursor back on the archive.
+`F3`, `F4` and `O` still treat the archive as a file.
+
+| Format | Names |
+|--------|-------|
+| ZIP    | `.zip`, `.jar`, `.war`, `.apk`, `.whl` |
+| tar    | `.tar`, `.tar.gz` / `.tgz`, `.tar.bz2` / `.tbz2`, `.tar.xz` / `.txz`, `.tar.zst` / `.tzst` |
+
+The format is detected from the file's content; the name only decides
+which files `Enter` opens this way. Opening reads the archive's table
+of contents once — for a large compressed tar that takes a pass over
+the whole file, and `Esc` cancels it. If the archive changes on disk
+while it is open, the next access reads it again.
+
+An archive in a remote panel or inside another archive opens the same
+way: it is first copied whole into a temporary directory (the status
+line shows `Opening …` meanwhile), and the copy is deleted when the
+archive is left. Changes to the remote file while it is open are not
+noticed.
+
+An encrypted ZIP (ZipCrypto or AES) asks for its password when it is
+opened, and again after a wrong one. The password is checked by
+decrypting the smallest encrypted entry and is kept only while the
+archive stays open.
+
+ZIP names are read as UTF-8 whenever they are valid UTF-8 (macOS writes
+them so without saying). Older archives from Windows store names in the
+system's code page; one whose names look like Cyrillic in CP866 is read
+as CP866, anything else as CP437, the encoding the ZIP format names.
+
+Archives are **read-only**. Opening a file from one works as for a
+remote file (a temporary copy), and copying with `C` / `F5` to a
+local panel extracts the selected files and directories, with the
+usual progress, pause and cancel in the
+[Operations panel](operations.md). Creating, deleting, moving and
+renaming inside an archive are refused with a notice.
+
+Extraction never writes outside the destination: entries named with
+`..` or an absolute path are not shown, a symbolic link is created only
+when its target stays inside the extracted tree (and only after all
+files are written), and an entry that unpacks to more than its declared
+size fails instead of filling the disk.
+
+The URL of a location inside an archive is
+`archive://<archive file>!<path inside>`, e.g.
+`archive:///home/nvn/src.tar.gz!/docs`; it works in `Go to path` and in
+saved projects like any other VFS URL.
+
+### Packing
+
+`P` packs the selected files and directories (or the entry under the
+cursor) into a new archive. The prompt suggests `<name>.zip` next to
+the selection and lists the other formats in its dropdown; the name's
+suffix picks the format — `.zip`, `.tar`, `.tar.gz`, `.tar.bz2`,
+`.tar.xz` or `.tar.zst`. A relative path is taken from the selection's
+directory, and a directory gets an archive named after the selection
+inside it.
+
+Packing runs in the [Operations panel](operations.md) with progress,
+pause and cancel. Symbolic links are stored as links, not followed;
+permissions and modification times are kept. The archive is written
+to a temporary file and appears under its name only when complete, so
+a cancelled or failed run leaves nothing behind, and an existing file
+is never overwritten. Only local files can be packed.
+
 ## Limitations / known gaps
 
 - No `smb://` / `nfs://` provider yet — only URL parsing.

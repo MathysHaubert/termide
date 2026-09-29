@@ -223,6 +223,22 @@ fn is_source_file(filename: &str) -> bool {
         || filename.eq_ignore_ascii_case(".env")
 }
 
+/// Archive suffixes the pack prompt offers, the default first.
+const PACK_EXTENSIONS: [&str; 5] = [".zip", ".tar.gz", ".tar.zst", ".tar.xz", ".tar.bz2"];
+
+/// The archive name for packing `path` alone: a directory keeps its name,
+/// a file drops its last extension (`report.pdf` → `report`).
+fn archive_stem(path: &std::path::Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    if path.is_dir() {
+        return name.into_owned();
+    }
+    match path.file_stem().map(|s| s.to_string_lossy()) {
+        Some(stem) if !stem.is_empty() => stem.into_owned(),
+        _ => name.into_owned(),
+    }
+}
+
 /// Validate that a user-provided file/directory name does not escape the parent directory.
 /// Rejects names containing `..`, absolute paths, and path separators.
 fn validate_entry_name(name: &str) -> Result<()> {
@@ -271,6 +287,9 @@ impl FileManager {
             if self.at_local_drive_root() {
                 return Some(PanelEvent::OpenDirectorySwitcher);
             }
+            if self.leave_archive() {
+                return None;
+            }
             if let Some(dir_name) = self.current_path.file_name() {
                 self.navigation
                     .save_for_going_up(dir_name.to_string_lossy().into_owned());
@@ -311,6 +330,19 @@ impl FileManager {
             return None;
         }
 
+        // An archive opens like a directory, wherever it lies; F3/F4/O still
+        // treat it as a file.
+        if termide_vfs::archive::ArchiveFormat::from_file_name(&entry_name).is_some() {
+            let archive = if self.vfs.is_remote() {
+                self.vfs.current_path().join(&entry_name)
+            } else {
+                termide_vfs::VfsPath::local(&full_path)
+            };
+            self.navigation.prepare_for_going_down();
+            self.vfs.enter_archive(archive);
+            return None;
+        }
+
         // File — check if remote
         if self.vfs.is_remote() {
             let vfs_path = self.vfs.current_path().join(&entry_name);
@@ -320,6 +352,62 @@ impl FileManager {
         // Re-borrow entry for determine_file_open_event
         let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::Default)
+    }
+
+    /// At the root of an archive, go back to the directory holding the
+    /// archive file with the cursor on it. False when not at an archive root.
+    pub(crate) fn leave_archive(&mut self) -> bool {
+        let Some(archive_name) = self.vfs.leave_archive() else {
+            return false;
+        };
+        self.navigation.save_for_going_up(archive_name);
+        self.current_path = self.vfs.path_buf();
+        let _ = self.load_directory();
+        true
+    }
+
+    /// Ask where to pack the selection (P). The archive defaults to the
+    /// selection's own directory; the dropdown offers each writable format.
+    pub(crate) fn request_pack(&mut self) {
+        let t = termide_i18n::t();
+        if self.vfs.is_remote() {
+            self.show_info_modal(t.modal_error_title(), t.fm_pack_local_only());
+            return;
+        }
+        let sources = self.get_selected_paths();
+        let (prompt, dir, stem) = match &sources[..] {
+            [] => return,
+            [single] => (
+                t.fm_pack_prompt(&single.file_name().unwrap_or_default().to_string_lossy()),
+                single.parent().unwrap_or(&self.current_path).to_path_buf(),
+                archive_stem(single),
+            ),
+            many => (
+                t.fm_pack_prompt_multiple(many.len()),
+                self.current_path.clone(),
+                self.current_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "archive".to_string()),
+            ),
+        };
+        let options: Vec<termide_modal::SelectOption> = PACK_EXTENSIONS
+            .iter()
+            .map(|ext| {
+                let value = dir.join(format!("{stem}{ext}")).display().to_string();
+                termide_modal::SelectOption {
+                    display: value.clone(),
+                    value,
+                }
+            })
+            .collect();
+        let default = options[0].value.clone();
+        let modal =
+            termide_modal::EditableSelectModal::new(t.modal_pack_title(), prompt, default, options);
+        self.modal_request = Some((
+            termide_state::PendingAction::PackPaths { sources },
+            termide_modal::ActiveModal::EditableSelect(Box::new(modal)),
+        ));
     }
 
     /// Open file for editing (F4)

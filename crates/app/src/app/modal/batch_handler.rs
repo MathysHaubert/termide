@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::super::App;
 use crate::state::{
     ActiveModal, BatchOperation, BatchOperationType, ConflictMode, PendingAction,
-    PendingRemoteDelete,
+    PendingRemoteDelete, SourceLocation,
 };
 use crate::PanelExt;
 use termide_file_ops::{OperationPath, OperationRequest};
@@ -213,13 +213,7 @@ impl App {
         base: &VfsPath,
         path: PathBuf,
     ) -> VfsPath {
-        VfsPath {
-            protocol: base.protocol,
-            host: base.host.clone(),
-            port: base.port,
-            username: base.username.clone(),
-            path,
-        }
+        base.with_path(path)
     }
 
     /// Find a remote file manager panel (searches all panels, not just active).
@@ -248,6 +242,29 @@ impl App {
         None
     }
 
+    /// The VFS side of a batch item read through the VFS: the manager, the
+    /// connection base (also used for a remote destination) and the VFS path
+    /// of `source`. A recorded location is authoritative; an unrecorded one
+    /// falls back to whichever panel shows a remote location.
+    pub(in crate::app::modal) fn remote_batch_source(
+        &self,
+        operation: &BatchOperation,
+        source: &Path,
+    ) -> Option<(std::sync::Arc<termide_vfs::VfsManager>, VfsPath, VfsPath)> {
+        if let SourceLocation::Vfs { manager, directory } = &operation.source_location {
+            // Sources are full paths on that location, so an entry from an
+            // expanded subdirectory keeps its own directory.
+            return Some((
+                manager.clone(),
+                directory.clone(),
+                directory.with_path(source),
+            ));
+        }
+        let (manager, directory) = self.find_remote_file_manager_info()?;
+        let vfs_source = directory.join(source_name(source));
+        Some((manager, directory, vfs_source))
+    }
+
     /// Handle batch file operation (copy/move)
     pub(in crate::app) fn process_batch_operation(&mut self, mut operation: BatchOperation) {
         // Show progress modal for:
@@ -263,7 +280,7 @@ impl App {
         let is_remote_dest_check = termide_vfs::is_vfs_url(&dest_str_check);
         let source_is_local = operation
             .current_source()
-            .map(|p| p.exists())
+            .map(|p| !operation.source_is_remote(p))
             .unwrap_or(false);
         let is_remote_operation = is_remote_dest_check || !source_is_local;
 
@@ -487,16 +504,11 @@ impl App {
         }
 
         // Execute operation - use remote path only when source or destination is actually remote.
-        // source.exists() is false for server-side paths (they don't exist locally).
-        let needs_remote = is_remote_dest || !source.exists();
+        let needs_remote = is_remote_dest || operation.source_is_remote(&source);
         if needs_remote {
-            if let Some((vfs_manager, vfs_current_path)) = self.find_remote_file_manager_info() {
-                let source_name = source
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let vfs_source = vfs_current_path.join(&source_name);
-
+            if let Some((vfs_manager, vfs_current_path, vfs_source)) =
+                self.remote_batch_source(&operation, &source)
+            {
                 let is_move = operation.operation_type == BatchOperationType::Move;
 
                 let request = if is_remote_dest {

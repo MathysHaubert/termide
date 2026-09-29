@@ -16,6 +16,7 @@
 //! - `ftp://host/path` - FTP
 //! - `smb://server/share/path` - SMB/CIFS
 //! - `nfs://server/export/path` - NFS (via FUSE)
+//! - `archive:///local/a.zip!/inner/path` - inside a zip or tar archive (read-only)
 //! - `/local/path` - Local filesystem
 //!
 //! # Example
@@ -56,6 +57,9 @@ pub mod smb;
 
 #[cfg(feature = "nfs")]
 pub mod fuse_mount;
+
+#[cfg(feature = "archive")]
+pub mod archive;
 
 // Re-exports for convenience
 pub use cache::DirCache;
@@ -150,7 +154,12 @@ impl VfsManager {
     /// Spawn a background thread that builds a provider, connects it, and on
     /// success stores it under `key`. Shared by every remote `connect_*`
     /// method — only the provider constructor differs.
-    #[cfg(any(feature = "sftp", feature = "ftp", feature = "smb"))]
+    #[cfg(any(
+        feature = "sftp",
+        feature = "ftp",
+        feature = "smb",
+        feature = "archive"
+    ))]
     fn spawn_connect<P, F>(
         &self,
         options: ConnectOptions,
@@ -292,6 +301,49 @@ impl VfsManager {
     pub fn connect_smb(&self, _path: &VfsPath, _options: ConnectOptions) -> VfsOperation<()> {
         VfsOperation::error(VfsError::NotSupported(
             "SMB support not compiled. Enable the 'smb' feature.".to_string(),
+        ))
+    }
+
+    /// Open an archive: read its table of contents on a background thread.
+    /// An archive that is not a local file (on a connected remote host, or
+    /// inside an open archive) is first copied to a temporary directory
+    /// through its own provider; the copy is removed with the archive's
+    /// provider.
+    #[cfg(feature = "archive")]
+    pub fn connect_archive(&self, path: &VfsPath, options: ConnectOptions) -> VfsOperation<()> {
+        use crate::archive::ArchiveProvider;
+
+        let Some(container) = path.container().cloned() else {
+            return VfsOperation::error(VfsError::InvalidPath(
+                "Expected an archive path".to_string(),
+            ));
+        };
+        if container.is_local() {
+            return self.spawn_connect(options, path, move || ArchiveProvider::new(container));
+        }
+        let dir = match tempfile::Builder::new()
+            .prefix("termide-archive-")
+            .tempdir()
+        {
+            Ok(dir) => dir,
+            Err(e) => return VfsOperation::error(e.into()),
+        };
+        let name = container
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| "archive".into());
+        let copy = dir.path().join(name);
+        let fetch = self.download(&container, &copy);
+        self.spawn_connect(options, path, move || {
+            ArchiveProvider::from_copy(container, fetch, dir, copy)
+        })
+    }
+
+    /// Open an archive (stub when the archive feature is disabled).
+    #[cfg(not(feature = "archive"))]
+    pub fn connect_archive(&self, _path: &VfsPath, _options: ConnectOptions) -> VfsOperation<()> {
+        VfsOperation::error(VfsError::NotSupported(
+            "Archive support not compiled. Enable the 'archive' feature.".to_string(),
         ))
     }
 

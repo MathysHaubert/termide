@@ -134,6 +134,7 @@ pub struct FileManagerKeybindings {
     pub create_file: Option<KeyBinding>,
     pub delete: Option<KeyBinding>,
     pub info: Option<KeyBinding>,
+    pub pack: Option<KeyBinding>,
 
     // Search
     pub search: Option<KeyBinding>,
@@ -610,6 +611,7 @@ impl FileManagerKeybindings {
         if self.info.is_none() {
             self.info = Some(KeyBinding::Multiple(vec!["F12".into(), "Space".into()]));
         }
+        set_default!(pack, "P");
 
         // Search
         set_default!(search, "Ctrl+F");

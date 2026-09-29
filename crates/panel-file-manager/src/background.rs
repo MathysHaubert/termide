@@ -23,7 +23,9 @@ impl FileManager {
 
         // Check for VFS connection timeout (cancel stuck connections)
         if let Some((status, Some(secs))) = self.vfs.connection_status_with_elapsed() {
-            if secs >= self.cached_vfs_timeout_secs {
+            // Opening an archive is local work that can legitimately take a
+            // while for a big compressed tar; Esc still cancels it.
+            if secs >= self.cached_vfs_timeout_secs && !self.vfs.current_path().is_archive() {
                 log::warn!("VFS connection timeout after {}s", secs);
                 if self.vfs.cancel_pending().is_some() {
                     self.current_path = self.vfs.path_buf();
@@ -64,7 +66,10 @@ impl FileManager {
                     // user reconnects/refreshes explicitly.
                     self.current_path = self.vfs.path_buf();
                     if !self.is_stale {
-                        if self.vfs.is_remote() && e.is_connection_lost() {
+                        if e.is_archive_error() {
+                            let t = termide_i18n::t();
+                            self.show_info_modal(t.modal_error_title(), &format!("{}", e));
+                        } else if self.vfs.is_remote() && e.is_connection_lost() {
                             // Dead remote session — offer Reconnect / open local /
                             // close instead of a dead-end "OK".
                             self.show_connection_error_modal(&format!("{}", e));
@@ -117,6 +122,14 @@ impl FileManager {
                     }
                 }
             }
+        }
+
+        // An archive needs its password: ask for it.
+        if let Some((archive, wrong)) = self.vfs.take_password_request() {
+            self.request_archive_password(archive, wrong);
+            events.push(PanelEvent::ClearStatus);
+            events.push(PanelEvent::NeedsRedraw);
+            return events;
         }
 
         // A remote symlink resolved to a file — open it in the editor.

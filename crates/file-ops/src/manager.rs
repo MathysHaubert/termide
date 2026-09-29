@@ -18,7 +18,7 @@ use crate::types::{
 };
 use crate::worker::{
     ConflictContext, CrossProtocolWorker, DownloadWorker, LocalCopyWorker, LocalDeleteWorker,
-    OperationWorker, RemoteDeleteWorker, UploadWorker,
+    OperationWorker, PackWorker, RemoteDeleteWorker, UploadWorker,
 };
 
 /// Configuration for the operation manager.
@@ -372,6 +372,28 @@ impl OperationManager {
                     request.is_move,
                 )))
             }
+
+            OperationType::Pack => {
+                let sources: Vec<PathBuf> = request
+                    .sources
+                    .iter()
+                    .map(|p| match p {
+                        OperationPath::Local(path) => Ok(path.clone()),
+                        OperationPath::Remote(_) => Err(OperationError::Invalid(
+                            "Pack requires local sources".to_string(),
+                        )),
+                    })
+                    .collect::<Result<_, _>>()?;
+                let archive = match &request.destination {
+                    Some(OperationPath::Local(path)) => path.clone(),
+                    _ => {
+                        return Err(OperationError::Invalid(
+                            "Pack requires a local archive path".to_string(),
+                        ))
+                    }
+                };
+                Ok(Box::new(PackWorker::new(sources, archive)))
+            }
         }
     }
 
@@ -539,6 +561,7 @@ impl OperationManager {
                     OperationType::Delete => Some("Deleting".to_string()),
                     OperationType::Download => Some("Downloading".to_string()),
                     OperationType::Upload => Some("Uploading".to_string()),
+                    OperationType::Pack => Some("Packing".to_string()),
                 };
             }
         }

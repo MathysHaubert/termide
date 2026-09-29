@@ -14,6 +14,7 @@ mod ui;
 pub use ai_section::AiSection;
 pub use batch::{
     BatchOperation, BatchOperationType, ConflictMode, DirSizeResult, PauseState, RenamePattern,
+    SourceLocation,
 };
 pub use layout::{LayoutInfo, LayoutMode};
 pub use operations::{ActiveOperation, OperationProgress, OperationType, SpeedTracker};

@@ -345,7 +345,12 @@ impl FileManager {
     pub(crate) fn update_entries_from_vfs(&mut self, vfs_entries: Vec<VfsEntry>) {
         let previous_index = self.selected;
         let previous_scroll_offset = self.scroll_offset;
-        let current_name = self.entry_at(self.selected).map(|e| e.name.clone());
+        // After going up, the cursor lands on the directory (or archive) just
+        // left, as for local listings.
+        let current_name = self
+            .navigation
+            .take_previous_dir_name()
+            .or_else(|| self.entry_at(self.selected).map(|e| e.name.clone()));
 
         self.tree_entries.clear();
         self.selected = 0;
@@ -354,8 +359,9 @@ impl FileManager {
 
         let mut entries = Vec::new();
 
-        // Add ".." entry for parent directory navigation (unless at root)
-        if self.vfs.current_path().parent().is_some() {
+        // Add ".." entry for parent directory navigation (unless at root).
+        // An archive's root has one too: it leads out of the archive.
+        if self.vfs.current_path().parent().is_some() || self.vfs.at_archive_root() {
             entries.push(FileEntry {
                 name: "..".to_string(),
                 is_dir: true,

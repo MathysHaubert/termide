@@ -1,0 +1,147 @@
+//! Archive format detection.
+
+use std::fs::File;
+use std::io::{self, BufReader, Read};
+use std::path::Path;
+
+/// Compression wrapped around a tar stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TarCompression {
+    /// Plain `.tar`.
+    None,
+    /// `.tar.gz`, `.tgz`.
+    Gzip,
+    /// `.tar.bz2`, `.tbz2`.
+    Bzip2,
+    /// `.tar.xz`, `.txz`.
+    Xz,
+    /// `.tar.zst`, `.tzst`.
+    Zstd,
+}
+
+/// Archive formats the archive provider can browse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveFormat {
+    /// ZIP and the formats built on it (jar, apk, whl).
+    Zip,
+    /// A tar stream, possibly compressed.
+    Tar(TarCompression),
+}
+
+/// Name suffixes recognised as archives, longest first so `.tar.gz` wins
+/// over a hypothetical `.gz`.
+const SUFFIXES: &[(&str, ArchiveFormat)] = &[
+    (".tar.gz", ArchiveFormat::Tar(TarCompression::Gzip)),
+    (".tar.bz2", ArchiveFormat::Tar(TarCompression::Bzip2)),
+    (".tar.xz", ArchiveFormat::Tar(TarCompression::Xz)),
+    (".tar.zst", ArchiveFormat::Tar(TarCompression::Zstd)),
+    (".tbz2", ArchiveFormat::Tar(TarCompression::Bzip2)),
+    (".tzst", ArchiveFormat::Tar(TarCompression::Zstd)),
+    (".tgz", ArchiveFormat::Tar(TarCompression::Gzip)),
+    (".tbz", ArchiveFormat::Tar(TarCompression::Bzip2)),
+    (".txz", ArchiveFormat::Tar(TarCompression::Xz)),
+    (".tar", ArchiveFormat::Tar(TarCompression::None)),
+    (".zip", ArchiveFormat::Zip),
+    (".jar", ArchiveFormat::Zip),
+    (".war", ArchiveFormat::Zip),
+    (".apk", ArchiveFormat::Zip),
+    (".whl", ArchiveFormat::Zip),
+];
+
+impl ArchiveFormat {
+    /// Guess the format from a file name alone. Cheap enough to run on every
+    /// entry of a directory listing; [`ArchiveFormat::detect`] is the
+    /// authoritative check once the archive is opened.
+    pub fn from_file_name(name: &str) -> Option<Self> {
+        let lower = name.to_ascii_lowercase();
+        SUFFIXES
+            .iter()
+            .find(|(suffix, _)| lower.len() > suffix.len() && lower.ends_with(suffix))
+            .map(|&(_, format)| format)
+    }
+
+    /// Detect the format from the file's leading bytes, falling back to the
+    /// name for an old-style tar without the `ustar` magic.
+    pub fn detect(path: &Path) -> io::Result<Option<Self>> {
+        let mut head = [0u8; 512];
+        let len = read_up_to(&mut BufReader::new(File::open(path)?), &mut head)?;
+        let head = &head[..len];
+
+        let by_magic = if head.starts_with(b"PK\x03\x04")
+            || head.starts_with(b"PK\x05\x06")
+            || head.starts_with(b"PK\x07\x08")
+        {
+            Some(Self::Zip)
+        } else if head.starts_with(&[0x1f, 0x8b]) {
+            Some(Self::Tar(TarCompression::Gzip))
+        } else if head.starts_with(b"BZh") {
+            Some(Self::Tar(TarCompression::Bzip2))
+        } else if head.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+            Some(Self::Tar(TarCompression::Xz))
+        } else if head.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+            Some(Self::Tar(TarCompression::Zstd))
+        } else if head.get(257..262) == Some(b"ustar") {
+            Some(Self::Tar(TarCompression::None))
+        } else {
+            None
+        };
+
+        Ok(by_magic.or_else(|| {
+            let name = path.file_name()?.to_str()?;
+            (Self::from_file_name(name) == Some(Self::Tar(TarCompression::None)))
+                .then_some(Self::Tar(TarCompression::None))
+        }))
+    }
+}
+
+fn read_up_to(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_name_picks_the_longest_suffix() {
+        assert_eq!(
+            ArchiveFormat::from_file_name("src-1.0.TAR.GZ"),
+            Some(ArchiveFormat::Tar(TarCompression::Gzip))
+        );
+        assert_eq!(
+            ArchiveFormat::from_file_name("a.tar"),
+            Some(ArchiveFormat::Tar(TarCompression::None))
+        );
+        assert_eq!(
+            ArchiveFormat::from_file_name("app.jar"),
+            Some(ArchiveFormat::Zip)
+        );
+        assert_eq!(ArchiveFormat::from_file_name("notes.txt"), None);
+        assert_eq!(ArchiveFormat::from_file_name(".zip"), None);
+        assert_eq!(ArchiveFormat::from_file_name("log.gz"), None);
+    }
+
+    #[test]
+    fn detect_trusts_content_over_the_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let misnamed = dir.path().join("really-gzip.zip");
+        std::fs::write(&misnamed, [0x1f, 0x8b, 8, 0]).unwrap();
+        assert_eq!(
+            ArchiveFormat::detect(&misnamed).unwrap(),
+            Some(ArchiveFormat::Tar(TarCompression::Gzip))
+        );
+
+        let text = dir.path().join("notes.zip");
+        std::fs::write(&text, b"just text").unwrap();
+        assert_eq!(ArchiveFormat::detect(&text).unwrap(), None);
+    }
+}
