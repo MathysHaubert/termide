@@ -411,11 +411,86 @@ fn opening_something_that_is_not_an_archive_fails() {
 }
 
 #[test]
-fn an_archive_on_a_remote_host_is_refused_for_now() {
+fn a_remote_archive_is_only_read_from_a_local_copy() {
     let container = VfsPath::remote(crate::VfsProtocol::Sftp, "host", "/a.zip");
     let mut provider = ArchiveProvider::new(container);
     let result = provider.connect(ConnectOptions::default()).recv();
     assert!(matches!(result, Err(VfsError::NotSupported(_))));
+}
+
+#[test]
+fn a_local_copy_is_removed_with_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy_dir = tempfile::tempdir_in(dir.path()).unwrap();
+    let copy = copy_dir.path().join("remote.zip");
+    write_zip(&copy);
+    let copy_dir_path = copy_dir.path().to_path_buf();
+    let container = VfsPath::remote(crate::VfsProtocol::Sftp, "host", "/srv/remote.zip");
+
+    let mut provider = ArchiveProvider::from_copy(
+        container.clone(),
+        VfsOperation::ready(Ok(copy.clone())),
+        copy_dir,
+        copy,
+    );
+    provider.connect(ConnectOptions::default()).recv().unwrap();
+    let root = VfsPath::archive(container, "/");
+    let entries = provider.list_dir(&root).recv().unwrap();
+    assert_eq!(names(&entries), ["docs", "src"]);
+
+    drop(provider);
+    assert!(!copy_dir_path.exists());
+}
+
+#[test]
+fn a_failed_copy_fails_the_connection() {
+    let copy_dir = tempfile::tempdir().unwrap();
+    let copy = copy_dir.path().join("remote.zip");
+    let container = VfsPath::remote(crate::VfsProtocol::Sftp, "host", "/srv/remote.zip");
+    let mut provider = ArchiveProvider::from_copy(
+        container,
+        VfsOperation::error(VfsError::NotConnected),
+        copy_dir,
+        copy,
+    );
+    let result = provider.connect(ConnectOptions::default()).recv();
+    assert!(matches!(result, Err(VfsError::NotConnected)));
+}
+
+#[test]
+fn an_archive_inside_an_open_archive_opens_through_the_manager() {
+    let dir = tempfile::tempdir().unwrap();
+    let inner = dir.path().join("inner.zip");
+    write_zip(&inner);
+    let outer = dir.path().join("outer.tar.gz");
+    let mut builder = tar::Builder::new(Vec::new());
+    append_file(&mut builder, "lib/inner.zip", &fs::read(&inner).unwrap());
+    fs::write(
+        &outer,
+        compress(&builder.into_inner().unwrap(), TarCompression::Gzip),
+    )
+    .unwrap();
+
+    let manager = VfsManager::new();
+    let outer_root = at(&outer, "/");
+    manager
+        .connect_archive(&outer_root, ConnectOptions::default())
+        .recv()
+        .unwrap();
+    let nested_root = VfsPath::archive(at(&outer, "/lib/inner.zip"), "/");
+    manager
+        .connect_archive(&nested_root, ConnectOptions::default())
+        .recv()
+        .unwrap();
+
+    let entries = manager.list_dir(&nested_root).recv().unwrap();
+    assert_eq!(names(&entries), ["docs", "src"]);
+    let data = manager
+        .read_file(&nested_root.join("docs/readme.md"))
+        .recv()
+        .unwrap();
+    assert_eq!(data, README);
+    assert_ne!(nested_root.connection_key(), outer_root.connection_key());
 }
 
 #[test]

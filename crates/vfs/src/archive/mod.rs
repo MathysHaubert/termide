@@ -5,9 +5,9 @@
 //! the file: directly for zip, by streaming from the start for tar. Every
 //! mutating operation fails with [`VfsError::NotSupported`].
 //!
-//! Only archives on the local filesystem can be opened for now; an archive on
-//! a remote host or inside another archive is expressible as a [`VfsPath`]
-//! but refused at connect time.
+//! An archive on a remote host or inside another archive is read from a
+//! local copy the manager fetches on connect; the copy lives as long as the
+//! provider.
 
 mod extract;
 mod format;
@@ -21,7 +21,7 @@ pub use format::{ArchiveFormat, TarCompression};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use crate::error::{VfsError, VfsResult};
@@ -51,19 +51,62 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some((meta.len(), meta.modified().ok()))
 }
 
+/// Where the provider reads the archive file from.
+enum Source {
+    /// The container is a local file.
+    Local,
+    /// The container lives elsewhere and is read from a local copy. `fetch`
+    /// is the transfer producing it, awaited on connect; the directory holding
+    /// the copy is removed with the provider.
+    Copy {
+        fetch: Mutex<Option<VfsOperation<PathBuf>>>,
+        path: PathBuf,
+        _dir: tempfile::TempDir,
+    },
+}
+
 /// VFS provider for one archive file.
 pub struct ArchiveProvider {
     container: VfsPath,
+    source: Source,
     open: Option<Arc<OpenArchive>>,
 }
 
 impl ArchiveProvider {
-    /// A provider for the archive file `container`; nothing is read until
-    /// [`VfsProvider::connect`].
+    /// A provider for the local archive file `container`; nothing is read
+    /// until [`VfsProvider::connect`].
     pub fn new(container: VfsPath) -> Self {
         Self {
             container,
+            source: Source::Local,
             open: None,
+        }
+    }
+
+    /// A provider for `container` read from the local copy `path` inside
+    /// `dir`, which `fetch` is writing. Connecting waits for it.
+    pub fn from_copy(
+        container: VfsPath,
+        fetch: VfsOperation<PathBuf>,
+        dir: tempfile::TempDir,
+        path: PathBuf,
+    ) -> Self {
+        Self {
+            container,
+            source: Source::Copy {
+                fetch: Mutex::new(Some(fetch)),
+                path,
+                _dir: dir,
+            },
+            open: None,
+        }
+    }
+
+    /// The local file holding the archive.
+    fn local_path(&self) -> &Path {
+        match &self.source {
+            Source::Local => self.container.path(),
+            Source::Copy { path, .. } => path,
         }
     }
 
@@ -72,12 +115,21 @@ impl ArchiveProvider {
     }
 
     fn open_archive(&self) -> VfsResult<OpenArchive> {
-        if !self.container.is_local() {
-            return Err(VfsError::NotSupported(
-                "Only archives on the local filesystem can be opened".to_string(),
-            ));
+        match &self.source {
+            Source::Local if !self.container.is_local() => {
+                return Err(VfsError::NotSupported(
+                    "A non-local archive is opened from a local copy".to_string(),
+                ));
+            }
+            Source::Local => {}
+            Source::Copy { fetch, .. } => {
+                let pending = fetch.lock().ok().and_then(|mut f| f.take());
+                if let Some(fetch) = pending {
+                    fetch.recv()?;
+                }
+            }
         }
-        let path = self.container.path();
+        let path = self.local_path();
         let stamp = stamp(path).ok_or_else(|| VfsError::NotFound {
             path: path.to_path_buf(),
         })?;
@@ -124,7 +176,7 @@ impl VfsProvider for ArchiveProvider {
     fn connection_state(&self) -> ConnectionState {
         match &self.open {
             None => ConnectionState::Disconnected,
-            Some(open) if stamp(self.container.path()) == Some(open.stamp) => {
+            Some(open) if stamp(self.local_path()) == Some(open.stamp) => {
                 ConnectionState::Connected
             }
             Some(_) => {

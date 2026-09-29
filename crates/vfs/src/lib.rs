@@ -305,6 +305,10 @@ impl VfsManager {
     }
 
     /// Open an archive: read its table of contents on a background thread.
+    /// An archive that is not a local file (on a connected remote host, or
+    /// inside an open archive) is first copied to a temporary directory
+    /// through its own provider; the copy is removed with the archive's
+    /// provider.
     #[cfg(feature = "archive")]
     pub fn connect_archive(&self, path: &VfsPath, options: ConnectOptions) -> VfsOperation<()> {
         use crate::archive::ArchiveProvider;
@@ -314,7 +318,25 @@ impl VfsManager {
                 "Expected an archive path".to_string(),
             ));
         };
-        self.spawn_connect(options, path, move || ArchiveProvider::new(container))
+        if container.is_local() {
+            return self.spawn_connect(options, path, move || ArchiveProvider::new(container));
+        }
+        let dir = match tempfile::Builder::new()
+            .prefix("termide-archive-")
+            .tempdir()
+        {
+            Ok(dir) => dir,
+            Err(e) => return VfsOperation::error(e.into()),
+        };
+        let name = container
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| "archive".into());
+        let copy = dir.path().join(name);
+        let fetch = self.download(&container, &copy);
+        self.spawn_connect(options, path, move || {
+            ArchiveProvider::from_copy(container, fetch, dir, copy)
+        })
     }
 
     /// Open an archive (stub when the archive feature is disabled).
