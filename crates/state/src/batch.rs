@@ -1,6 +1,7 @@
 //! Batch file operation types.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Local};
@@ -121,6 +122,23 @@ pub enum PauseState {
     Paused,
 }
 
+/// Where the sources of a batch operation live.
+#[derive(Debug, Clone, Default)]
+pub enum SourceLocation {
+    /// Not recorded, as for a clipboard paste: a source that does not exist
+    /// locally is taken from the panel showing a remote location.
+    #[default]
+    Unknown,
+    /// The local filesystem.
+    Local,
+    /// A VFS location (a remote host or an archive); the sources are paths
+    /// on it, read through `manager`.
+    Vfs {
+        manager: Arc<termide_vfs::VfsManager>,
+        directory: termide_vfs::VfsPath,
+    },
+}
+
 /// Batch file operation with conflict support
 #[derive(Debug, Clone)]
 pub struct BatchOperation {
@@ -158,6 +176,8 @@ pub struct BatchOperation {
     pub cumulative_total_files: usize,
     /// Total bytes across all batch items (when known)
     pub cumulative_total_bytes: u64,
+    /// Where `sources` live.
+    pub source_location: SourceLocation,
 }
 
 impl BatchOperation {
@@ -185,6 +205,24 @@ impl BatchOperation {
             cumulative_bytes_completed: 0,
             cumulative_total_files: 0,
             cumulative_total_bytes: 0,
+            source_location: SourceLocation::Unknown,
+        }
+    }
+
+    /// Record where the sources live.
+    pub fn with_source_location(mut self, source_location: SourceLocation) -> Self {
+        self.source_location = source_location;
+        self
+    }
+
+    /// Whether `source` has to be read through the VFS. Only an unrecorded
+    /// location falls back to guessing from local existence, which misreads
+    /// a remote or archive path that also exists locally (`/etc`, `/usr`).
+    pub fn source_is_remote(&self, source: &Path) -> bool {
+        match self.source_location {
+            SourceLocation::Unknown => !source.exists(),
+            SourceLocation::Local => false,
+            SourceLocation::Vfs { .. } => true,
         }
     }
 
@@ -280,6 +318,35 @@ impl BatchOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path inside an archive or on a server can also exist locally
+    /// (`/etc` in a rootfs tarball); a recorded VFS location must win over
+    /// that, or the local directory would be copied instead.
+    #[test]
+    fn a_recorded_location_decides_where_a_source_is_read_from() {
+        let exists_locally = Path::new("/");
+        let missing_locally = Path::new("/definitely/not/here/42");
+        let op = |location| {
+            BatchOperation::new(BatchOperationType::Copy, vec![], PathBuf::from("/tmp"))
+                .with_source_location(location)
+        };
+
+        let vfs = op(SourceLocation::Vfs {
+            manager: Arc::new(termide_vfs::VfsManager::new()),
+            directory: termide_vfs::VfsPath::archive(
+                termide_vfs::VfsPath::local("/x/rootfs.tar"),
+                "/",
+            ),
+        });
+        assert!(vfs.source_is_remote(exists_locally));
+
+        let local = op(SourceLocation::Local);
+        assert!(!local.source_is_remote(missing_locally));
+
+        let unknown = op(SourceLocation::Unknown);
+        assert!(!unknown.source_is_remote(exists_locally));
+        assert!(unknown.source_is_remote(missing_locally));
+    }
 
     #[test]
     fn test_basic_replacement() {
