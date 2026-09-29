@@ -4,14 +4,15 @@ The file manager panel provides an intuitive interface for navigating the file s
 
 Remote filesystems (SFTP / FTP / FTPS) appear in the same panel as
 local paths — see [Remote Filesystems](vfs.md) for URL syntax and
-authentication setup.
+authentication setup. ZIP and tar archives open like read-only
+directories — see [Archives](vfs.md#archives).
 
 ## Navigation
 
 | Shortcut           | Action                                     |
 |-------------------|--------------------------------------------|
 | `↑` / `↓`         | Move cursor up/down                        |
-| `Enter`           | Enter directory, preview media, or open file |
+| `Enter`           | Enter directory or archive, preview media, or open file |
 | `Backspace`       | Go to parent directory                     |
 | `~`               | Go to home directory                       |
 | `PageUp` / `PageDown` | Scroll list by one page                |

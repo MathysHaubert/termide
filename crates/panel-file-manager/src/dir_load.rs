@@ -354,8 +354,9 @@ impl FileManager {
 
         let mut entries = Vec::new();
 
-        // Add ".." entry for parent directory navigation (unless at root)
-        if self.vfs.current_path().parent().is_some() {
+        // Add ".." entry for parent directory navigation (unless at root).
+        // An archive's root has one too: it leads out of the archive.
+        if self.vfs.current_path().parent().is_some() || self.vfs.at_archive_root() {
             entries.push(FileEntry {
                 name: "..".to_string(),
                 is_dir: true,

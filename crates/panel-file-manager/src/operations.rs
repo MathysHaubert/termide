@@ -271,6 +271,9 @@ impl FileManager {
             if self.at_local_drive_root() {
                 return Some(PanelEvent::OpenDirectorySwitcher);
             }
+            if self.leave_archive() {
+                return None;
+            }
             if let Some(dir_name) = self.current_path.file_name() {
                 self.navigation
                     .save_for_going_up(dir_name.to_string_lossy().into_owned());
@@ -317,9 +320,29 @@ impl FileManager {
             return Some(PanelEvent::OpenRemoteFile(vfs_path.to_url_string()));
         }
 
+        // A local archive opens like a directory; F3/F4/Shift+Enter still
+        // treat it as a file.
+        if termide_vfs::archive::ArchiveFormat::from_file_name(&entry_name).is_some() {
+            self.navigation.prepare_for_going_down();
+            self.vfs.enter_archive(&full_path);
+            return None;
+        }
+
         // Re-borrow entry for determine_file_open_event
         let entry = &self.entry_under_cursor()?.file_entry;
         determine_file_open_event(entry, &full_path, FileOpenMode::Default)
+    }
+
+    /// At the root of an archive, go back to the directory holding the
+    /// archive file with the cursor on it. False when not at an archive root.
+    pub(crate) fn leave_archive(&mut self) -> bool {
+        let Some(archive_name) = self.vfs.leave_archive() else {
+            return false;
+        };
+        self.navigation.save_for_going_up(archive_name);
+        self.current_path = self.vfs.path_buf();
+        let _ = self.load_directory();
+        true
     }
 
     /// Open file for editing (F4)

@@ -1132,6 +1132,8 @@ pub trait Translation: Send + Sync {
     // Modal titles
     fn modal_confirm_title(&self) -> &str;
     fn modal_error_title(&self) -> &str;
+    /// Status shown when a command would change a browsed archive.
+    fn fm_archive_read_only(&self) -> &str;
 
     // Git panel strings
     fn git_no_repo(&self) -> &str;

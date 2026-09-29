@@ -1083,6 +1083,78 @@ mod tests {
             .all(|p| !p.ends_with("__loading__")));
     }
 
+    fn wait_for_local_listing(fm: &mut FileManager) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !fm.check_async_reload() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listing never arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_vfs(fm: &mut FileManager) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while fm.vfs.has_pending_operation() {
+            assert!(std::time::Instant::now() < deadline, "VFS never answered");
+            fm.on_tick();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn names(fm: &FileManager) -> Vec<String> {
+        (0..fm.visible_count())
+            .filter_map(|i| fm.entry_at(i).map(|e| e.name.clone()))
+            .collect()
+    }
+
+    /// Enter on an archive browses it like a directory; `..` at its root
+    /// comes back with the cursor on the archive; nothing inside can be
+    /// changed.
+    #[test]
+    fn an_archive_opens_like_a_directory_and_is_read_only() {
+        use std::io::Write;
+        let temp_dir = TempDir::new().unwrap();
+        let archive = temp_dir.path().join("pack.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file("docs/readme.md", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"hi").unwrap();
+        zip.finish().unwrap();
+        std::fs::write(temp_dir.path().join("other.txt"), "x").unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+
+        fm.selected = fm.find_entry_index("pack.zip").unwrap();
+        assert!(fm.enter().is_none(), "an archive is not opened as a file");
+        wait_for_vfs(&mut fm);
+        assert!(fm.vfs.at_archive_root());
+        assert_eq!(names(&fm), ["..", "docs"]);
+
+        fm.execute_command(keyboard::FmCommand::DeleteFiles);
+        assert!(
+            matches!(
+                fm.modal_request.take(),
+                Some((PendingAction::VfsMessage, ActiveModal::InfoAction(_)))
+            ),
+            "a read-only notice, not a delete confirmation"
+        );
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        assert!(fm.enter().is_none());
+        assert!(fm.vfs.is_local());
+        wait_for_local_listing(&mut fm);
+        assert_eq!(fm.current_path, canonical_temp_path(&temp_dir));
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("pack.zip"),
+            "the cursor comes back to the archive"
+        );
+    }
+
     /// A scrollbar drag must not be undone by the next render: the panel pulls
     /// `scroll_offset` back toward `selected` while drawing, so the command has
     /// to move the cursor into the new viewport as wheel scrolling does.

@@ -5427,6 +5427,7 @@ dependencies = [
  "termide-walk",
  "unicode-segmentation",
  "unicode-width",
+ "zip",
 ]
 
 [[package]]

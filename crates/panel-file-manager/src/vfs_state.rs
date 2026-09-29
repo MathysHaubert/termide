@@ -218,10 +218,7 @@ impl VfsState {
                 self.previous_path = Some(self.current_path.clone());
             }
             // Need to connect first
-            self.connection_status = Some(format!(
-                "Connecting to {}...",
-                path.host.as_deref().unwrap_or("remote")
-            ));
+            self.connection_status = Some(connecting_status(&path));
             self.connection_started = Some(Instant::now());
             self.start_connect(path)?;
             return Ok(());
@@ -252,6 +249,39 @@ impl VfsState {
     /// Navigate into a subdirectory.
     pub fn navigate_down(&mut self, name: &str) {
         self.current_path = self.current_path.join(name);
+    }
+
+    /// Open the local archive file `archive` at its root. The table of
+    /// contents is read asynchronously; a failure returns to the current
+    /// directory.
+    pub fn enter_archive(&mut self, archive: &Path) {
+        self.previous_path = Some(self.current_path.clone());
+        self.current_path = VfsPath::archive(VfsPath::local(archive), "/");
+        self.start_list_dir();
+    }
+
+    /// Whether the panel shows the root of an archive, where going up leaves
+    /// the archive.
+    pub fn at_archive_root(&self) -> bool {
+        self.current_path.is_archive() && self.current_path.parent().is_none()
+    }
+
+    /// At an archive's root, return to the directory holding the archive file
+    /// and close the archive. Returns the archive's file name, for placing
+    /// the cursor on it, or `None` when not at an archive root.
+    pub fn leave_archive(&mut self) -> Option<String> {
+        if !self.at_archive_root() {
+            return None;
+        }
+        let archive = self.current_path.container()?.clone();
+        let directory = archive.parent()?;
+        // An extraction still running keeps its own handle on the archive.
+        self.manager.disconnect(&self.current_path.connection_key());
+        self.previous_path = None;
+        self.current_path = directory;
+        archive
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
     }
 
     /// Begin resolving a remote symlink entry. A remote directory listing
@@ -312,11 +342,9 @@ impl VfsState {
                     "NFS connections not yet fully implemented".to_string(),
                 ));
             }
-            VfsProtocol::Archive => {
-                return Err(VfsError::NotSupported(
-                    "Browsing archives is not implemented yet".to_string(),
-                ));
-            }
+            VfsProtocol::Archive => self
+                .manager
+                .connect_archive(&path, ConnectOptions::default()),
             VfsProtocol::Local => {
                 // Local paths don't need connection
                 return Err(VfsError::InvalidPath(
@@ -338,10 +366,7 @@ impl VfsState {
     pub fn start_list_dir(&mut self) {
         // For remote paths, check if connected and start connection if needed
         if self.current_path.is_remote() && !self.manager.is_connected(&self.current_path) {
-            self.connection_status = Some(format!(
-                "Connecting to {}...",
-                self.current_path.host.as_deref().unwrap_or("remote")
-            ));
+            self.connection_status = Some(connecting_status(&self.current_path));
             self.connection_started = Some(Instant::now());
             // Start connection - tick() will call start_list_dir() again after connection completes
             if let Err(e) = self.start_connect(self.current_path.clone()) {
@@ -632,6 +657,23 @@ impl VfsState {
     }
 }
 
+/// Status line while the provider for `path` is being set up.
+fn connecting_status(path: &VfsPath) -> String {
+    match path.container() {
+        Some(archive) => format!(
+            "Opening {}...",
+            archive
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default()
+        ),
+        None => format!(
+            "Connecting to {}...",
+            path.host.as_deref().unwrap_or("remote")
+        ),
+    }
+}
+
 /// Drop implementation ensures cleanup when VfsState is dropped.
 impl Drop for VfsState {
     fn drop(&mut self) {
@@ -750,6 +792,72 @@ mod tests {
 
         state.navigate_down("documents");
         assert_eq!(state.path_buf(), PathBuf::from("/home/user/documents"));
+    }
+
+    fn tick_until_done(state: &mut VfsState) -> Option<VfsResult<Vec<VfsEntry>>> {
+        for _ in 0..500 {
+            if let Some(result) = state.tick() {
+                return Some(result);
+            }
+            if !state.has_pending_operation() {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the VFS operation never finished");
+    }
+
+    /// A one-file zip written with the stored method.
+    fn write_zip(path: &Path) {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        zip.start_file("docs/readme.md", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"hi").unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn entering_an_archive_lists_its_root_and_leaving_returns_to_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("pack.zip");
+        write_zip(&archive);
+        let mut state = VfsState::with_path(VfsPath::local(dir.path()), None);
+
+        state.enter_archive(&archive);
+        assert_eq!(state.connection_status(), Some("Opening pack.zip..."));
+        let entries = tick_until_done(&mut state).unwrap().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "docs");
+        assert!(state.at_archive_root());
+        assert!(state.manager().is_connected(state.current_path()));
+
+        let root = state.current_path().clone();
+        state.navigate_down("docs");
+        assert!(!state.at_archive_root());
+        assert_eq!(state.leave_archive(), None, "only the root leaves");
+        state.navigate_up();
+
+        assert_eq!(state.leave_archive(), Some("pack.zip".to_string()));
+        assert_eq!(state.current_path(), &VfsPath::local(dir.path()));
+        assert!(
+            !state.manager().is_connected(&root),
+            "the archive is closed"
+        );
+    }
+
+    #[test]
+    fn a_broken_archive_returns_to_the_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("broken.zip");
+        std::fs::write(&archive, b"PK\x03\x04 but nothing else").unwrap();
+        let mut state = VfsState::with_path(VfsPath::local(dir.path()), None);
+
+        state.enter_archive(&archive);
+        let result = tick_until_done(&mut state).unwrap();
+        assert!(result.unwrap_err().is_archive_error());
+        assert_eq!(state.current_path(), &VfsPath::local(dir.path()));
+        assert!(state.connection_status().is_none());
     }
 
     #[test]

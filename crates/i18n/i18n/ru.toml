@@ -594,6 +594,7 @@ status_config_saved = "Настройки сохранены и применен
 status_file_reloaded = "Файл перезагружен с диска"
 modal_confirm_title = "Подтверждение"
 modal_error_title = "Ошибка"
+fm_archive_read_only = "Архивы доступны только для чтения"
 op_type_copy_upload = "Копирование (выгрузка)"
 op_type_copy_download = "Копирование (скачивание)"
 op_type_move_upload = "Перемещение (выгрузка)"

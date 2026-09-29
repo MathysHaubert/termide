@@ -133,9 +133,48 @@ operation fails and the panel shows a recovery dialog with three choices:
 directory), or **Close panel**. Pressing `Esc` dismisses the dialog and
 leaves the panel on its last listing. The panel never loops on the error.
 
+## Archives
+
+Archive files open in the file manager like directories: `Enter` on
+one lists its contents, and `..` (or `Backspace`) at its root returns
+to the directory holding it, with the cursor back on the archive.
+`F3`, `F4` and `O` still treat the archive as a file.
+
+| Format | Names |
+|--------|-------|
+| ZIP    | `.zip`, `.jar`, `.war`, `.apk`, `.whl` |
+| tar    | `.tar`, `.tar.gz` / `.tgz`, `.tar.bz2` / `.tbz2`, `.tar.xz` / `.txz`, `.tar.zst` / `.tzst` |
+
+The format is detected from the file's content; the name only decides
+which files `Enter` opens this way. Opening reads the archive's table
+of contents once — for a large compressed tar that takes a pass over
+the whole file, and `Esc` cancels it. If the archive changes on disk
+while it is open, the next access reads it again.
+
+Archives are **read-only**. Opening a file from one works as for a
+remote file (a temporary copy), and copying with `C` / `F5` to a
+local panel extracts the selected files and directories, with the
+usual progress, pause and cancel in the
+[Operations panel](operations.md). Creating, deleting, moving and
+renaming inside an archive are refused with a notice.
+
+Extraction never writes outside the destination: entries named with
+`..` or an absolute path are not shown, a symbolic link is created only
+when its target stays inside the extracted tree (and only after all
+files are written), and an entry that unpacks to more than its declared
+size fails instead of filling the disk.
+
+The URL of a location inside an archive is
+`archive://<archive file>!<path inside>`, e.g.
+`archive:///home/nvn/src.tar.gz!/docs`; it works in `Go to path` and in
+saved projects like any other VFS URL.
+
 ## Limitations / known gaps
 
 - No `smb://` / `nfs://` provider yet — only URL parsing.
+- Archives open only from the local filesystem, not from a remote
+  panel or from inside another archive. Encrypted ZIP entries are
+  listed but cannot be read.
 - No resume-from-byte-offset for interrupted transfers: cancelled
   uploads start over from the beginning if re-issued.
 - The interactive password prompt cannot be saved persistently

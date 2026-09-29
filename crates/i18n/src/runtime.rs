@@ -747,6 +747,7 @@ impl Translation for RuntimeTranslation {
         op_type_scanning,
         modal_confirm_title,
         modal_error_title,
+        fm_archive_read_only,
         git_no_repo,
         git_branch_detached,
         git_refreshed,
