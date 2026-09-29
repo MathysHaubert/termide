@@ -284,9 +284,16 @@ impl App {
 
     /// Ask for a name, then scaffold the new item at the chosen scope.
     fn ai_create(&mut self, section: AiSection, scope_global: bool) {
-        self.state.close_menu();
         let t = termide_i18n::t();
-        let modal = termide_modal::InputModal::new(t.ai_create_title(), t.ai_create_title());
+        let title = match section {
+            AiSection::Agents => t.ai_create_agent_title(),
+            AiSection::Skills => t.ai_create_skill_title(),
+            AiSection::Prompts => t.ai_create_prompt_title(),
+            // Sessions come from the agent panel, not from this menu.
+            AiSection::Sessions => return,
+        };
+        self.state.close_menu();
+        let modal = termide_modal::InputModal::new(title, t.ai_name_hint());
         self.state.set_pending_action(
             termide_state::PendingAction::AiCreate {
                 section,
@@ -377,12 +384,13 @@ impl App {
         };
         self.state.close_menu();
         let t = termide_i18n::t();
-        let default = if target.is_session { "" } else { &target.name };
-        let modal = termide_modal::InputModal::with_default(
-            t.ai_rename_title(),
-            t.ai_rename_title(),
-            default,
-        );
+        // A session takes a free-form display name; the rest are identifiers.
+        let (default, hint) = if target.is_session {
+            ("", "")
+        } else {
+            (target.name.as_str(), t.ai_name_hint())
+        };
+        let modal = termide_modal::InputModal::with_default(t.ai_rename_title(), hint, default);
         self.state.set_pending_action(
             termide_state::PendingAction::AiRename {
                 section,

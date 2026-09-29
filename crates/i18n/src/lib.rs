@@ -385,9 +385,12 @@ pub trait Translation: Send + Sync {
     fn menu_ai_new_global(&self) -> &str;
     fn menu_ai_edit_prompt(&self) -> &str;
     fn menu_ai_edit_settings(&self) -> &str;
-    fn ai_create_title(&self) -> &str;
+    fn ai_create_agent_title(&self) -> &str;
+    fn ai_create_skill_title(&self) -> &str;
+    fn ai_create_prompt_title(&self) -> &str;
     fn ai_rename_title(&self) -> &str;
     fn ai_delete_title(&self) -> &str;
+    fn ai_name_hint(&self) -> &str;
     fn ai_name_invalid(&self) -> &str;
     fn ai_name_exists(&self) -> &str;
     fn ai_empty(&self) -> &str;
