@@ -20,11 +20,13 @@ use crate::{
 /// Rows the list shows at most before it scrolls.
 const MAX_ROWS: usize = 20;
 
-/// One row of the list: a group heading, or the item at an index.
+/// One row of the list: a group heading, the item at an index, or the
+/// blank line between two groups, which the cursor steps over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
     Heading(usize),
     Item(usize),
+    Gap,
 }
 
 /// Checkboxes listed under their group headings. `Space` (or a click)
@@ -59,6 +61,9 @@ impl ChecklistModal {
         for (index, item) in items.iter().enumerate() {
             if group != Some(item.group.as_str()) {
                 if !item.group.is_empty() {
+                    if !rows.is_empty() {
+                        rows.push(Row::Gap);
+                    }
                     rows.push(Row::Heading(index));
                 }
                 group = Some(item.group.as_str());
@@ -104,7 +109,7 @@ impl ChecklistModal {
             .iter()
             .find_map(|row| match row {
                 Row::Heading(index) => Some(*index),
-                Row::Item(_) => None,
+                Row::Item(_) | Row::Gap => None,
             })
             .unwrap_or(self.items.len());
         start..end
@@ -146,13 +151,22 @@ impl ChecklistModal {
                     item.checked = on;
                 }
             }
-            None => {}
+            Some(Row::Gap) | None => {}
         }
     }
 
     fn move_by(&mut self, delta: isize) {
         let last = self.rows.len().saturating_sub(1) as isize;
         self.cursor = (self.cursor as isize + delta).clamp(0, last.max(0)) as usize;
+        // A gap is never the first or the last row, so the next row in the
+        // direction of travel is always a heading or an item.
+        if self.rows.get(self.cursor) == Some(&Row::Gap) {
+            self.cursor = if delta < 0 {
+                self.cursor - 1
+            } else {
+                self.cursor + 1
+            };
+        }
     }
 
     /// The text of an item's row after the checkbox.
@@ -251,6 +265,7 @@ impl Modal for ChecklistModal {
                     let padded = format!("{text:<width$}", width = inner.width as usize);
                     buf.set_stringn(inner.x, y, padded, inner.width as usize, style);
                 }
+                Row::Gap => {}
                 Row::Item(index) => {
                     let item = &self.items[index];
                     let mark = termide_ui::checkbox(item.checked);
@@ -311,7 +326,7 @@ impl Modal for ChecklistModal {
                 if inside {
                     let row = self.scroll + (mouse.row - list.y) as usize;
                     // A click on a row moves the cursor there and toggles it.
-                    if row < self.rows.len() {
+                    if row < self.rows.len() && self.rows[row] != Row::Gap {
                         self.cursor = row;
                         self.toggle_row(row);
                     }
@@ -374,11 +389,18 @@ mod tests {
             shown.iter().any(|r| r.contains("[ ] review — locked")),
             "{shown:?}"
         );
-        // Past the heading and `read` to `bash`, off; down past the skills'
-        // heading to the locked skill, which stays off.
+        // A blank line parts the groups.
+        let heading = shown.iter().position(|r| r.contains("Skills")).unwrap();
+        assert!(
+            shown[heading - 1].trim_matches(['│', ' ']).is_empty(),
+            "{shown:?}"
+        );
+        // Past the heading and `read` to `bash`, off; down over the blank
+        // line to the skills' heading, then to the locked skill, which stays off.
         modal.handle_key(key(KeyCode::Down)).unwrap();
         modal.handle_key(key(KeyCode::Down)).unwrap();
         modal.handle_key(key(KeyCode::Char(' '))).unwrap();
+        modal.handle_key(key(KeyCode::Down)).unwrap();
         modal.handle_key(key(KeyCode::Down)).unwrap();
         modal.handle_key(key(KeyCode::Char(' '))).unwrap();
         modal.handle_key(key(KeyCode::Down)).unwrap();
