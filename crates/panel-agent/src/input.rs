@@ -788,7 +788,12 @@ impl AgentPanel {
         if key.code == KeyCode::F(7) && !ctrl && !alt && !shift {
             return self.handle_status_action(NEW_SESSION_ACTION);
         }
+        // In the banner's list of recent sessions F8 deletes the one under the
+        // cursor instead: the fresh session itself has nothing to delete.
         if key.code == KeyCode::F(8) && !ctrl && !alt && !shift {
+            if self.chat_focus && self.recent_list_shown() {
+                return self.ask_delete_recent_session();
+            }
             return self.ask_delete_session();
         }
 
@@ -839,10 +844,11 @@ impl AgentPanel {
         // tree, Tab or Esc hands focus back to the input.
         // On the welcome banner the chat focus walks its recent sessions
         // instead: the arrows, the page keys and Home/End move the cursor,
-        // Enter opens the session under it.
+        // Enter opens the session under it and Delete (like F8) deletes it.
         if self.chat_focus && self.recent_list_shown() {
             let page = self.recent_rows.max(1) as isize;
             match key.code {
+                KeyCode::Delete => return self.ask_delete_recent_session(),
                 KeyCode::Tab | KeyCode::Esc => self.chat_focus = false,
                 KeyCode::Up if !ctrl => self.move_recent_selection(-1),
                 KeyCode::Down if !ctrl => self.move_recent_selection(1),

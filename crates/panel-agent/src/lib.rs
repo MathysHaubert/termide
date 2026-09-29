@@ -65,6 +65,8 @@ fn millis(duration: Duration) -> u32 {
 const RENAME_ACTION: &str = "agent_rename";
 /// Context-menu action that deletes the session (behind a confirmation).
 const DELETE_SESSION_ACTION: &str = "agent_delete_session";
+/// Confirmation action that deletes the recent session picked in the banner.
+const DELETE_RECENT_ACTION: &str = "agent_delete_recent_session";
 /// Selection action for the F4 checkpoint-rollback picker.
 const ROLLBACK_ACTION: &str = "agent_rollback";
 /// Context-menu action that starts a fresh session.
@@ -471,6 +473,8 @@ pub struct AgentPanel {
     /// [`Session::open_generation`] when the list was read, to notice
     /// another panel opening or releasing a session.
     recent_generation: u64,
+    /// The recent session a pending delete confirmation is about.
+    recent_to_delete: Option<PathBuf>,
     cwd: PathBuf,
     agent: String,
     catalog: Arc<dyn AgentCatalog>,
@@ -804,6 +808,7 @@ impl AgentPanel {
             recent_top: 0,
             recent_rows: 0,
             recent_generation: 0,
+            recent_to_delete: None,
             cwd: setup.cwd,
             model,
             configured_model: setup.model,
@@ -1412,6 +1417,11 @@ impl Panel for AgentPanel {
             }
             PanelCommand::Confirmed { action } if action == DELETE_SESSION_ACTION => {
                 self.perform_delete_session();
+                CommandResult::Handled(true)
+            }
+            PanelCommand::Confirmed { action } if action == DELETE_RECENT_ACTION => {
+                let events = self.perform_delete_recent_session();
+                self.pending_events.extend(events);
                 CommandResult::Handled(true)
             }
             PanelCommand::SetHostFocus { focused } => {

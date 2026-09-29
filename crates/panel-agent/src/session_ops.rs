@@ -14,7 +14,7 @@ use crate::runtime::{
 };
 use crate::{
     format_tokens, shorten_path, truncate_title, AgentPanel, Item, NoticeKind,
-    DELETE_SESSION_ACTION, ROLLBACK_ACTION,
+    DELETE_RECENT_ACTION, DELETE_SESSION_ACTION, ROLLBACK_ACTION,
 };
 
 /// Delete a session the panel is leaving when it holds no conversation, so
@@ -437,6 +437,56 @@ impl AgentPanel {
             message,
             on_confirm: ConfirmAction::Custom(DELETE_SESSION_ACTION.to_string()),
         }]
+    }
+
+    /// Ask to delete the recent session under the banner list's cursor (F8 or
+    /// Delete while the list has the keyboard); the answer comes back as
+    /// `PanelCommand::Confirmed(DELETE_RECENT_ACTION)`.
+    pub(crate) fn ask_delete_recent_session(&mut self) -> Vec<PanelEvent> {
+        let Some(summary) = self.recent_sessions.get(self.recent_selected) else {
+            return vec![];
+        };
+        let confirm = termide_i18n::t().agent_delete_confirm_fmt(&truncate_title(&summary.label()));
+        let id = summary
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let message = format!("{confirm}\n{} · {id}", civil_date(summary.modified));
+        self.recent_to_delete = Some(summary.path.clone());
+        vec![PanelEvent::ShowConfirm {
+            message,
+            on_confirm: ConfirmAction::Custom(DELETE_RECENT_ACTION.to_string()),
+        }]
+    }
+
+    /// Delete the recent session the confirmation was asked for. It is
+    /// claimed first, so one another panel opened meanwhile is left alone;
+    /// the cursor stays on the row it was on.
+    pub(crate) fn perform_delete_recent_session(&mut self) -> Vec<PanelEvent> {
+        let Some(path) = self.recent_to_delete.take() else {
+            return vec![];
+        };
+        let result = Session::open_exclusive(&path).and_then(Session::discard);
+        let selected = self.recent_selected;
+        self.load_recent_sessions();
+        self.recent_selected = selected.min(self.recent_sessions.len().saturating_sub(1));
+        if self.recent_sessions.is_empty() {
+            self.chat_focus = false;
+        }
+        match result {
+            Ok(()) => vec![PanelEvent::NeedsRedraw],
+            Err(error) => {
+                log::warn!("cannot delete {}: {error}", path.display());
+                vec![
+                    PanelEvent::SetStatusMessage {
+                        message: error.to_string(),
+                        is_error: true,
+                    },
+                    PanelEvent::NeedsRedraw,
+                ]
+            }
+        }
     }
 
     /// Discard the current session and open a fresh one in its place — the

@@ -171,9 +171,10 @@ newest first, filling the space the panel has and scrolling through the rest
 with the wheel. A session open in another panel is left out, and comes back
 once that panel lets it go. A click opens one in place of the empty session;
 from the keyboard, `Tab` moves into the list, the arrows, `PgUp`/`PgDn` and
-`Home`/`End` walk it, `Enter` opens the session under the cursor, and `Tab`
-or `Esc` goes back to the prompt. The banner gives way to the conversation as
-soon as you send your first message.
+`Home`/`End` walk it, `Enter` opens the session under the cursor, `F8` or
+`Delete` deletes it after a confirmation, and `Tab` or `Esc` goes back to the
+prompt. The banner gives way to the conversation as soon as you send your
+first message.
 
 The **Tools** chip (and the banner's `tools` line) opens a checklist of what
 the session may use: the built-in tools, the skills, and each MCP server's
@@ -226,7 +227,7 @@ you have named or sent even one message to is always kept.
 | `F4` | Roll the session back to before a chosen checkpoint |
 | `F6` | Switch session — open the picker of this directory's sessions |
 | `F7` | Start a new session (the used one is kept in the list) |
-| `F8` | Delete this session (after a confirmation) and start a fresh one |
+| `F8` | Delete this session (after a confirmation) and start a fresh one; in the banner's list of sessions, delete the one under the cursor |
 | `/name args` + `Enter` | Send the prompt template `name` with `args` filled in, run the command script `name` or send the skill `name` (`/skill:name` when the name is taken); `/compact [focus]` summarises the session, `/undo` takes the last request back, `/new` starts a fresh session, `/clear` starts one after discarding the current session, and `/rename [name]` (or `/name`) renames it; `/pause` stops the run after the current step and `/continue` resumes it (or, before the step ends, cancels the pause); `/loop [interval] <prompt>` re-runs a prompt on an interval (or back-to-back), `/loop stop` (or `Esc`) ends it; `/goal <what to achieve>` works autonomously toward a goal until a judge says it is reached, `/goal stop` (or `Esc`) ends it; `/handoff` briefs the unfinished work, then offers to save it to `HANDOFF.md` or start a new session from it; `/usage` opens the session-info modal and `/prompt` opens the assembled system prompt |
 | `↑` / `↓` | On the first or last line of the input: take back the messages still queued (`↑`, while any wait), else recall an earlier request of this session, or come back to what you were typing |
 | `Tab` | Complete the highlighted `/command` or `@file` while the list is open |

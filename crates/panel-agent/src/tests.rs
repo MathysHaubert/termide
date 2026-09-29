@@ -2292,6 +2292,58 @@ fn the_banner_leaves_out_sessions_open_in_other_panels() {
 }
 
 #[test]
+fn f8_in_the_banner_list_deletes_the_picked_session_not_the_fresh_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut panel = AgentPanel::new(AgentPanelSetup {
+        session_dir: Some(dir.path().to_path_buf()),
+        ..setup(vec![reply("one"), reply("two")])
+    });
+    let mut first_path = None;
+    for prompt in ["first task", "second task"] {
+        first_path.get_or_insert_with(|| panel.session_path().unwrap().to_path_buf());
+        type_text(&mut panel, prompt);
+        panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+        settle(&mut panel);
+        panel.handle_status_action(NEW_SESSION_ACTION);
+    }
+    let first_path = first_path.unwrap();
+    let fresh = panel.session_path().unwrap().to_path_buf();
+    let confirm = |events: &[PanelEvent]| match events {
+        [PanelEvent::ShowConfirm {
+            message,
+            on_confirm: ConfirmAction::Custom(action),
+        }] => (message.clone(), action.clone()),
+        other => panic!("expected a confirmation, got {other:?}"),
+    };
+
+    // From the prompt F8 still asks about the current session.
+    let events = panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
+    assert_eq!(confirm(&events).1, DELETE_SESSION_ACTION);
+
+    // In the list it asks about the session under the cursor.
+    panel.handle_key(chord(KeyCode::Tab, KeyModifiers::NONE));
+    panel.handle_key(chord(KeyCode::Down, KeyModifiers::NONE));
+    let events = panel.handle_key(chord(KeyCode::F(8), KeyModifiers::NONE));
+    let (message, action) = confirm(&events);
+    assert!(message.contains("first task"), "{message}");
+    panel.handle_command(PanelCommand::Confirmed { action });
+    assert!(!first_path.exists());
+    assert_eq!(panel.session_path(), Some(fresh.as_path()));
+    assert_eq!(panel.recent_sessions.len(), 1);
+    assert_eq!(panel.recent_selected, 0, "the cursor stays on the list");
+
+    // Delete does the same; with the list empty the keyboard is back in the
+    // prompt.
+    let events = panel.handle_key(chord(KeyCode::Delete, KeyModifiers::NONE));
+    let (message, action) = confirm(&events);
+    assert!(message.contains("second task"), "{message}");
+    panel.handle_command(PanelCommand::Confirmed { action });
+    assert!(panel.recent_sessions.is_empty());
+    assert!(!panel.chat_focus);
+    assert!(fresh.exists(), "the fresh session is untouched");
+}
+
+#[test]
 fn the_wheel_scrolls_the_banner_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let mut panel = AgentPanel::new(AgentPanelSetup {
