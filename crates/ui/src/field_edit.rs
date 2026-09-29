@@ -10,11 +10,16 @@
 //! - Clipboard: `Ctrl+C`/`Ctrl+X`/`Ctrl+V`
 //! - Undo/redo: `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`
 //!
+//! A `Ctrl` chord is matched on its layout-normalized form, so `Ctrl+Ф` is
+//! `Ctrl+A` on a Russian layout; typed text keeps the key as it came.
+//!
 //! `Enter`, `Tab` and `Esc` belong to the host, not to the field: a prompt
 //! sends on `Enter`, a search bar submits, a bar closes. They are deliberately
 //! absent here, so a host keeps that decision.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use termide_core::KeyNormalizer;
 
 use crate::{TextArea, TextInput};
 
@@ -29,8 +34,19 @@ pub enum FieldEdit {
     NotHandled,
 }
 
+/// A `Ctrl` chord in the form the grammar matches: layout-normalized, as the
+/// app's hotkeys are. Any other key is text, and stays raw.
+fn shortcut_form(key: KeyEvent) -> KeyEvent {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        KeyNormalizer::default().canonicalize(key)
+    } else {
+        key
+    }
+}
+
 /// Apply an editing key to a single-line input.
 pub fn edit_text_input(input: &mut TextInput, key: KeyEvent) -> FieldEdit {
+    let key = shortcut_form(key);
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
@@ -106,6 +122,7 @@ pub fn edit_text_input(input: &mut TextInput, key: KeyEvent) -> FieldEdit {
 /// Apply an editing key to a multi-line text area: the same grammar, with the
 /// arrows walking lines and the selection spanning them.
 pub fn edit_text_area(area: &mut TextArea, key: KeyEvent) -> FieldEdit {
+    let key = shortcut_form(key);
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
@@ -228,5 +245,26 @@ fn moved(did: bool) -> FieldEdit {
         FieldEdit::Navigated
     } else {
         FieldEdit::NotHandled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_control_chord_works_on_a_cyrillic_layout_and_text_stays_as_typed() {
+        let mut input = TextInput::with_text("abc");
+        // `Ctrl+Ф` is where `Ctrl+A` sits on a Russian layout: select all.
+        let select_all = KeyEvent::new(KeyCode::Char('ф'), KeyModifiers::CONTROL);
+        assert_eq!(
+            edit_text_input(&mut input, select_all),
+            FieldEdit::Navigated
+        );
+        assert_eq!(input.selected_text(), Some("abc"));
+        // A typed Cyrillic letter is text, not its Latin twin.
+        let typed = KeyEvent::new(KeyCode::Char('ф'), KeyModifiers::NONE);
+        assert_eq!(edit_text_input(&mut input, typed), FieldEdit::Edited);
+        assert_eq!(input.text(), "ф");
     }
 }

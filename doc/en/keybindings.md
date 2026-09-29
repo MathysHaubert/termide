@@ -18,6 +18,10 @@ unchanged. The one exception is a `Ctrl` chord on a letter of another
 layout sent to the terminal: a Cyrillic letter has no control code, so
 `Ctrl+С` goes out as the `Ctrl+C` (`^C`) of its physical key.
 
+A text field (a modal input, a find bar, the agent prompt) matches its own
+`Ctrl` shortcuts — select all, copy, cut, paste, undo — on the canonical
+form too, while the letters typed into it stay raw.
+
 ## What canonicalization fixes
 
 | Quirk | Behaviour |

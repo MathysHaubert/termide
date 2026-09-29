@@ -330,9 +330,11 @@ impl FindBar {
 
     /// Handle a key while the bar holds focus. Returns the host action, if any.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<FindBarAction> {
-        // Ctrl+R re-runs the search regardless of the focused control.
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        // Ctrl+R re-runs the search regardless of the focused control, on any
+        // keyboard layout (`Ctrl+К` too); the typed query keeps the raw key.
+        let shortcut = termide_core::KeyNormalizer::default().canonicalize(key);
+        if shortcut.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(shortcut.code, KeyCode::Char('r') | KeyCode::Char('R'))
         {
             return Some(FindBarAction::Refresh);
         }
@@ -389,6 +391,20 @@ mod tests {
             fields: vec![FindField::Mask, FindField::Find, FindField::Replace],
             buttons: vec![Btn::Case, Btn::Regex, Btn::Prev, Btn::Next, Btn::ReplaceAll],
         })
+    }
+
+    #[test]
+    fn ctrl_r_refreshes_on_a_cyrillic_layout_and_letters_type_as_they_are() {
+        let mut bar = content_bar();
+        bar.focus_first();
+        // `Ctrl+К` is where `Ctrl+R` sits on a Russian layout.
+        let refresh = KeyEvent::new(KeyCode::Char('к'), KeyModifiers::CONTROL);
+        assert_eq!(bar.handle_key(refresh), Some(FindBarAction::Refresh));
+        // Without Ctrl the letter is typed into the query.
+        assert_eq!(
+            bar.handle_key(key(KeyCode::Char('к'))),
+            Some(FindBarAction::QueryChanged)
+        );
     }
 
     /// Move focus onto the button at `btn_idx` (fields lead the ring).
