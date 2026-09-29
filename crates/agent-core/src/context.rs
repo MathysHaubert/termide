@@ -18,7 +18,6 @@
 //! [`evaluate_blocks`] for the three rules that bound it.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::layers::SkillInfo;
 use crate::tool::ToolRegistry;
@@ -130,8 +129,6 @@ pub struct PromptOptions<'a> {
     pub soul: Option<&'a str>,
     /// Appended verbatim at the end.
     pub append: Option<&'a str>,
-    /// Unix time in milliseconds for the date line; `None` uses the clock.
-    pub now_millis: Option<u64>,
 }
 
 impl<'a> PromptOptions<'a> {
@@ -144,7 +141,6 @@ impl<'a> PromptOptions<'a> {
             skills: &[],
             soul: None,
             append: None,
-            now_millis: None,
         }
     }
 }
@@ -241,18 +237,11 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let now = options.now_millis.unwrap_or_else(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
-    });
     let environment = format!(
-        "- Working directory: {}\n- Platform: {} ({})\n- Date: {}\n- Git repository: {}",
+        "- Working directory: {}\n- Platform: {} ({})\n- Git repository: {}",
         options.cwd.display(),
         std::env::consts::OS,
         std::env::consts::ARCH,
-        civil_date(now),
         if in_git_repository(options.cwd) {
             "yes"
         } else {
@@ -442,7 +431,6 @@ mod tests {
         }];
         let mut options = PromptOptions::new(dir.path(), &tools, &files);
         options.append = Some("Answer in Russian.");
-        options.now_millis = Some(1_789_670_496_000);
         let prompt = build_system_prompt(&options);
 
         assert!(prompt.starts_with("You are a coding agent working inside termide"));
@@ -453,9 +441,16 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.contains("- Be concise."));
+        assert!(
+            prompt.contains("- Check the facts of the moment with a tool"),
+            "the seed tells the model to check, not guess\n{prompt}"
+        );
         assert!(prompt.contains(&format!("- Working directory: {}", dir.path().display())));
-        assert!(prompt.contains("- Date: 2026-09-17"));
         assert!(prompt.contains("- Git repository: yes"));
+        assert!(
+            !prompt.contains("Date:"),
+            "the prompt carries no date to rot\n{prompt}"
+        );
         assert!(prompt.contains("# Project instructions"));
         assert!(prompt.contains("Use conventional commits."));
         assert!(prompt.ends_with("Answer in Russian.\n"));
@@ -501,8 +496,7 @@ mod tests {
 
         // Without instructions the section is gone and nothing trails.
         let none: Vec<ContextFile> = Vec::new();
-        let mut bare = PromptOptions::new(dir.path(), &tools, &none);
-        bare.now_millis = options.now_millis;
+        let bare = PromptOptions::new(dir.path(), &tools, &none);
         let prompt = build_system_prompt(&bare);
         assert!(!prompt.contains("# Project instructions"));
         assert!(prompt.ends_with("- Git repository: yes\n"));

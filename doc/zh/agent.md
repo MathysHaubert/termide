@@ -339,6 +339,7 @@ No tool is described here. Call only what you are actually offered, and say what
 - Read a file before you change it, and keep edits small and targeted.
 - Name file paths clearly when you talk about files.
 - Be concise.
+- Check the facts of the moment with a tool rather than guess them: run `date` for today's date, read a file for its contents, `git log` for history. State plainly when you did not check.
 {{guidelines}}
 
 {{if skills}}
@@ -353,7 +354,7 @@ When a task matches one of these, load it with the `skill` tool before starting.
 {{project_instructions}}
 ```
 
-`{{tools}}` 是每个工具一行的工具列表，`{{guidelines}}` 是工具自身提供的规则，`{{skills}}` 是技能的名称和描述，`{{environment}}` 是工作目录、平台、日期以及是否为 git 仓库，`{{project_instructions}}` 是下文描述的指令文件。
+`{{tools}}` 是每个工具一行的工具列表，`{{guidelines}}` 是工具自身提供的规则，`{{skills}}` 是技能的名称和描述，`{{environment}}` 是工作目录、平台以及是否为 git 仓库，`{{project_instructions}}` 是下文描述的指令文件。提示词有意不带日期：会话会持续数小时，日期会在其中悄悄过期，所以模板改为让模型用工具去核实应时的信息——今日日期用 `date`——而不是凭记忆作答。
 
 `{{if tools}} … {{else}} … {{/if}}` 在没有内容可展示时把该部分从提示词中移除：该名称有内容时保留 `{{if}}` 分支，否则保留 `{{else}}` 分支；不写 `{{else}}` 时整个块消失。因此没有技能的会话不会向模型谈及技能，也不会诱使它调用并不存在的 `skill` 工具。条件标签必须独占一行——行中间的标签、或被填充值内部的标签都保持为普通文本——并且块不能嵌套。块外单独的 `{{name}}` 仍然只是取值，空列表时为 `(none)`，所以在使用块之前写下的模板依旧有效。
 

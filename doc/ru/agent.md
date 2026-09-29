@@ -876,6 +876,7 @@ No tool is described here. Call only what you are actually offered, and say what
 - Read a file before you change it, and keep edits small and targeted.
 - Name file paths clearly when you talk about files.
 - Be concise.
+- Check the facts of the moment with a tool rather than guess them: run `date` for today's date, read a file for its contents, `git log` for history. State plainly when you did not check.
 {{guidelines}}
 
 {{if skills}}
@@ -892,9 +893,11 @@ When a task matches one of these, load it with the `skill` tool before starting.
 
 `{{tools}}` — список инструментов по строке на каждый, `{{guidelines}}` —
 правила, которые добавляют сами инструменты, `{{skills}}` — скиллы с именем и
-описанием, `{{environment}}` — рабочий каталог, платформа, дата и признак
+описанием, `{{environment}}` — рабочий каталог, платформа и признак
 git-репозитория, `{{project_instructions}}` — файлы инструкций, описанные
-ниже.
+ниже. Дату промпт намеренно не несёт: сессия живёт часами, и дата в промпте
+тихо протухает, поэтому сид вместо этого велит проверять ситуативный факт
+инструментом — `date` для сегодняшней даты, — а не помнить его наизусть.
 
 `{{if tools}} … {{else}} … {{/if}}` убирает раздел из промпта, когда показать
 нечего: ветка `{{if}}` остаётся, если у имени есть что показать, иначе —

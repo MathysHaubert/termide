@@ -540,6 +540,20 @@ block still fills to the value, so every template written before blocks keeps
 working. Values are substituted after blocks are resolved, which is what makes
 the second rule hold.
 
+The prompt carries no date. It sat in `{{environment}}` as `Date:`, taken once
+when the prompt was built, and a session runs for hours or — through `/loop`
+and `/goal` — days, so the line quietly contradicted itself; the transcript
+shows local times while the field was UTC, and a model asked about yesterday
+could not check the claim against anything, since no message timestamp reaches
+it at all (`convert_messages` sends text alone). Injecting a fresh date per
+request costs a token line on every call and still answers only "now", never
+"then". Decision: no date in the prompt, and a seeded guideline that says to
+check a situational fact with a tool — `date` for today's date — rather than
+guess it. Guessing is the failure the line is there to prevent: an invented
+date lands in a `CHANGELOG.md` and is committed. All three tools the guideline
+names (`date`, `read`, `git log`) are read-only by the rules, so following it
+never asks the user for permission.
+
 A file replaces the template whole rather than layering
 `identity`/`append` overrides, so what the user reads is what the model gets;
 the panel's **Show system prompt** writes the assembled text next to the
