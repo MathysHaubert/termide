@@ -2261,6 +2261,37 @@ fn tab_walks_the_banner_sessions_and_enter_opens_one() {
 }
 
 #[test]
+fn the_banner_leaves_out_sessions_open_in_other_panels() {
+    let dir = tempfile::tempdir().unwrap();
+    let with_dir = |replies| AgentPanelSetup {
+        session_dir: Some(dir.path().to_path_buf()),
+        ..setup(replies)
+    };
+    // One panel keeps its used session open; another's is used and closed.
+    let mut busy = AgentPanel::new(with_dir(vec![reply("one")]));
+    type_text(&mut busy, "kept open");
+    busy.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    settle(&mut busy);
+    let mut closed = AgentPanel::new(with_dir(vec![reply("two")]));
+    type_text(&mut closed, "closed task");
+    closed.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    settle(&mut closed);
+    drop(closed);
+
+    let mut fresh = AgentPanel::new(with_dir(vec![]));
+    let all = render_text(&mut fresh, 80, 24).join("\n");
+    assert!(all.contains("closed task"), "{all}");
+    assert!(!all.contains("kept open"), "open elsewhere: {all}");
+
+    // Closing the other panel releases its session, and the next tick lists
+    // it.
+    drop(busy);
+    fresh.tick();
+    let all = render_text(&mut fresh, 80, 24).join("\n");
+    assert!(all.contains("kept open"), "{all}");
+}
+
+#[test]
 fn the_wheel_scrolls_the_banner_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let mut panel = AgentPanel::new(AgentPanelSetup {

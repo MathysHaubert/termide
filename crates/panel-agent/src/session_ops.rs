@@ -148,10 +148,43 @@ impl AgentPanel {
         true
     }
 
-    /// Re-read the sessions the welcome banner offers: while the session is
-    /// fresh, this directory's others that hold a conversation (or a name),
-    /// newest first; nothing once there is a conversation to show instead.
+    /// Re-read the sessions the welcome banner offers, the cursor back on the
+    /// newest: while the session is fresh, this directory's others that hold
+    /// a conversation (or a name) and no panel has open, newest first;
+    /// nothing once there is a conversation to show instead.
     pub(crate) fn refresh_recent_sessions(&mut self) {
+        self.load_recent_sessions();
+        self.recent_selected = 0;
+        self.recent_top = 0;
+    }
+
+    /// Re-read the banner's sessions once another panel opened or released
+    /// one, so an open session leaves the list and a released one comes
+    /// back; the cursor stays on the session it was on while that is listed.
+    /// A cheap check while nothing changed, for the tick.
+    pub(crate) fn follow_open_sessions(&mut self) -> bool {
+        if !self.transcript.items().is_empty()
+            || Session::open_generation() == self.recent_generation
+        {
+            return false;
+        }
+        let selected = self
+            .recent_sessions
+            .get(self.recent_selected)
+            .map(|summary| summary.path.clone());
+        self.load_recent_sessions();
+        let last = self.recent_sessions.len().saturating_sub(1);
+        self.recent_selected = selected
+            .and_then(|path| self.recent_sessions.iter().position(|s| s.path == path))
+            .unwrap_or(self.recent_selected.min(last));
+        if self.recent_sessions.is_empty() {
+            self.chat_focus = false;
+        }
+        true
+    }
+
+    fn load_recent_sessions(&mut self) {
+        self.recent_generation = Session::open_generation();
         self.recent_sessions = if self.is_fresh() {
             let current = self.session.as_ref().map(Session::path);
             self.session_list()
@@ -159,13 +192,12 @@ impl AgentPanel {
                 .filter(|summary| {
                     Some(summary.path.as_path()) != current
                         && (summary.message_count > 0 || summary.name.is_some())
+                        && !Session::is_open(&summary.path)
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        self.recent_selected = 0;
-        self.recent_top = 0;
     }
 
     /// Whether the welcome banner is up and lists recent sessions, so `Tab`

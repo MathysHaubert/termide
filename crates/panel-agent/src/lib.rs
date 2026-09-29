@@ -468,6 +468,9 @@ pub struct AgentPanel {
     recent_top: usize,
     /// Rows the banner's list had at the last render, for paging.
     recent_rows: usize,
+    /// [`Session::open_generation`] when the list was read, to notice
+    /// another panel opening or releasing a session.
+    recent_generation: u64,
     cwd: PathBuf,
     agent: String,
     catalog: Arc<dyn AgentCatalog>,
@@ -800,6 +803,7 @@ impl AgentPanel {
             recent_selected: 0,
             recent_top: 0,
             recent_rows: 0,
+            recent_generation: 0,
             cwd: setup.cwd,
             model,
             configured_model: setup.model,

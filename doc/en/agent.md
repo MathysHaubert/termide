@@ -168,8 +168,9 @@ agent and the tools are shown bold in the accent colour: a click on any opens th
 picker its status-bar chip does, so you can set the session up before you
 start. Below them, the `sessions` rows list this directory's other sessions,
 newest first, filling the space the panel has and scrolling through the rest
-with the wheel. A click opens one in place of the empty session; from the
-keyboard, `Tab` moves into the list, the arrows, `PgUp`/`PgDn` and
+with the wheel. A session open in another panel is left out, and comes back
+once that panel lets it go. A click opens one in place of the empty session;
+from the keyboard, `Tab` moves into the list, the arrows, `PgUp`/`PgDn` and
 `Home`/`End` walk it, `Enter` opens the session under the cursor, and `Tab`
 or `Esc` goes back to the prompt. The banner gives way to the conversation as
 soon as you send your first message.

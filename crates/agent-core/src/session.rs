@@ -176,17 +176,28 @@ fn lock_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Bumped whenever a claim is taken or released, so a session list that
+/// leaves out the open sessions can tell cheaply when to look again.
+static OPEN_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 fn claim(path: &Path) -> Option<PathBuf> {
     let key = lock_key(path);
     let mut open = open_registry().lock().unwrap_or_else(|e| e.into_inner());
-    open.insert(key.clone()).then_some(key)
+    let claimed = open.insert(key.clone());
+    if claimed {
+        OPEN_GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
+    claimed.then_some(key)
 }
 
 fn release(key: &Path) {
-    open_registry()
+    let released = open_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(key);
+    if released {
+        OPEN_GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl Drop for Session {
@@ -280,6 +291,23 @@ impl Session {
         let mut session = Self::create(dir, cwd)?;
         session.lock = claim(&session.path);
         Ok(session)
+    }
+
+    /// Whether the session at `path` is open exclusively, in some panel of
+    /// this process.
+    #[must_use]
+    pub fn is_open(path: &Path) -> bool {
+        open_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&lock_key(path))
+    }
+
+    /// A counter that changes whenever a session is opened or released
+    /// exclusively: while it stays the same, so does [`Session::is_open`].
+    #[must_use]
+    pub fn open_generation() -> u64 {
+        OPEN_GENERATION.load(Ordering::Relaxed)
     }
 
     /// Like [`Session::open`], but fails if the session is already open in
@@ -1030,5 +1058,23 @@ mod lock_tests {
         // Dropping the holder releases the claim.
         drop(session);
         assert!(Session::open_exclusive(&path).is_ok());
+    }
+
+    #[test]
+    fn an_exclusive_claim_is_visible_and_moves_the_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Session::create(dir.path(), Path::new("/work"))
+            .unwrap()
+            .path()
+            .to_path_buf();
+        assert!(!Session::is_open(&path));
+        let before = Session::open_generation();
+        let session = Session::open_exclusive(&path).unwrap();
+        assert!(Session::is_open(&path));
+        let claimed = Session::open_generation();
+        assert_ne!(claimed, before);
+        drop(session);
+        assert!(!Session::is_open(&path));
+        assert_ne!(Session::open_generation(), claimed);
     }
 }

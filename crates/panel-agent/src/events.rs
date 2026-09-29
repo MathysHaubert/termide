@@ -391,6 +391,7 @@ impl AgentPanel {
             self.refresh_context();
             changed = true;
         }
+        changed |= self.follow_open_sessions();
         if let Some((start, before)) = self.permission_wait {
             if matches!(
                 self.pending,
