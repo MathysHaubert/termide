@@ -146,7 +146,15 @@ fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
     for i in 0..zip.len() {
         let (name, is_dir, is_symlink, meta) = {
             let entry = zip.by_index_raw(i).map_err(zip_error)?;
-            let modified = entry.last_modified().and_then(dos_time);
+            // The extended timestamp is exact UTC; the DOS field has no zone.
+            let modified = entry
+                .extra_data_fields()
+                .find_map(|field| match field {
+                    zip::extra_fields::ExtraField::ExtendedTimestamp(ts) => ts.mod_time(),
+                    _ => None,
+                })
+                .map(|secs| UNIX_EPOCH + Duration::from_secs(u64::from(secs)))
+                .or_else(|| entry.last_modified().and_then(dos_time));
             let file_type = if entry.is_dir() {
                 VfsFileType::Directory
             } else if entry.is_symlink() {
@@ -285,6 +293,22 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// The proleptic Gregorian date `days` after 1970-01-01 as (year, month,
+/// day) — the inverse of [`days_from_civil`].
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 fn zip_error(e: zip::result::ZipError) -> VfsError {
     VfsError::Archive(e.to_string())
 }
@@ -302,5 +326,14 @@ mod tests {
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(days_from_civil(2000, 3, 1), 11_017);
         assert_eq!(days_from_civil(2026, 9, 29), 20_725);
+    }
+
+    #[test]
+    fn civil_from_days_inverts_days_from_civil() {
+        for days in [-1, 0, 11_016, 11_017, 20_725, 47_540] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "{y}-{m}-{d}");
+        }
+        assert_eq!(civil_from_days(20_725), (2026, 9, 29));
     }
 }

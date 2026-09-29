@@ -12,6 +12,7 @@
 mod extract;
 mod format;
 mod index;
+pub mod pack;
 mod source;
 
 pub use format::{ArchiveFormat, TarCompression};

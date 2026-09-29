@@ -442,3 +442,190 @@ fn the_manager_opens_and_serves_an_archive() {
         .unwrap();
     assert_eq!(data, README);
 }
+
+mod packing {
+    use super::*;
+    use crate::archive::pack::{self, PackProgress};
+
+    /// A small tree with a nested file, an empty directory and a symlink.
+    fn source_tree(root: &Path) -> PathBuf {
+        let src = root.join("project");
+        fs::create_dir_all(src.join("src/deep")).unwrap();
+        fs::create_dir_all(src.join("empty")).unwrap();
+        fs::write(src.join("README.md"), README).unwrap();
+        fs::write(src.join("src/deep/big.bin"), big()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("README.md", src.join("link.md")).unwrap();
+        src
+    }
+
+    fn pack_all(sources: &[PathBuf], dest: &Path) -> VfsResult<PackProgress> {
+        let items = pack::collect(sources, dest)?;
+        let mut last = PackProgress::default();
+        pack::pack(&items, dest, &mut |p| {
+            last = p.clone();
+            Ok(())
+        })?;
+        Ok(last)
+    }
+
+    fn temp_leftovers(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(".termide-pack-"))
+            .collect()
+    }
+
+    #[test]
+    fn every_writable_format_round_trips_through_the_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        for name in [
+            "out.zip",
+            "out.tar",
+            "out.tar.gz",
+            "out.tar.bz2",
+            "out.tar.xz",
+            "out.tar.zst",
+        ] {
+            let dest = dir.path().join(name);
+            let last = pack_all(std::slice::from_ref(&src), &dest).unwrap();
+            assert_eq!(last.files_done, last.total_files, "{name}");
+            assert_eq!(last.bytes_done, last.total_bytes, "{name}");
+            assert_eq!(
+                last.total_bytes,
+                (README.len() + big().len()) as u64,
+                "{name}"
+            );
+
+            let provider = opened(&dest);
+            let root = provider.list_dir(&at(&dest, "/")).recv().unwrap();
+            assert_eq!(names(&root), ["project"], "{name}");
+            let top = provider.list_dir(&at(&dest, "/project")).recv().unwrap();
+            #[cfg(unix)]
+            assert_eq!(
+                names(&top),
+                ["README.md", "empty", "link.md", "src"],
+                "{name}"
+            );
+            #[cfg(not(unix))]
+            assert_eq!(names(&top), ["README.md", "empty", "src"], "{name}");
+            let data = provider
+                .read_file(&at(&dest, "/project/src/deep/big.bin"))
+                .recv()
+                .unwrap();
+            assert_eq!(data, big(), "{name}");
+            #[cfg(unix)]
+            {
+                let link = top.iter().find(|e| e.name == "link.md").unwrap();
+                assert!(link.is_symlink(), "{name}");
+                let via_link = provider
+                    .read_file(&at(&dest, "/project/link.md"))
+                    .recv()
+                    .unwrap();
+                assert_eq!(via_link, README, "{name}");
+            }
+            assert!(temp_leftovers(dir.path()).is_empty(), "{name}");
+        }
+    }
+
+    #[test]
+    fn names_are_relative_to_the_common_parent_of_the_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("a")).unwrap();
+        fs::create_dir_all(dir.path().join("b")).unwrap();
+        fs::write(dir.path().join("a/x.txt"), "a").unwrap();
+        fs::write(dir.path().join("b/x.txt"), "b").unwrap();
+        let dest = dir.path().join("two.zip");
+        pack_all(
+            &[dir.path().join("a/x.txt"), dir.path().join("b/x.txt")],
+            &dest,
+        )
+        .unwrap();
+
+        let provider = opened(&dest);
+        let root = provider.list_dir(&at(&dest, "/")).recv().unwrap();
+        assert_eq!(names(&root), ["a", "b"]);
+        let b = provider.read_file(&at(&dest, "/b/x.txt")).recv().unwrap();
+        assert_eq!(b, b"b");
+    }
+
+    #[test]
+    fn the_archive_does_not_contain_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        let dest = src.join("self.tar");
+        pack_all(std::slice::from_ref(&src), &dest).unwrap();
+        let provider = opened(&dest);
+        let inside = provider.exists(&at(&dest, "/project/self.tar")).recv();
+        assert!(!inside.unwrap());
+    }
+
+    #[test]
+    fn an_existing_destination_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        let dest = dir.path().join("taken.zip");
+        fs::write(&dest, "keep me").unwrap();
+        let result = pack_all(std::slice::from_ref(&src), &dest);
+        assert!(matches!(result, Err(VfsError::AlreadyExists { .. })));
+        assert_eq!(fs::read(&dest).unwrap(), b"keep me");
+    }
+
+    #[test]
+    fn cancelling_leaves_neither_the_archive_nor_a_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        for name in ["c.zip", "c.tar.gz", "c.tar.zst"] {
+            let dest = dir.path().join(name);
+            let items = pack::collect(std::slice::from_ref(&src), &dest).unwrap();
+            let result = pack::pack(&items, &dest, &mut |p| {
+                if p.bytes_done > 0 {
+                    Err(VfsError::Cancelled)
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(
+                matches!(result, Err(VfsError::Cancelled)),
+                "{name}: {result:?}"
+            );
+            assert!(!dest.exists(), "{name}");
+        }
+        assert!(temp_leftovers(dir.path()).is_empty());
+    }
+
+    /// DOS time has no zone, so a zip timestamp is only exact through the
+    /// extended timestamp field the packer adds; tar stores UTC seconds.
+    #[test]
+    fn modification_times_survive_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("dated.txt");
+        fs::write(&file, "x").unwrap();
+        let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_001);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+        for name in ["t.zip", "t.tar.gz"] {
+            let dest = dir.path().join(name);
+            pack_all(std::slice::from_ref(&file), &dest).unwrap();
+            let meta = opened(&dest)
+                .metadata(&at(&dest, "/dated.txt"))
+                .recv()
+                .unwrap();
+            assert_eq!(meta.modified, Some(when), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_name_that_is_not_an_archive_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = source_tree(dir.path());
+        let result = pack_all(&[src], &dir.path().join("out.rar"));
+        assert!(matches!(result, Err(VfsError::InvalidPath(_))));
+    }
+}
