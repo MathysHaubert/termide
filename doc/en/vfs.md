@@ -180,6 +180,11 @@ when its target stays inside the extracted tree (and only after all
 files are written), and an entry that unpacks to more than its declared
 size fails instead of filling the disk.
 
+The URL of a location inside an archive is
+`archive://<archive file>!<path inside>`, e.g.
+`archive:///home/nvn/src.tar.gz!/docs`; it works in `Go to path` and in
+saved projects like any other VFS URL.
+
 ### Packing
 
 `P` packs the selected files and directories (or the entry under the
@@ -196,11 +201,6 @@ permissions and modification times are kept. The archive is written
 to a temporary file and appears under its name only when complete, so
 a cancelled or failed run leaves nothing behind, and an existing file
 is never overwritten. Only local files can be packed.
-
-The URL of a location inside an archive is
-`archive://<archive file>!<path inside>`, e.g.
-`archive:///home/nvn/src.tar.gz!/docs`; it works in `Go to path` and in
-saved projects like any other VFS URL.
 
 ## Limitations / known gaps
 
