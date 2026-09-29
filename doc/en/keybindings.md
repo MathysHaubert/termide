@@ -14,7 +14,9 @@ they need:
 Text typed inside the editor or sent to a program running in the
 terminal panel is **never** rewritten by canonicalization, so Cyrillic,
 shifted glyphs, and locale-specific characters reach the destination
-unchanged.
+unchanged. The one exception is a `Ctrl` chord on a letter of another
+layout sent to the terminal: a Cyrillic letter has no control code, so
+`Ctrl+С` goes out as the `Ctrl+C` (`^C`) of its physical key.
 
 ## What canonicalization fixes
 

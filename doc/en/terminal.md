@@ -29,7 +29,7 @@ The terminal panel provides a full-featured terminal emulator with pseudotermina
 
 **Keyboard Layout Support:**
 
-TermIDE supports Cyrillic keyboard layouts for common shortcuts. When using a Russian/Cyrillic layout, paste (`Ctrl+V`) works without switching to a Latin layout — pressing it with the Cyrillic letter on the same physical key is recognized automatically.
+TermIDE supports Cyrillic keyboard layouts for common shortcuts. When using a Russian/Cyrillic layout, paste (`Ctrl+V`) works without switching to a Latin layout — pressing it with the Cyrillic letter on the same physical key is recognized automatically. The same goes for the control chords sent to the program: `Ctrl+С` interrupts it as `Ctrl+C` does, `Ctrl+В` sends end-of-file as `Ctrl+D` does.
 
 All other key combinations are passed directly to the application running in the terminal.
 

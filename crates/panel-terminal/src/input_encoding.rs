@@ -54,6 +54,26 @@ fn encode_csi_u(codepoint: u32, mods: KeyModifiers) -> Vec<u8> {
     }
 }
 
+/// The key as it goes to the PTY. `Ctrl` with a letter of another layout
+/// (`Ctrl+С` on a Russian one) is that key's Latin control chord (`Ctrl+C`,
+/// `^C`), as terminals send it: a non-ASCII codepoint has no control code,
+/// and masking one would send some other control byte. Everything else goes
+/// as it was typed.
+pub(crate) fn pty_key(chord: termide_core::KeyChord) -> KeyEvent {
+    let raw = chord.raw;
+    if raw.modifiers.contains(KeyModifiers::CONTROL) {
+        if let (KeyCode::Char(c), KeyCode::Char(latin)) = (raw.code, chord.canonical.code) {
+            if !c.is_ascii() && latin.is_ascii() {
+                return KeyEvent {
+                    code: KeyCode::Char(latin),
+                    ..raw
+                };
+            }
+        }
+    }
+    raw
+}
+
 pub(crate) fn modern_key_bytes(key: &KeyEvent, mode: KeyboardProtocolMode) -> Option<Vec<u8>> {
     match key.code {
         KeyCode::Char(c) => match mode {
@@ -305,6 +325,31 @@ mod tests {
         assert_eq!(
             mouse_modifier_bits(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL),
             28
+        );
+    }
+
+    #[test]
+    fn a_control_chord_of_another_layout_reaches_the_pty_as_its_latin_key() {
+        let chord = |c: char, mods: KeyModifiers| {
+            termide_core::KeyChord::new(
+                KeyEvent::new(KeyCode::Char(c), mods),
+                &termide_core::KeyNormalizer::default(),
+            )
+        };
+        // `Ctrl+С` on a Russian layout is `^C`, not whatever masking U+0441
+        // would give.
+        assert_eq!(
+            pty_key(chord('с', KeyModifiers::CONTROL)).code,
+            KeyCode::Char('c')
+        );
+        // Typed Cyrillic text, and a Latin chord, go as they are.
+        assert_eq!(
+            pty_key(chord('с', KeyModifiers::NONE)).code,
+            KeyCode::Char('с')
+        );
+        assert_eq!(
+            pty_key(chord('+', KeyModifiers::CONTROL)).code,
+            KeyCode::Char('+')
         );
     }
 

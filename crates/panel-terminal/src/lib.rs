@@ -20,7 +20,7 @@ pub use terminal_info::TerminalInfo;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
-use input_encoding::{arrow_modifier_param, modern_key_bytes};
+use input_encoding::{arrow_modifier_param, modern_key_bytes, pty_key};
 use link_detection::{HighlightSegment, LinkType};
 #[cfg(unix)]
 use nix::sys::signal::{self, Signal};
@@ -1078,6 +1078,7 @@ impl Panel for Terminal {
             (screen.application_cursor_keys, screen.keyboard_protocol)
         };
 
+        let key = pty_key(chord);
         if keyboard_protocol != KeyboardProtocolMode::Legacy {
             if let Some(bytes) = modern_key_bytes(&key, keyboard_protocol) {
                 let _ = self.send_input(&bytes);
