@@ -1965,8 +1965,11 @@ fn f4_offers_a_rollback_picker_when_there_is_a_checkpoint() {
 #[test]
 fn an_empty_session_shows_a_welcome_banner() {
     let mut panel = panel(vec![]);
-    let all = render_text(&mut panel, 60, 16).join("\n");
-    assert!(all.contains("termide"), "{all}");
+    let rows = render_text(&mut panel, 60, 16);
+    // The banner sits at the top, below one blank row, leaving the space
+    // under it to the list of recent sessions.
+    assert!(rows[1].contains("termide"), "{rows:#?}");
+    let all = rows.join("\n");
     for label in ["connection", "model", "agent", "cwd"] {
         assert!(all.contains(label), "missing {label}: {all}");
     }

@@ -216,8 +216,9 @@ impl AgentPanel {
 
     /// The welcome banner shown while the session is empty: a logo on the left
     /// and what the agent is set up with (provider, model, agent, directory) on
-    /// the right, each column centred in the transcript area. On a narrow panel
-    /// the logo is dropped and only the details show.
+    /// the right, at the top of the transcript area, with the recent sessions
+    /// filling the rows below. On a narrow panel the logo is dropped and only
+    /// the details show.
     pub(crate) fn render_welcome(&mut self, area: Rect, buf: &mut Buffer, colors: &ThemeColors) {
         const LOGO: [&str; 5] = [
             "╭───────╮",
@@ -314,10 +315,15 @@ impl AgentPanel {
         // This directory's other sessions, newest first, one click (or
         // Tab, the arrows and Enter) away: as many rows as the panel's height
         // leaves, scrolling through the rest.
+        // The banner sits at the top, so the list gets every row under the
+        // fields; a blank row above it only when the whole list fits anyway.
+        let header_len = info.len();
         let total = self.recent_sessions.len();
-        let rows = total.min((area.height as usize).saturating_sub(info.len() + 1));
+        let list_need = if total > 0 { total + 1 } else { 0 };
+        let margin = usize::from(area.height as usize > header_len + list_need);
+        let rows = total.min((area.height as usize).saturating_sub(margin + header_len + 1));
         self.recent_rows = rows;
-        let list_start = info.len() + 1;
+        let list_start = header_len + 1;
         if rows > 0 {
             self.recent_top = self.recent_top.min(total - rows);
             if self.chat_focus {
@@ -340,11 +346,12 @@ impl AgentPanel {
             }
         }
 
-        let banner_h = info.len().max(LOGO.len()) as u16;
+        // The logo is centred against the fields, not the list below them.
+        let header_h = header_len.max(LOGO.len()) as u16;
         let bottom = area.y + area.height;
-        let top = area.y + area.height.saturating_sub(banner_h) / 2;
+        let top = area.y + margin as u16;
         if show_logo {
-            let logo_top = top + (banner_h - LOGO.len() as u16) / 2;
+            let logo_top = top + (header_h - LOGO.len() as u16) / 2;
             for (i, line) in LOGO.iter().enumerate() {
                 let y = logo_top + i as u16;
                 if y >= bottom {
@@ -359,7 +366,7 @@ impl AgentPanel {
                 );
             }
         }
-        let info_top = top + (banner_h - info.len() as u16) / 2;
+        let info_top = top + (header_h - header_len as u16) / 2;
         for (i, (line, hit)) in info.iter().enumerate() {
             let y = info_top + i as u16;
             if y >= bottom {
