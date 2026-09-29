@@ -208,19 +208,8 @@ impl AgentCatalog for FsCatalog {
         if backend.is_none() {
             tools.insert(Arc::new(QuestionTool));
         }
-        restrict_tools(&mut tools, &definition.spec.tools, name);
-        // Skills are instructions, not a capability, so an agent's `tools`
-        // list does not govern them: the tool comes with the skills.
-        let all_skills = self.dirs.skills();
-        let skill_names: Vec<String> = all_skills.iter().map(|skill| skill.name.clone()).collect();
-        let skills: Vec<_> = all_skills
-            .into_iter()
-            .filter(|skill| !off.contains(&format!("skill:{}", skill.name)))
-            .collect();
-        if !skill_names.is_empty() && backend.is_none() {
-            tools.insert(Arc::new(SkillTool::new(skills.clone())));
-        }
-        // The `task` tool lets this agent hand work to the others; only when
+        // The `task` tool lets this agent hand work to the others, and its
+        // `tools` list can leave it out like any other capability; only when
         // there are custom agents to delegate to, and never for an external
         // agent (it drives its own tools) or a subagent (no nesting: the
         // subagent build path adds no task tool).
@@ -235,6 +224,18 @@ impl AgentCatalog for FsCatalog {
                     tools.insert(Arc::new(TaskTool::new(delegates, run)));
                 }
             }
+        }
+        restrict_tools(&mut tools, &definition.spec.tools, name);
+        // Skills are instructions, not a capability, so an agent's `tools`
+        // list does not govern them: the tool comes with the skills.
+        let all_skills = self.dirs.skills();
+        let skill_names: Vec<String> = all_skills.iter().map(|skill| skill.name.clone()).collect();
+        let skills: Vec<_> = all_skills
+            .into_iter()
+            .filter(|skill| !off.contains(&format!("skill:{}", skill.name)))
+            .collect();
+        if !skill_names.is_empty() && backend.is_none() {
+            tools.insert(Arc::new(SkillTool::new(skills.clone())));
         }
         // What the session switched off leaves the registry here, before the
         // prompt lists the tools; a `skill` tool left with no skills goes too.
@@ -1225,6 +1226,50 @@ mod tests {
         assert_eq!(resolve_model(&provider, "").as_deref(), Some("first"));
         assert_eq!(resolve_model(&provider, "named").as_deref(), Some("named"));
         assert_eq!(resolve_model(&Lists(vec![]), ""), None);
+    }
+
+    /// With subagents wired, every agent gets `task`, unless its `tools`
+    /// list leaves it out.
+    #[test]
+    fn an_agent_tools_list_governs_the_task_tool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("ai");
+        for (agent, tools) in [("search", "[\"read\"]"), ("lead", "[\"read\", \"task\"]")] {
+            let dir = global.join("agents").join(agent);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("agent.toml"), format!("tools = {tools}\n")).unwrap();
+        }
+        let mut catalog = FsCatalog::with_global(tmp.path(), tmp.path(), Some(global));
+        let settings = with_cloud();
+        let local = &settings.connections["local"];
+        catalog.subagents = Some(Arc::new(Subagents {
+            active: Arc::new(std::sync::RwLock::new(Active {
+                provider: build_provider(local, false, None),
+                model: local.model.clone(),
+                context_window: local.effective_context_window(),
+            })),
+            dirs: catalog.dirs.clone(),
+            web: shared_web(&settings.web, &catalog.dirs),
+            cwd: tmp.path().to_path_buf(),
+            project_root: tmp.path().to_path_buf(),
+            rules: settings.permissions.clone(),
+            mode: termide_agent_core::ModeHandle::new(settings.permissions.mode),
+            max_tokens: settings.output_limit(),
+            reasoning: false,
+            compaction: settings.compaction,
+        }));
+
+        assert_eq!(catalog.resolve("search").unwrap().tools.names(), ["read"]);
+        assert_eq!(
+            catalog.resolve("lead").unwrap().tools.names(),
+            ["read", "task"]
+        );
+        assert!(catalog
+            .resolve(DEFAULT_AGENT)
+            .unwrap()
+            .tools
+            .get("task")
+            .is_some());
     }
 
     /// `agent.toml` narrows the tools and names a model and a mode; a name no

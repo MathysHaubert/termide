@@ -776,6 +776,10 @@ mode = "edit"                                    # ask | plan | edit | configure
 tools = ["read", "bash"]                         # a subset of the built-in tools
 ```
 
+`tools` lists the built-in tools the agent keeps, `task` included; without
+it the agent has them all. Skills and MCP servers' tools are not governed by
+it: they come with what you configured.
+
 Switching agents mid-session swaps the prompt and the tools for the next
 request; the model and the mode change only when the definition names them,
 and the session log records the switch, as it does for the **Model** chip.
@@ -798,7 +802,8 @@ everything into the prompt. It runs in the session's current mode, unless its
 rules and that mode already allow: anything that would otherwise ask is
 refused with a reason it reads. External (`[acp]`)
 agents cannot be delegates, and a subagent gets no `task` tool of its own, so
-delegation does not nest. A run that will not stop is cut off after fifty
+delegation does not nest. An agent whose `tools` list leaves out `task`
+cannot delegate. A run that will not stop is cut off after fifty
 model calls.
 
 ### External agents
