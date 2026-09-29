@@ -1155,6 +1155,59 @@ mod tests {
         );
     }
 
+    /// An archive inside an archive opens with Enter too, and `..` walks
+    /// back out one level at a time, the cursor landing on what was left.
+    #[test]
+    fn a_nested_archive_opens_and_is_left_level_by_level() {
+        use std::io::Write;
+        fn zip_with(path: &std::path::Path, name: &str, data: &[u8]) {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(data).unwrap();
+            zip.finish().unwrap();
+        }
+        let temp_dir = TempDir::new().unwrap();
+        let inner = temp_dir.path().join("inner.zip");
+        zip_with(&inner, "deep/readme.md", b"hi");
+        let outer = temp_dir.path().join("outer.zip");
+        zip_with(&outer, "inner.zip", &std::fs::read(&inner).unwrap());
+        std::fs::remove_file(&inner).unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+
+        fm.selected = fm.find_entry_index("outer.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "inner.zip"]);
+
+        fm.selected = fm.find_entry_index("inner.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "deep"]);
+        assert!(fm.vfs.current_path().container().unwrap().is_archive());
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "inner.zip"]);
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("inner.zip")
+        );
+
+        fm.selected = fm.find_entry_index("..").unwrap();
+        fm.enter();
+        wait_for_local_listing(&mut fm);
+        assert!(fm.vfs.is_local());
+        assert_eq!(
+            fm.entry_at(fm.selected).map(|e| e.name.as_str()),
+            Some("outer.zip")
+        );
+    }
+
     /// P offers an archive next to the selection in every writable format;
     /// inside an archive it is refused instead.
     #[test]

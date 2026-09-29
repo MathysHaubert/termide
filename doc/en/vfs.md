@@ -151,6 +151,12 @@ of contents once — for a large compressed tar that takes a pass over
 the whole file, and `Esc` cancels it. If the archive changes on disk
 while it is open, the next access reads it again.
 
+An archive in a remote panel or inside another archive opens the same
+way: it is first copied whole into a temporary directory (the status
+line shows `Opening …` meanwhile), and the copy is deleted when the
+archive is left. Changes to the remote file while it is open are not
+noticed.
+
 ZIP names are read as UTF-8 whenever they are valid UTF-8 (macOS writes
 them so without saying). Older archives from Windows store names in the
 system's code page; one whose names look like Cyrillic in CP866 is read
@@ -194,9 +200,7 @@ saved projects like any other VFS URL.
 ## Limitations / known gaps
 
 - No `smb://` / `nfs://` provider yet — only URL parsing.
-- Archives open only from the local filesystem, not from a remote
-  panel or from inside another archive. Encrypted ZIP entries are
-  listed but cannot be read.
+- Encrypted ZIP entries are listed but cannot be read.
 - No resume-from-byte-offset for interrupted transfers: cancelled
   uploads start over from the beginning if re-issued.
 - The interactive password prompt cannot be saved persistently

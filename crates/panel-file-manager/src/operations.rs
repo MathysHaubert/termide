@@ -330,18 +330,23 @@ impl FileManager {
             return None;
         }
 
+        // An archive opens like a directory, wherever it lies; F3/F4/O still
+        // treat it as a file.
+        if termide_vfs::archive::ArchiveFormat::from_file_name(&entry_name).is_some() {
+            let archive = if self.vfs.is_remote() {
+                self.vfs.current_path().join(&entry_name)
+            } else {
+                termide_vfs::VfsPath::local(&full_path)
+            };
+            self.navigation.prepare_for_going_down();
+            self.vfs.enter_archive(archive);
+            return None;
+        }
+
         // File — check if remote
         if self.vfs.is_remote() {
             let vfs_path = self.vfs.current_path().join(&entry_name);
             return Some(PanelEvent::OpenRemoteFile(vfs_path.to_url_string()));
-        }
-
-        // A local archive opens like a directory; F3/F4/Shift+Enter still
-        // treat it as a file.
-        if termide_vfs::archive::ArchiveFormat::from_file_name(&entry_name).is_some() {
-            self.navigation.prepare_for_going_down();
-            self.vfs.enter_archive(&full_path);
-            return None;
         }
 
         // Re-borrow entry for determine_file_open_event

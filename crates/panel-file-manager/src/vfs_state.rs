@@ -251,12 +251,12 @@ impl VfsState {
         self.current_path = self.current_path.join(name);
     }
 
-    /// Open the local archive file `archive` at its root. The table of
-    /// contents is read asynchronously; a failure returns to the current
-    /// directory.
-    pub fn enter_archive(&mut self, archive: &Path) {
+    /// Open the archive file `archive` (local, remote or inside an open
+    /// archive) at its root. The table of contents is read asynchronously; a
+    /// failure returns to the current directory.
+    pub fn enter_archive(&mut self, archive: VfsPath) {
         self.previous_path = Some(self.current_path.clone());
-        self.current_path = VfsPath::archive(VfsPath::local(archive), "/");
+        self.current_path = VfsPath::archive(archive, "/");
         self.start_list_dir();
     }
 
@@ -824,7 +824,7 @@ mod tests {
         write_zip(&archive);
         let mut state = VfsState::with_path(VfsPath::local(dir.path()), None);
 
-        state.enter_archive(&archive);
+        state.enter_archive(VfsPath::local(&archive));
         assert_eq!(state.connection_status(), Some("Opening pack.zip..."));
         let entries = tick_until_done(&mut state).unwrap().unwrap();
         assert_eq!(entries.len(), 1);
@@ -853,7 +853,7 @@ mod tests {
         std::fs::write(&archive, b"PK\x03\x04 but nothing else").unwrap();
         let mut state = VfsState::with_path(VfsPath::local(dir.path()), None);
 
-        state.enter_archive(&archive);
+        state.enter_archive(VfsPath::local(&archive));
         let result = tick_until_done(&mut state).unwrap();
         assert!(result.unwrap_err().is_archive_error());
         assert_eq!(state.current_path(), &VfsPath::local(dir.path()));
