@@ -86,6 +86,9 @@ pub struct ChoiceForm {
     detail_drawn: Option<Rect>,
     /// Screen row of the first option row from the last render, for click hits.
     rows_top: Option<u16>,
+    /// The row each drawn line below `rows_top` belongs to, from the last
+    /// render: a long option wraps onto several lines.
+    line_rows: Vec<usize>,
 }
 
 impl ChoiceForm {
@@ -107,6 +110,7 @@ impl ChoiceForm {
             drawn: None,
             detail_drawn: None,
             rows_top: None,
+            line_rows: Vec::new(),
         }
     }
 
@@ -223,6 +227,76 @@ impl ChoiceForm {
                 }
                 last.push('…');
             }
+        }
+        lines
+    }
+
+    /// The lines of row `index` at `inner` columns: its number, checkbox and
+    /// label, then its description, wrapped under the label. Each line is the
+    /// text drawn in the row's style and the description part drawn after it.
+    fn row_lines(&self, index: usize, row: &Row, inner: usize) -> Vec<(String, String)> {
+        let label = match row {
+            Row::Option(option) => self.options[*option].as_str(),
+            Row::Custom => self.custom.as_deref().unwrap_or(""),
+            Row::Submit => self.submit.as_deref().unwrap_or(""),
+            Row::Cancel => self.cancel.as_deref().unwrap_or(""),
+        };
+        // A multi-select form's picks show their checkbox before the label.
+        let checkbox = |on: bool| if on { "[✓] " } else { "[ ] " };
+        let mark = match row {
+            Row::Option(option) if self.is_multi() => checkbox(self.checked[*option]),
+            Row::Custom if self.is_multi() => checkbox(self.custom_answer.is_some()),
+            _ => "",
+        };
+        let body = match (row, &self.typing, &self.custom_answer) {
+            (Row::Custom, Some(input), _) => format!("{label}: {}▏", input.text()),
+            (Row::Custom, None, Some(kept)) => format!("{label}: {kept}"),
+            _ => label.to_string(),
+        };
+        let description = match row {
+            Row::Option(option) => self.descriptions.get(*option).map_or("", |d| d.trim()),
+            _ => "",
+        };
+        let prefix = format!(" {}. {mark}", index + 1);
+        let indent = width_of(&prefix);
+        let room = inner.saturating_sub(indent).max(1);
+
+        // Pack the label's words, then the description's, two columns apart.
+        let words = body
+            .split_whitespace()
+            .map(|w| (w, false))
+            .chain(description.split_whitespace().map(|w| (w, true)));
+        let mut lines: Vec<(String, String)> = Vec::new();
+        let (mut text, mut note, mut used) = (String::new(), String::new(), 0usize);
+        for (raw, is_note) in words {
+            for word in hard_break(raw, room) {
+                let w = width_of(&word);
+                let mut gap = match (used, is_note && note.is_empty()) {
+                    (0, _) => 0,
+                    (_, true) => 2,
+                    _ => 1,
+                };
+                if used > 0 && used + gap + w > room {
+                    lines.push((std::mem::take(&mut text), std::mem::take(&mut note)));
+                    used = 0;
+                    gap = 0;
+                }
+                let part = if is_note { &mut note } else { &mut text };
+                part.push_str(&" ".repeat(gap));
+                part.push_str(&word);
+                used += gap + w;
+            }
+        }
+        if used > 0 || lines.is_empty() {
+            lines.push((text, note));
+        }
+        for (n, (text, _)) in lines.iter_mut().enumerate() {
+            let lead = if n == 0 {
+                prefix.clone()
+            } else {
+                " ".repeat(indent)
+            };
+            text.insert_str(0, &lead);
         }
         lines
     }
@@ -375,14 +449,20 @@ impl ChoiceForm {
     }
 
     /// Rows the card takes at `width`: a border above and below around the
-    /// detail block (when present, with a blank line under it) and one row per
-    /// entry.
+    /// detail block (when present, with a blank line under it) and the lines
+    /// of every entry, a long one wrapped.
     #[must_use]
     pub fn height(&self, width: u16) -> u16 {
         let inner = (width as usize).saturating_sub(2);
         let detail = self.detail_lines(inner).len();
         let separator = usize::from(detail > 0);
-        (2 + detail + separator + self.row_count()) as u16
+        let rows: usize = self
+            .rows()
+            .iter()
+            .enumerate()
+            .map(|(index, row)| self.row_lines(index, row, inner).len())
+            .sum();
+        (2 + detail + separator + rows) as u16
     }
 
     /// Draw the card filling `area` (use [`ChoiceForm::height`] rows). The
@@ -464,10 +544,8 @@ impl ChoiceForm {
         }
 
         self.rows_top = Some(y);
-        for (index, row) in self.rows().iter().enumerate() {
-            if y >= bottom {
-                break;
-            }
+        self.line_rows.clear();
+        'rows: for (index, row) in self.rows().iter().enumerate() {
             let selected = index == self.selected;
             let style = match (selected, focused) {
                 (true, true) => Style::default()
@@ -476,50 +554,22 @@ impl ChoiceForm {
                 (true, false) => text.add_modifier(Modifier::BOLD),
                 (false, _) => text,
             };
-            side(buf, y);
-            let label = match row {
-                Row::Option(option) => self.options[*option].as_str(),
-                Row::Custom => self.custom.as_deref().unwrap_or(""),
-                Row::Submit => self.submit.as_deref().unwrap_or(""),
-                Row::Cancel => self.cancel.as_deref().unwrap_or(""),
-            };
-            // A multi-select form's picks show their checkbox before the label.
-            let checkbox = |on: bool| if on { "[✓] " } else { "[ ] " };
-            let mark = match row {
-                Row::Option(option) if self.is_multi() => checkbox(self.checked[*option]),
-                Row::Custom if self.is_multi() => checkbox(self.custom_answer.is_some()),
-                _ => "",
-            };
-            let line = match (row, &self.typing, &self.custom_answer) {
-                (Row::Custom, Some(input), _) => {
-                    format!(" {}. {mark}{label}: {}▏", index + 1, input.text())
-                }
-                (Row::Custom, None, Some(kept)) => format!(" {}. {mark}{label}: {kept}", index + 1),
-                _ => format!(" {}. {mark}{label}", index + 1),
-            };
-            let used = width_of(&line).min(inner);
-            buf.set_stringn(area.x + 1, y, &line, inner, style);
             // An option's description follows its label, dim unless the row
-            // is highlighted, cut to what is left of the line.
-            let description = match row {
-                Row::Option(option) => self.descriptions.get(*option).map(|d| d.trim()),
-                _ => None,
-            };
-            if let Some(description) = description.filter(|d| !d.is_empty()) {
-                let room = inner.saturating_sub(used + 2);
-                if room > 0 {
-                    let note = if selected && focused { style } else { dim };
-                    buf.set_stringn(area.x + 1 + used as u16, y, "  ", 2, note);
-                    buf.set_stringn(
-                        area.x + 1 + (used + 2) as u16,
-                        y,
-                        description.replace('\n', " "),
-                        room,
-                        note,
-                    );
+            // is highlighted.
+            let note_style = if selected && focused { style } else { dim };
+            for (line, note) in self.row_lines(index, row, inner) {
+                if y >= bottom {
+                    break 'rows;
                 }
+                side(buf, y);
+                let used = width_of(&line).min(inner);
+                buf.set_stringn(area.x + 1, y, &line, inner, style);
+                if !note.is_empty() {
+                    buf.set_stringn(area.x + 1 + used as u16, y, &note, inner - used, note_style);
+                }
+                self.line_rows.push(index);
+                y += 1;
             }
-            y += 1;
         }
         self.drawn = Some(area);
     }
@@ -582,8 +632,7 @@ impl ChoiceForm {
         if !inside {
             return None;
         }
-        let index = (y - top) as usize;
-        (index < self.row_count()).then_some(index)
+        self.line_rows.get((y - top) as usize).copied()
     }
 }
 
@@ -832,6 +881,35 @@ mod tests {
             row(1)
         );
         assert!(row(2).contains("2. Slot "), "{}", row(2));
+    }
+
+    #[test]
+    fn a_long_option_wraps_under_its_label() {
+        let mut form = ChoiceForm::new(
+            "Approach?",
+            vec!["Keep the channel open between turns".into(), "Slot".into()],
+        )
+        .with_descriptions(vec!["like the permission prompt".into(), String::new()]);
+        // Two borders, three lines of the first option and one of the second.
+        assert_eq!(form.height(24), 7);
+        let area = Rect::new(0, 0, 24, form.height(24));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 24, 7));
+        form.render(area, &mut buf, &ThemeColors::default(), true);
+        let row =
+            |y: u16| -> String { (0..24).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        // No line runs into the right border, and continuations sit under the
+        // label rather than under the number.
+        for y in 1..6 {
+            assert!(row(y).ends_with('│'), "{}", row(y));
+        }
+        assert!(row(1).starts_with("│ 1. Keep the channel"), "{}", row(1));
+        assert!(row(2).starts_with("│    open between"), "{}", row(2));
+        assert!(row(4).contains("permission prompt"), "{}", row(4));
+        assert!(row(5).contains("2. Slot"), "{}", row(5));
+        // Every line of a wrapped option hits that option.
+        assert_eq!(form.hit(5, 3), Some(0));
+        assert_eq!(form.hit(5, 5), Some(1));
+        assert_eq!(form.hit(5, 6), None);
     }
 
     #[test]

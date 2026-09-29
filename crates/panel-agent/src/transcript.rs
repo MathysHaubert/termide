@@ -1215,6 +1215,31 @@ fn output_line(
     Line::from(spans)
 }
 
+/// One line of prose tool output, dim and indented like [`output_line`] but
+/// wrapped to `width`; a `- ` list item continues under its text.
+fn prose_output_lines(line: &str, width: u16, colors: &ThemeColors) -> Vec<Line<'static>> {
+    let style = Style::default().fg(colors.disabled);
+    let hang = if line.starts_with("- ") { 4 } else { 2 };
+    let first = (width as usize).saturating_sub(2);
+    let rest = (width as usize).saturating_sub(hang);
+    let mut rows = wrap_row(line, first).into_iter();
+    let mut out = Vec::new();
+    if let Some(row) = rows.next() {
+        out.push(Line::from(vec![Span::raw("  "), Span::styled(row, style)]));
+    }
+    // Continuations re-wrap to the narrower room left by the hanging indent.
+    let tail: String = rows.collect();
+    if !tail.is_empty() {
+        for row in wrap_row(&tail, rest) {
+            out.push(Line::from(vec![
+                Span::raw(" ".repeat(hang)),
+                Span::styled(row, style),
+            ]));
+        }
+    }
+    out
+}
+
 /// The first line of a non-shell tool call (a shell's is [`command_lines`]):
 /// a type glyph, a localized action and its subject for the file, web, skill,
 /// task and MCP tools, else the tool name and a summary. The fold `marker`, if
@@ -1765,7 +1790,12 @@ fn render_body(
                 ));
             }
             for (i, line) in all.iter().enumerate().take(end).skip(start) {
-                lines.push(output_line(line, kind(i), width, colors));
+                if call.name == "question" {
+                    // The answers are prose: they wrap rather than clip.
+                    lines.extend(prose_output_lines(line, width, colors));
+                } else {
+                    lines.push(output_line(line, kind(i), width, colors));
+                }
             }
             if end < all.len() {
                 lines.push(Line::styled(
@@ -2741,6 +2771,42 @@ mod tests {
         // The gap belongs to the answer, outside its highlight.
         assert_eq!(transcript.item_at_line(tool - 1), Some(0));
         assert_eq!(transcript.content_lines_of(0), Some((1, tool - 2)));
+    }
+
+    #[test]
+    fn question_answers_wrap_under_their_item() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.set_fold(FoldMode::Never);
+        let body = "The user answered:\n- Which approach? → keep the channel open between turns";
+        let question = call(
+            "question",
+            json!({ "questions": [{ "question": "Which approach?" }] }),
+        );
+        transcript.push(Item::Tool {
+            result: Some(ToolResultMessage::text(&question, body)),
+            call: question,
+            live: None,
+            at: String::new(),
+            duration_ms: None,
+            waited_ms: None,
+            waiting: false,
+        });
+        let lines = text_of(transcript.lines(30, &colors, false));
+        let first = lines
+            .iter()
+            .position(|l| l.starts_with("  - Which"))
+            .expect("the answer line");
+        // Nothing is clipped: every row fits, and the words all come through.
+        assert!(lines.iter().all(|l| width_of(l) <= 30), "{lines:#?}");
+        assert!(lines[first + 1].starts_with("    "), "{lines:#?}");
+        let joined: String = lines[first..]
+            .iter()
+            .take_while(|l| l.starts_with("  "))
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(joined.contains("open between turns"), "{joined}");
     }
 
     #[test]
