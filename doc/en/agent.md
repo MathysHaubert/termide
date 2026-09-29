@@ -178,7 +178,9 @@ first message.
 
 The **Tools** chip (and the banner's `tools` line) opens a checklist of what
 the session may use: the built-in tools, the skills, and each MCP server's
-tools once it has connected. Unchecking an item before the first request keeps
+tools once it has connected. The checkbox on a group's heading switches the
+whole group on or off at once, and shows `[-]` while it is partly on.
+Unchecking an item before the first request keeps
 it out of the model's context altogether — its description and schema are
 never sent, which saves tokens and takes the capability away. Later in the
 session an unchecked item stays in the context, so as not to throw away the

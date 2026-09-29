@@ -28,7 +28,8 @@ enum Row {
 }
 
 /// Checkboxes listed under their group headings. `Space` (or a click)
-/// toggles the item under the cursor, `Enter` applies them all, `Esc` leaves
+/// toggles the item under the cursor, or every item of the group when the
+/// cursor is on its heading; `Enter` applies them all, `Esc` leaves
 /// everything as it was. A locked item is shown greyed and keeps its state.
 #[derive(Debug)]
 pub struct ChecklistModal {
@@ -36,7 +37,7 @@ pub struct ChecklistModal {
     prompt: String,
     items: Vec<ChecklistItem>,
     rows: Vec<Row>,
-    /// Index into `items` of the item under the cursor.
+    /// Index into `rows` of the row under the cursor.
     cursor: usize,
     /// First row shown.
     scroll: usize,
@@ -94,17 +95,64 @@ impl ChecklistModal {
         }
     }
 
-    fn move_by(&mut self, delta: isize) {
-        let last = self.items.len().saturating_sub(1) as isize;
-        self.cursor = (self.cursor as isize + delta).clamp(0, last.max(0)) as usize;
+    /// The items of the group whose heading is at `row`.
+    fn group_range(&self, row: usize) -> std::ops::Range<usize> {
+        let Some(Row::Heading(start)) = self.rows.get(row).copied() else {
+            return 0..0;
+        };
+        let end = self.rows[row + 1..]
+            .iter()
+            .find_map(|row| match row {
+                Row::Heading(index) => Some(*index),
+                Row::Item(_) => None,
+            })
+            .unwrap_or(self.items.len());
+        start..end
     }
 
-    /// The row an item sits on.
-    fn row_of(&self, index: usize) -> usize {
-        self.rows
+    /// Whether any item of the group at `row` can be toggled.
+    fn group_enabled(&self, row: usize) -> bool {
+        self.items[self.group_range(row)]
             .iter()
-            .position(|row| *row == Row::Item(index))
-            .unwrap_or(0)
+            .any(|item| item.enabled)
+    }
+
+    /// The heading's mark: checked when every item of the group is, empty
+    /// when none is, partial otherwise.
+    fn group_mark(&self, row: usize) -> &'static str {
+        let group = &self.items[self.group_range(row)];
+        if group.iter().all(|item| item.checked) {
+            termide_ui::checkbox(true)
+        } else if group.iter().any(|item| item.checked) {
+            "[-]"
+        } else {
+            termide_ui::checkbox(false)
+        }
+    }
+
+    /// Toggles the row under the cursor: an item, or all the unlocked items
+    /// of a group — on unless every one of them is on already.
+    fn toggle_row(&mut self, row: usize) {
+        match self.rows.get(row).copied() {
+            Some(Row::Item(index)) => self.toggle(index),
+            Some(Row::Heading(_)) => {
+                let range = self.group_range(row);
+                let group = &mut self.items[range];
+                let on = !group
+                    .iter()
+                    .filter(|item| item.enabled)
+                    .all(|item| item.checked);
+                for item in group.iter_mut().filter(|item| item.enabled) {
+                    item.checked = on;
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        let last = self.rows.len().saturating_sub(1) as isize;
+        self.cursor = (self.cursor as isize + delta).clamp(0, last.max(0)) as usize;
     }
 
     /// The text of an item's row after the checkbox.
@@ -128,7 +176,7 @@ impl ChecklistModal {
             .chain(
                 self.items
                     .iter()
-                    .map(|item| UnicodeWidthStr::width(item.group.as_str()) as u16 + 2),
+                    .map(|item| UnicodeWidthStr::width(item.group.as_str()) as u16 + 6),
             )
             .max()
             .unwrap_or(0);
@@ -152,7 +200,7 @@ impl Modal for ChecklistModal {
         let screen_rows = area.height.saturating_sub(4 + prompt_lines) as usize;
         let visible = self.rows.len().min(MAX_ROWS).min(screen_rows.max(1));
         // Keep the cursor's row, and its group heading when it has one, in view.
-        let row = self.row_of(self.cursor);
+        let row = self.cursor;
         let first = if row > 0 && matches!(self.rows[row - 1], Row::Heading(_)) {
             row - 1
         } else {
@@ -190,22 +238,24 @@ impl Modal for ChecklistModal {
             let y = top + line as u16;
             match *row {
                 Row::Heading(index) => {
-                    let style = Style::default()
-                        .fg(theme.accented_fg)
-                        .add_modifier(Modifier::BOLD);
-                    buf.set_stringn(
-                        inner.x + 1,
-                        y,
-                        &self.items[index].group,
-                        inner.width as usize,
-                        style,
-                    );
+                    let row = self.scroll + line;
+                    let text = format!(" {} {}", self.group_mark(row), self.items[index].group);
+                    let style = if row == self.cursor {
+                        Style::default().fg(theme.bg).bg(theme.fg)
+                    } else if self.group_enabled(row) {
+                        Style::default().fg(theme.accented_fg)
+                    } else {
+                        dim
+                    }
+                    .add_modifier(Modifier::BOLD);
+                    let padded = format!("{text:<width$}", width = inner.width as usize);
+                    buf.set_stringn(inner.x, y, padded, inner.width as usize, style);
                 }
                 Row::Item(index) => {
                     let item = &self.items[index];
                     let mark = termide_ui::checkbox(item.checked);
                     let text = format!(" {mark} {}", Self::item_text(item));
-                    let style = if index == self.cursor {
+                    let style = if self.scroll + line == self.cursor {
                         Style::default().fg(theme.bg).bg(theme.fg)
                     } else if item.enabled {
                         Style::default().fg(theme.fg)
@@ -226,13 +276,13 @@ impl Modal for ChecklistModal {
         match chord.canonical.code {
             KeyCode::Esc => return Ok(Some(ModalResult::Cancelled)),
             KeyCode::Enter => return Ok(Some(ModalResult::Confirmed(self.checked()))),
-            KeyCode::Char(' ') => self.toggle(self.cursor),
+            KeyCode::Char(' ') => self.toggle_row(self.cursor),
             KeyCode::Up => self.move_by(-1),
             KeyCode::Down => self.move_by(1),
             KeyCode::PageUp => self.move_by(-(MAX_ROWS as isize)),
             KeyCode::PageDown => self.move_by(MAX_ROWS as isize),
             KeyCode::Home => self.cursor = 0,
-            KeyCode::End => self.cursor = self.items.len().saturating_sub(1),
+            KeyCode::End => self.cursor = self.rows.len().saturating_sub(1),
             _ => {}
         }
         Ok(None)
@@ -260,10 +310,10 @@ impl Modal for ChecklistModal {
                     && mouse.row < list.y + list.height;
                 if inside {
                     let row = self.scroll + (mouse.row - list.y) as usize;
-                    // A click on an item moves the cursor there and toggles it.
-                    if let Some(Row::Item(index)) = self.rows.get(row).copied() {
-                        self.cursor = index;
-                        self.toggle(index);
+                    // A click on a row moves the cursor there and toggles it.
+                    if row < self.rows.len() {
+                        self.cursor = row;
+                        self.toggle_row(row);
                     }
                 }
             }
@@ -324,7 +374,11 @@ mod tests {
             shown.iter().any(|r| r.contains("[ ] review — locked")),
             "{shown:?}"
         );
-        // Down to `bash`, off; down to the locked skill, which stays off.
+        // Past the heading and `read` to `bash`, off; down past the skills'
+        // heading to the locked skill, which stays off.
+        modal.handle_key(key(KeyCode::Down)).unwrap();
+        modal.handle_key(key(KeyCode::Down)).unwrap();
+        modal.handle_key(key(KeyCode::Char(' '))).unwrap();
         modal.handle_key(key(KeyCode::Down)).unwrap();
         modal.handle_key(key(KeyCode::Char(' '))).unwrap();
         modal.handle_key(key(KeyCode::Down)).unwrap();
@@ -334,6 +388,33 @@ mod tests {
             panic!("Enter applies");
         };
         assert_eq!(checked, vec!["read".to_string()]);
+    }
+
+    #[test]
+    fn a_heading_toggles_the_unlocked_items_of_its_group() {
+        let mut modal = ChecklistModal::new(
+            "Tools",
+            "",
+            vec![
+                item("read", "Built-in", true, true),
+                item("bash", "Built-in", false, true),
+                item("grep", "Built-in", true, false),
+                item("fetch", "Web", true, true),
+            ],
+        );
+        let shown = rows(&mut modal);
+        assert!(
+            shown.iter().any(|r| r.contains("[-] Built-in")),
+            "{shown:?}"
+        );
+        assert!(shown.iter().any(|r| r.contains("[✓] Web")), "{shown:?}");
+        // Partly on: the heading turns every unlocked item on.
+        modal.handle_key(key(KeyCode::Char(' '))).unwrap();
+        assert_eq!(modal.checked(), vec!["read", "bash", "grep", "fetch"]);
+        assert!(rows(&mut modal).iter().any(|r| r.contains("[✓] Built-in")));
+        // All on: off again, except the locked one; the other group is untouched.
+        modal.handle_key(key(KeyCode::Char(' '))).unwrap();
+        assert_eq!(modal.checked(), vec!["grep", "fetch"]);
     }
 
     #[test]
