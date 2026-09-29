@@ -307,7 +307,9 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
         out = out.replace(&format!("{{{{{name}}}}}"), text);
     }
     if let Some(append) = options.append.filter(|a| !a.trim().is_empty()) {
-        out.push('\n');
+        if !out.is_empty() {
+            out.push('\n');
+        }
         out.push_str(append.trim_end());
         out.push('\n');
     }
@@ -316,7 +318,10 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
         out = out.replace("\n\n\n", "\n\n");
     }
     let mut out = out.trim_end().to_string();
-    out.push('\n');
+    // An empty template stays empty, so the request carries no system prompt.
+    if !out.is_empty() {
+        out.push('\n');
+    }
     out
 }
 
@@ -493,6 +498,12 @@ mod tests {
         assert!(!custom.contains("# Tools"));
         assert!(custom.contains("Use conventional commits."));
         assert!(custom.ends_with("Answer in Russian.\n"));
+
+        // An empty soul is no prompt at all, not the shipped one.
+        options.soul = Some("");
+        assert_eq!(build_system_prompt(&options), "Answer in Russian.\n");
+        options.append = None;
+        assert_eq!(build_system_prompt(&options), "");
 
         // Without instructions the section is gone and nothing trails.
         let none: Vec<ContextFile> = Vec::new();

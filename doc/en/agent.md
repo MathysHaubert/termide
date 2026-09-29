@@ -764,7 +764,8 @@ An agent is a directory under `agents/`. `default` is the one the panel
 starts as; it has no directory and speaks with `ai/AGENTS.md`. Any directory
 defines an agent you can switch to from the **Agent** status chip; the picker shows each agent's description. Its
 `SOUL.md` is the agent's own template; without one it uses `ai/AGENTS.md`
-too. Beside it an `agent.toml` may set, every field optional:
+too. An empty `SOUL.md` (or `AGENTS.md`) means no system prompt at all: the
+model still gets the tools, but no instructions. Beside it an `agent.toml` may set, every field optional:
 
 ```toml
 description = "Reviews diffs and points at risks"

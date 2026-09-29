@@ -757,7 +757,9 @@ impl AgentDirs {
 
     /// The system prompt template of `agent`: its own `agents/<name>/SOUL.md`
     /// when a root has one, else the root `AGENTS.md` of the highest root
-    /// that has it (which is all the default agent has).
+    /// that has it (which is all the default agent has). A file that exists
+    /// is the template even when empty: an empty one means no system prompt,
+    /// not the shipped one.
     #[must_use]
     pub fn soul(&self, agent: &str) -> Option<String> {
         let own = (agent != DEFAULT_AGENT)
@@ -765,8 +767,7 @@ impl AgentDirs {
             .flatten();
         let path = own.or_else(|| self.find_file(ROOT_SOUL_FILE))?;
         match std::fs::read_to_string(&path) {
-            Ok(text) if !text.trim().is_empty() => Some(text),
-            Ok(_) => None,
+            Ok(text) => Some(text),
             Err(error) => {
                 log::warn!("cannot read {}: {error}", path.display());
                 None
@@ -819,6 +820,11 @@ mod tests {
             AgentDirs::new(&project, None, None).soul(DEFAULT_AGENT),
             None
         );
+        // An empty SOUL.md is an empty template, not a missing one.
+        let blank = global.join("agents/blank");
+        std::fs::create_dir_all(&blank).unwrap();
+        std::fs::write(blank.join(SOUL_FILE), "").unwrap();
+        assert_eq!(dirs.soul("blank").as_deref(), Some(""));
 
         let skills = dirs.merged_entries("skills");
         let names: Vec<&String> = skills.keys().collect();
@@ -833,7 +839,10 @@ mod tests {
             1
         );
         let agents = dirs.merged_entries("agents");
-        assert_eq!(agents.keys().collect::<Vec<_>>(), ["bare", "review"]);
+        assert_eq!(
+            agents.keys().collect::<Vec<_>>(),
+            ["bare", "blank", "review"]
+        );
 
         // Path resolvers point at the highest root that defines the item.
         assert_eq!(
