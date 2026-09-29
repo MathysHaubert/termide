@@ -866,7 +866,11 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
 # Tools
+{{if tools}}
 {{tools}}
+{{else}}
+No tool is described here. Call only what you are actually offered, and say what you could not check.
+{{/if}}
 
 # Guidelines
 - Read a file before you change it, and keep edits small and targeted.
@@ -874,9 +878,11 @@ You are a coding agent working inside termide, an all-in-one terminal workspace 
 - Be concise.
 {{guidelines}}
 
+{{if skills}}
 # Skills
 When a task matches one of these, load it with the `skill` tool before starting.
 {{skills}}
+{{/if}}
 
 # Environment
 {{environment}}
@@ -888,7 +894,19 @@ When a task matches one of these, load it with the `skill` tool before starting.
 правила, которые добавляют сами инструменты, `{{skills}}` — скиллы с именем и
 описанием, `{{environment}}` — рабочий каталог, платформа, дата и признак
 git-репозитория, `{{project_instructions}}` — файлы инструкций, описанные
-ниже. Перепишите файл, уберите раздел или добавьте свой; подстановка, которую
+ниже.
+
+`{{if tools}} … {{else}} … {{/if}}` убирает раздел из промпта, когда показать
+нечего: ветка `{{if}}` остаётся, если у имени есть что показать, иначе —
+`{{else}}`, а без `{{else}}` блок исчезает целиком. Поэтому сессия без
+скиллов не рассказывает модели про скиллы и не зовёт её вызывать `skill`,
+которого нет. Условие — тег на отдельной строке: тег в середине строки или
+внутри подставляемого значения остаётся текстом; вложенности нет.
+Одиночное `{{name}}` вне блока — по-прежнему просто значение, `(none)` для
+пустого списка, так что шаблон, написанный до появления блоков, продолжает
+работать.
+
+Перепишите файл, уберите раздел или добавьте свой; подстановка, которую
 вы не указали, просто не отправляется. Команда `/prompt` открывает собранный
 результат в просмотрщике, так что видно ровно то, что получает модель.
 

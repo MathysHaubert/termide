@@ -519,7 +519,28 @@ prompt text is code: the seed is the data file
 `crates/agent-core/assets/AGENTS.md` (the former fixed prompt, base
 guidelines included), copied to the configuration on first use; code only
 fills the placeholders from tool metadata, the environment and the instruction
-files. A file replaces the template whole rather than layering
+files.
+
+A placeholder that has nothing to show once cost the prompt a heading and the
+word `(none)`, and for skills worse than that: the seeded section told the
+model to load a skill with the `skill` tool the session had taken away
+(`skill` leaves the registry with no skills, `agent_panel.rs`). Decision:
+`{{if name}} … {{else}} … {{/if}}` line tags, keeping a section out of the
+prompt when that name is empty, the whole block dropping when there is no
+`{{else}}`. pi's `SYSTEM.md`/`APPEND_SYSTEM.md` and the XML wrappers of its
+context files are the alternatives in the field; both are
+whole-prompt affordances, not per-section ones, and mustache is the shape a
+user of any other template language already knows. Three rules keep the mini
+language from growing teeth: the condition asks about the key's raw value, so
+a `(none)` fallback cannot make a section look filled; a tag must be a whole
+line, so a tag inside a substituted value — a skill's `argument-hint`, a
+project's `AGENTS.md` — stays literal; and blocks do not nest, a violation
+being reported and the template left as it stands. A bare `{{name}}` outside a
+block still fills to the value, so every template written before blocks keeps
+working. Values are substituted after blocks are resolved, which is what makes
+the second rule hold.
+
+A file replaces the template whole rather than layering
 `identity`/`append` overrides, so what the user reads is what the model gets;
 the panel's **Show system prompt** writes the assembled text next to the
 session logs and opens it. The name is termide's own: only pi calls the file

@@ -11,6 +11,11 @@
 //! `AGENTS.md` convention with `CLAUDE.md` as a fallback in the same
 //! directory, walked from the filesystem root down to the working directory
 //! so the most specific file comes last.
+//!
+//! `{{if name}} … {{else}} … {{/if}}` keeps a section out of the prompt when
+//! that name has nothing to show, so an empty list costs no heading and no
+//! instruction to use a tool the session does not have. See
+//! [`evaluate_blocks`] for the three rules that bound it.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -144,6 +149,72 @@ impl<'a> PromptOptions<'a> {
     }
 }
 
+/// A `{{if …}}` block being read: which key it asks about, whether a branch
+/// of it has been kept, and whether the current line belongs to a kept one.
+struct Block<'a> {
+    key: &'a str,
+    taken: bool,
+    emitting: bool,
+}
+
+/// Resolve `{{if key}} … {{else}} … {{/if}}` blocks in a template: the
+/// `{{if}}` branch survives when `key` has content, the `{{else}}` branch
+/// otherwise, and the whole block drops when there is no `{{else}}`.
+///
+/// The condition asks `filled` about the key's raw value rather than about
+/// rendered text, so a placeholder that falls back to a word of its own
+/// (`(none)`) does not make its section look filled. A tag must be the whole
+/// line — tags inside substituted content therefore stay literal. Blocks do
+/// not nest: a block inside a block, an `{{else}}` or `{{/if}}` outside one,
+/// or an unclosed block is a template error, reported so the author can fix
+/// the file.
+fn evaluate_blocks(template: &str, filled: impl Fn(&str) -> bool) -> Result<String, String> {
+    let mut out = String::with_capacity(template.len());
+    let mut open: Option<Block<'_>> = None;
+    for line in template.split_inclusive('\n') {
+        let tag = line.trim();
+        let head = tag
+            .strip_prefix("{{if ")
+            .and_then(|rest| rest.strip_suffix("}}"))
+            .map(str::trim);
+        match (head, tag) {
+            (Some(key), _) => {
+                if let Some(block) = &open {
+                    return Err(format!("`if {key}` nests in `if {}`", block.key));
+                }
+                let taken = filled(key);
+                open = Some(Block {
+                    key,
+                    taken,
+                    emitting: taken,
+                });
+            }
+            (None, "{{else}}") | (None, "{{ else }}") => {
+                let Some(block) = &mut open else {
+                    return Err("`{{else}}` without `{{if}}`".to_string());
+                };
+                block.emitting = !block.taken;
+            }
+            (None, "{{/if}}") | (None, "{{ /if }}") => {
+                if open.take().is_none() {
+                    return Err("`{{/if}}` without `{{if}}`".to_string());
+                }
+            }
+            _ => {
+                // Text outside a block always stands; inside one, only the
+                // branch the key decided on.
+                if open.as_ref().is_none_or(|block| block.emitting) {
+                    out.push_str(line);
+                }
+            }
+        }
+    }
+    if let Some(block) = open {
+        return Err(format!("`if {}` has no `{{{{/if}}}}`", block.key));
+    }
+    Ok(out)
+}
+
 #[must_use]
 pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
     let snippets: Vec<String> = options
@@ -154,11 +225,7 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
                 .map(|snippet| format!("- {}: {snippet}", tool.name()))
         })
         .collect();
-    let tools = if snippets.is_empty() {
-        "(none)".to_string()
-    } else {
-        snippets.join("\n")
-    };
+    let tools = snippets.join("\n");
 
     let mut guidelines: Vec<&str> = Vec::new();
     for tool in options.tools.iter() {
@@ -203,33 +270,53 @@ pub fn build_system_prompt(options: &PromptOptions<'_>) -> String {
         }
     }
 
-    let skills = if options.skills.is_empty() {
-        "(none)".to_string()
-    } else {
-        options
-            .skills
-            .iter()
-            .map(|skill| {
-                let mut line = format!("- {}", skill.name);
-                if !skill.argument_hint.is_empty() {
-                    line.push_str(&format!(" {}", skill.argument_hint));
-                }
-                if !skill.description.is_empty() {
-                    line.push_str(&format!(": {}", skill.description));
-                }
-                line
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let skills = options
+        .skills
+        .iter()
+        .map(|skill| {
+            let mut line = format!("- {}", skill.name);
+            if !skill.argument_hint.is_empty() {
+                line.push_str(&format!(" {}", skill.argument_hint));
+            }
+            if !skill.description.is_empty() {
+                line.push_str(&format!(": {}", skill.description));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let template = options.soul.unwrap_or(SEED_TEMPLATE);
-    let mut out = template
-        .replace("{{tools}}", &tools)
-        .replace("{{guidelines}}", &guidelines)
-        .replace("{{skills}}", &skills)
-        .replace("{{environment}}", &environment)
-        .replace("{{project_instructions}}", instructions.trim_end());
+    // Blocks first: their condition is the raw value, which a substituted
+    // `(none)` would otherwise hide.
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("tools", tools);
+    values.insert("guidelines", guidelines);
+    values.insert("skills", skills);
+    values.insert("environment", environment);
+    values.insert("project_instructions", instructions);
+    let mut out = match evaluate_blocks(template, |key| {
+        values
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::warn!("the prompt template is left as it stands: {error}");
+            template.to_string()
+        }
+    };
+    // A name the template uses outside a block is filled as it has always
+    // been; a list with nothing in it says so rather than leaving a bare
+    // heading. An unknown placeholder stays verbatim, to be seen and fixed.
+    for (name, value) in &values {
+        let text = match value.trim() {
+            "" if matches!(*name, "tools" | "skills") => "(none)",
+            "" => "",
+            _ => value.as_str(),
+        };
+        out = out.replace(&format!("{{{{{name}}}}}"), text);
+    }
     if let Some(append) = options.append.filter(|a| !a.trim().is_empty()) {
         out.push('\n');
         out.push_str(append.trim_end());
@@ -359,7 +446,12 @@ mod tests {
         let prompt = build_system_prompt(&options);
 
         assert!(prompt.starts_with("You are a coding agent working inside termide"));
-        assert!(prompt.contains("# Tools\n(none)"), "echo has no snippet");
+        // The echo tool has no snippet, so the tools list is empty and the
+        // template's `{{else}}` branch stands for it.
+        assert!(
+            prompt.contains("# Tools\nNo tool is described here"),
+            "{prompt}"
+        );
         assert!(prompt.contains("- Be concise."));
         assert!(prompt.contains(&format!("- Working directory: {}", dir.path().display())));
         assert!(prompt.contains("- Date: 2026-09-17"));
@@ -367,8 +459,10 @@ mod tests {
         assert!(prompt.contains("# Project instructions"));
         assert!(prompt.contains("Use conventional commits."));
         assert!(prompt.ends_with("Answer in Russian.\n"));
-        assert!(prompt.contains("# Skills\n"), "seed template lists skills");
-        assert!(prompt.contains("\n(none)\n"));
+        assert!(
+            !prompt.contains("# Skills"),
+            "no skills: the section is gone\n{prompt}"
+        );
 
         let skills = vec![
             crate::layers::SkillInfo {
@@ -390,6 +484,10 @@ mod tests {
             listed.contains("- deploy <version>: Ship a release\n- notes\n"),
             "{listed}"
         );
+        assert!(
+            listed.contains("# Skills\nWhen a task matches one of these"),
+            "skills: the section is there\n{listed}"
+        );
 
         // A soul replaces the template whole; unknown placeholders stay.
         options.soul =
@@ -408,5 +506,85 @@ mod tests {
         let prompt = build_system_prompt(&bare);
         assert!(!prompt.contains("# Project instructions"));
         assert!(prompt.ends_with("- Git repository: yes\n"));
+    }
+
+    /// A filled set for [`evaluate_blocks`]: the names answer whether they hold.
+    fn filled<'a>(names: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |key| names.contains(&key)
+    }
+
+    #[test]
+    fn a_block_keeps_its_branch_or_drops() {
+        // Filled: the if-branch, with the value placeholder inside it.
+        let kept = evaluate_blocks(
+            "A\n{{if tools}}\nT:{{tools}}\n{{else}}\nnone\n{{/if}}\nB\n",
+            filled(&["tools"]),
+        )
+        .unwrap();
+        assert_eq!(kept, "A\nT:{{tools}}\nB\n");
+        // Empty with an else: the else-branch alone.
+        let else_only = evaluate_blocks(
+            "A\n{{if tools}}\nT\n{{else}}\nnone\n{{/if}}\nB\n",
+            filled(&[]),
+        )
+        .unwrap();
+        assert_eq!(else_only, "A\nnone\nB\n");
+        // Empty without an else: the whole block is gone, both branches and tags.
+        let dropped = evaluate_blocks("A\n{{if tools}}\nT\n{{/if}}\nB\n", filled(&[])).unwrap();
+        assert_eq!(dropped, "A\nB\n");
+        // An unknown key is empty: the else branch, or nothing.
+        assert_eq!(
+            evaluate_blocks("{{if nope}}\ny\n{{else}}\nn\n{{/if}}", filled(&[])).unwrap(),
+            "n\n"
+        );
+    }
+
+    #[test]
+    fn tags_must_be_whole_lines_and_values_stay_literal() {
+        // A tag in the middle of a line is text, and stays text.
+        let text = "use {{if tools}} inline\n";
+        assert_eq!(evaluate_blocks(text, filled(&[])).unwrap(), text);
+        // So does a tag inside a substituted value: the builder fills values
+        // after resolving blocks, so a skill hint like `{{if x}}` cannot open
+        // a block. Here the template's own block decides.
+        let out =
+            evaluate_blocks("{{if skills}}\n{{skills}}\n{{/if}}", filled(&["skills"])).unwrap();
+        assert_eq!(out, "{{skills}}\n");
+    }
+
+    #[test]
+    fn a_broken_template_is_reported() {
+        assert!(evaluate_blocks("{{if a}}\n{{if b}}\nx\n{{/if}}\n", filled(&["a"])).is_err());
+        assert!(evaluate_blocks("{{else}}\n", filled(&[])).is_err());
+        assert!(evaluate_blocks("{{/if}}\n", filled(&[])).is_err());
+        assert!(evaluate_blocks("{{if a}}\nx\n", filled(&["a"])).is_err());
+        // The error names the key, so the file can be found and fixed.
+        let error = evaluate_blocks("{{if skills}}\nx\n", filled(&["skills"])).unwrap_err();
+        assert!(error.contains("skills"), "{error}");
+    }
+
+    #[test]
+    fn the_seed_template_resolves_whole() {
+        // Every block of the shipped template closes, and both of its
+        // branches resolve to something: the seed is the file users edit.
+        let empty = evaluate_blocks(SEED_TEMPLATE, filled(&[])).unwrap();
+        assert!(!empty.contains("# Skills"));
+        assert!(empty.contains("No tool is described here"));
+        let full = evaluate_blocks(
+            SEED_TEMPLATE,
+            filled(&[
+                "tools",
+                "guidelines",
+                "skills",
+                "environment",
+                "project_instructions",
+            ]),
+        )
+        .unwrap();
+        assert!(full.contains("# Tools\n{{tools}}\n"));
+        assert!(full.contains("# Skills\nWhen a task matches"));
+        assert!(full.contains("{{environment}}"));
+        assert!(!full.contains("{{if "));
+        assert!(!full.contains("{{/if}}"));
     }
 }

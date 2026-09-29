@@ -329,7 +329,11 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
 # Tools
+{{if tools}}
 {{tools}}
+{{else}}
+No tool is described here. Call only what you are actually offered, and say what you could not check.
+{{/if}}
 
 # Guidelines
 - Read a file before you change it, and keep edits small and targeted.
@@ -337,9 +341,11 @@ You are a coding agent working inside termide, an all-in-one terminal workspace 
 - Be concise.
 {{guidelines}}
 
+{{if skills}}
 # Skills
 When a task matches one of these, load it with the `skill` tool before starting.
 {{skills}}
+{{/if}}
 
 # Environment
 {{environment}}
@@ -347,7 +353,11 @@ When a task matches one of these, load it with the `skill` tool before starting.
 {{project_instructions}}
 ```
 
-`{{tools}}` 是每个工具一行的工具列表，`{{guidelines}}` 是工具自身提供的规则，`{{skills}}` 是技能的名称和描述，`{{environment}}` 是工作目录、平台、日期以及是否为 git 仓库，`{{project_instructions}}` 是下文描述的指令文件。你可以改写该文件、删除某个部分或添加自己的内容；省略的占位符就不会发送。`/prompt` 会在查看器中打开组装后的结果，让你准确看到模型收到了什么。
+`{{tools}}` 是每个工具一行的工具列表，`{{guidelines}}` 是工具自身提供的规则，`{{skills}}` 是技能的名称和描述，`{{environment}}` 是工作目录、平台、日期以及是否为 git 仓库，`{{project_instructions}}` 是下文描述的指令文件。
+
+`{{if tools}} … {{else}} … {{/if}}` 在没有内容可展示时把该部分从提示词中移除：该名称有内容时保留 `{{if}}` 分支，否则保留 `{{else}}` 分支；不写 `{{else}}` 时整个块消失。因此没有技能的会话不会向模型谈及技能，也不会诱使它调用并不存在的 `skill` 工具。条件标签必须独占一行——行中间的标签、或被填充值内部的标签都保持为普通文本——并且块不能嵌套。块外单独的 `{{name}}` 仍然只是取值，空列表时为 `(none)`，所以在使用块之前写下的模板依旧有效。
+
+你可以改写该文件、删除某个部分或添加自己的内容；省略的占位符就不会发送。`/prompt` 会在查看器中打开组装后的结果，让你准确看到模型收到了什么。
 
 ### 服务提示词
 

@@ -845,7 +845,11 @@ which then replaces it:
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
 # Tools
+{{if tools}}
 {{tools}}
+{{else}}
+No tool is described here. Call only what you are actually offered, and say what you could not check.
+{{/if}}
 
 # Guidelines
 - Read a file before you change it, and keep edits small and targeted.
@@ -853,9 +857,11 @@ You are a coding agent working inside termide, an all-in-one terminal workspace 
 - Be concise.
 {{guidelines}}
 
+{{if skills}}
 # Skills
 When a task matches one of these, load it with the `skill` tool before starting.
 {{skills}}
+{{/if}}
 
 # Environment
 {{environment}}
@@ -867,9 +873,21 @@ When a task matches one of these, load it with the `skill` tool before starting.
 the tools themselves contribute, `{{skills}}` the skills by name and
 description, `{{environment}}` the working directory, platform, date and
 whether it is a git repository, and `{{project_instructions}}` the
-instruction files described below. Reword the file, drop a section or add
-your own; a placeholder you leave out is simply not sent. `/prompt` opens the
-assembled result in a viewer, so you can see exactly what the model gets.
+instruction files described below.
+
+`{{if tools}} … {{else}} … {{/if}}` keeps a section out of the prompt when
+there is nothing for it: the `{{if}}` branch survives when that name has
+something to show, the `{{else}}` branch otherwise, and the whole block
+vanishes when you write no `{{else}}`. So a session with no skills never tells
+the model about skills, and never invites it to call a `skill` tool that is
+not there. Conditions are line tags only — a tag in the middle of a line, or
+one inside a filled-in value, stays plain text — and they do not nest. A bare
+`{{name}}` outside a block is still just the value, `(none)` when the list is
+empty, so a template written before blocks keeps working.
+
+Reword the file, drop a section or add your own; a placeholder you leave out
+is simply not sent. `/prompt` opens the assembled result in a viewer, so you
+can see exactly what the model gets.
 
 ### Service prompts
 
