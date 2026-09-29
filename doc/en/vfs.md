@@ -157,6 +157,11 @@ line shows `Opening …` meanwhile), and the copy is deleted when the
 archive is left. Changes to the remote file while it is open are not
 noticed.
 
+An encrypted ZIP (ZipCrypto or AES) asks for its password when it is
+opened, and again after a wrong one. The password is checked by
+decrypting the smallest encrypted entry and is kept only while the
+archive stays open.
+
 ZIP names are read as UTF-8 whenever they are valid UTF-8 (macOS writes
 them so without saying). Older archives from Windows store names in the
 system's code page; one whose names look like Cyrillic in CP866 is read
@@ -200,7 +205,6 @@ saved projects like any other VFS URL.
 ## Limitations / known gaps
 
 - No `smb://` / `nfs://` provider yet — only URL parsing.
-- Encrypted ZIP entries are listed but cannot be read.
 - No resume-from-byte-offset for interrupted transfers: cancelled
   uploads start over from the beginning if re-issued.
 - The interactive password prompt cannot be saved persistently

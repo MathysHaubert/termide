@@ -297,6 +297,9 @@ pub trait Translation: Send + Sync {
     fn fm_pack_prompt_multiple(&self, count: usize) -> String;
     fn fm_pack_unknown_format(&self, name: &str) -> String;
     fn fm_pack_exists(&self, name: &str) -> String;
+    fn fm_archive_password_prompt(&self, name: &str) -> String;
+    /// Re-asks after the archive rejected the password.
+    fn fm_archive_password_wrong(&self, name: &str) -> String;
     fn status_file_saved(&self, name: &str) -> String;
     fn status_error_save(&self, error: &str) -> String;
     fn status_file_reloaded(&self) -> &str;
@@ -1143,6 +1146,7 @@ pub trait Translation: Send + Sync {
     fn modal_pack_title(&self) -> &str;
     /// Shown when packing is asked for in a remote or archive panel.
     fn fm_pack_local_only(&self) -> &str;
+    fn modal_archive_password_title(&self) -> &str;
 
     // Git panel strings
     fn git_no_repo(&self) -> &str;

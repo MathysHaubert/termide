@@ -37,4 +37,4 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-zip = { version = "8.6", default-features = false }
+zip = { version = "8.6", default-features = false, features = ["aes-crypto"] }

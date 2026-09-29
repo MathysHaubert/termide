@@ -995,6 +995,35 @@ impl FileManager {
         ));
     }
 
+    /// Ask for the password of the encrypted archive whose root is `archive`;
+    /// `wrong` says the last one was rejected.
+    fn request_archive_password(&mut self, archive: termide_vfs::VfsPath, wrong: bool) {
+        let t = termide_i18n::t();
+        let name = archive
+            .container()
+            .and_then(|c| c.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let prompt = if wrong {
+            t.fm_archive_password_wrong(&name)
+        } else {
+            t.fm_archive_password_prompt(&name)
+        };
+        let modal =
+            termide_modal::InputModal::new(t.modal_archive_password_title(), &prompt).password();
+        self.modal_request = Some((
+            PendingAction::ArchivePassword { archive },
+            ActiveModal::Input(Box::new(modal)),
+        ));
+    }
+
+    /// Open the encrypted archive whose root is `archive` with `password`,
+    /// the answer to [`Self::request_archive_password`].
+    pub fn open_archive_with_password(&mut self, archive: termide_vfs::VfsPath, password: String) {
+        self.navigation.prepare_for_going_down();
+        self.vfs.enter_archive_with_password(archive, password);
+    }
+
     /// Reconnect the current remote path with a fresh session (drops the dead
     /// provider first). Driven by the recovery dialog's "Reconnect" button.
     pub fn reconnect_remote(&mut self) {
@@ -1206,6 +1235,51 @@ mod tests {
             fm.entry_at(fm.selected).map(|e| e.name.as_str()),
             Some("outer.zip")
         );
+    }
+
+    /// An encrypted archive asks for its password, asks again after a wrong
+    /// one, and opens with the right one.
+    #[test]
+    fn an_encrypted_archive_asks_for_its_password() {
+        use std::io::Write;
+        let temp_dir = TempDir::new().unwrap();
+        let archive = temp_dir.path().join("locked.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file(
+            "secret.txt",
+            zip::write::SimpleFileOptions::default()
+                .with_aes_encryption(zip::AesMode::Aes256, "hunter2"),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.finish().unwrap();
+
+        let mut fm = FileManager::new_with_path(temp_dir.path().to_path_buf());
+        fm.load_directory().unwrap();
+        wait_for_local_listing(&mut fm);
+        let asked = |fm: &mut FileManager| match fm.modal_request.take() {
+            Some((PendingAction::ArchivePassword { archive }, ActiveModal::Input(_))) => archive,
+            other => panic!(
+                "expected a password prompt, got {:?}",
+                other.map(|(a, _)| a)
+            ),
+        };
+
+        fm.selected = fm.find_entry_index("locked.zip").unwrap();
+        fm.enter();
+        wait_for_vfs(&mut fm);
+        fm.on_tick();
+        let root = asked(&mut fm);
+        assert!(fm.vfs.is_local(), "the panel stays in the directory");
+
+        fm.open_archive_with_password(root, "wrong".to_string());
+        wait_for_vfs(&mut fm);
+        fm.on_tick();
+        let root = asked(&mut fm);
+
+        fm.open_archive_with_password(root, "hunter2".to_string());
+        wait_for_vfs(&mut fm);
+        assert_eq!(names(&fm), ["..", "secret.txt"]);
     }
 
     /// P offers an archive next to the selection in every writable format;

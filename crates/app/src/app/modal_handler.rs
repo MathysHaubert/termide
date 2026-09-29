@@ -414,6 +414,13 @@ impl App {
                 PendingAction::PackPaths { sources } => {
                     self.handle_pack_paths(sources, value)?;
                 }
+                PendingAction::ArchivePassword { archive } => {
+                    if let Some(password) = value.downcast_ref::<String>() {
+                        if let Some(fm) = self.active_file_manager_mut() {
+                            fm.open_archive_with_password(archive, password.clone());
+                        }
+                    }
+                }
                 PendingAction::BatchFileOperation { operation } => {
                     self.process_batch_operation(operation);
                 }

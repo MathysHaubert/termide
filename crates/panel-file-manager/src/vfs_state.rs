@@ -65,6 +65,9 @@ pub struct VfsState {
     /// path and whether it is a directory. Taken by the FileManager on the
     /// next tick.
     completed_create: Option<VfsResult<(PathBuf, bool)>>,
+    /// An archive that needs a password: its root, and whether a password
+    /// was given and rejected. Taken by the FileManager on the next tick.
+    password_request: Option<(VfsPath, bool)>,
 }
 
 impl Default for VfsState {
@@ -90,6 +93,7 @@ impl VfsState {
             connection_started: None,
             resolved_file_open: None,
             completed_create: None,
+            password_request: None,
         }
     }
 
@@ -105,6 +109,7 @@ impl VfsState {
             connection_started: None,
             resolved_file_open: None,
             completed_create: None,
+            password_request: None,
         }
     }
 
@@ -320,6 +325,24 @@ impl VfsState {
         true
     }
 
+    /// Take the pending request for an archive password, if any.
+    pub fn take_password_request(&mut self) -> Option<(VfsPath, bool)> {
+        self.password_request.take()
+    }
+
+    /// Open the encrypted archive whose root is `root` with `password`. A
+    /// wrong password asks again through [`Self::take_password_request`].
+    pub fn enter_archive_with_password(&mut self, root: VfsPath, password: String) {
+        self.previous_path = Some(self.current_path.clone());
+        self.connection_status = Some(connecting_status(&root));
+        self.connection_started = Some(Instant::now());
+        let operation = self
+            .manager
+            .connect_archive(&root, ConnectOptions::with_password(password));
+        self.pending_operation = Some(PendingVfsOperation::Connect(operation));
+        self.current_path = root;
+    }
+
     /// Take the outcome of a finished remote create, if one is ready.
     pub fn take_completed_create(&mut self) -> Option<VfsResult<(PathBuf, bool)>> {
         self.completed_create.take()
@@ -448,6 +471,20 @@ impl VfsState {
                             self.current_path = prev;
                         }
                         Some(Err(e))
+                    }
+                    Some(Err(e @ (VfsError::PasswordRequired | VfsError::WrongPassword)))
+                        if self.current_path.is_archive() =>
+                    {
+                        // Ask for the password instead of reporting an error;
+                        // the panel stays where it was meanwhile.
+                        let wrong = matches!(e, VfsError::WrongPassword);
+                        self.password_request = Some((self.current_path.clone(), wrong));
+                        self.connection_status = None;
+                        self.clear_connection_tracking();
+                        if let Some(prev) = self.previous_path.take() {
+                            self.current_path = prev;
+                        }
+                        None
                     }
                     Some(Err(e)) => {
                         log::error!("VfsState: Connection failed: {}", e);

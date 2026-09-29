@@ -124,6 +124,14 @@ impl FileManager {
             }
         }
 
+        // An archive needs its password: ask for it.
+        if let Some((archive, wrong)) = self.vfs.take_password_request() {
+            self.request_archive_password(archive, wrong);
+            events.push(PanelEvent::ClearStatus);
+            events.push(PanelEvent::NeedsRedraw);
+            return events;
+        }
+
         // A remote symlink resolved to a file — open it in the editor.
         if let Some(remote) = self.vfs.take_resolved_file_open() {
             events.push(PanelEvent::ClearStatus);

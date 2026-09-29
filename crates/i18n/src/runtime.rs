@@ -752,6 +752,7 @@ impl Translation for RuntimeTranslation {
         op_type_pack,
         modal_pack_title,
         fm_pack_local_only,
+        modal_archive_password_title,
         git_no_repo,
         git_branch_detached,
         git_refreshed,
@@ -1257,6 +1258,14 @@ impl Translation for RuntimeTranslation {
 
     fn fm_pack_exists(&self, name: &str) -> String {
         self.format("fm_pack_exists", &[("name", name)])
+    }
+
+    fn fm_archive_password_prompt(&self, name: &str) -> String {
+        self.format("fm_archive_password_prompt", &[("name", name)])
+    }
+
+    fn fm_archive_password_wrong(&self, name: &str) -> String {
+        self.format("fm_archive_password_wrong", &[("name", name)])
     }
 
     fn status_file_saved(&self, name: &str) -> String {
