@@ -27,8 +27,8 @@ use std::time::SystemTime;
 use crate::error::{VfsError, VfsResult};
 use crate::traits::VfsProvider;
 use crate::types::{
-    ConnectOptions, ConnectionState, VfsDownloadOperation, VfsEntry, VfsMetadata, VfsOperation,
-    VfsPath,
+    AuthMethod, ConnectOptions, ConnectionState, VfsDownloadOperation, VfsEntry, VfsMetadata,
+    VfsOperation, VfsPath,
 };
 use extract::Control;
 use index::ArchiveIndex;
@@ -114,7 +114,7 @@ impl ArchiveProvider {
         self.open.clone().ok_or(VfsError::NotConnected)
     }
 
-    fn open_archive(&self) -> VfsResult<OpenArchive> {
+    fn open_archive(&self, password: Option<&str>) -> VfsResult<OpenArchive> {
         match &self.source {
             Source::Local if !self.container.is_local() => {
                 return Err(VfsError::NotSupported(
@@ -136,7 +136,8 @@ impl ArchiveProvider {
         let format = ArchiveFormat::detect(path)?.ok_or_else(|| {
             VfsError::Archive(format!("{} is not a supported archive", path.display()))
         })?;
-        let (index, backend) = source::open(path, format)?;
+        let (index, mut backend) = source::open(path, format)?;
+        backend.unlock(password)?;
         Ok(OpenArchive {
             index,
             backend,
@@ -189,9 +190,15 @@ impl VfsProvider for ArchiveProvider {
         }
     }
 
-    fn connect(&mut self, _options: ConnectOptions) -> VfsOperation<()> {
+    /// A password in `options` unlocks an archive with encrypted entries;
+    /// without one such an archive fails with [`VfsError::PasswordRequired`].
+    fn connect(&mut self, options: ConnectOptions) -> VfsOperation<()> {
+        let password = match &options.auth {
+            AuthMethod::Password(password) => Some(password.as_str()),
+            _ => None,
+        };
         // The manager already runs connect on a background thread.
-        let result = self.open_archive().map(|open| {
+        let result = self.open_archive(password).map(|open| {
             self.open = Some(Arc::new(open));
         });
         VfsOperation::ready(result)

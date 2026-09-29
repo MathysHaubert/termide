@@ -24,7 +24,13 @@ type ZipReader = zip::ZipArchive<BufReader<File>>;
 pub(crate) enum Backend {
     /// Zip keeps its parsed central directory, so any entry can be reached
     /// directly. The mutex serialises readers over the shared file handle.
-    Zip(Mutex<ZipReader>),
+    Zip {
+        reader: Mutex<ZipReader>,
+        /// The smallest encrypted file entry, used to check a password.
+        encrypted: Option<usize>,
+        /// Decrypts the encrypted entries once [`Backend::unlock`] took it.
+        password: Option<Vec<u8>>,
+    },
     /// Tar has no directory: reaching an entry means streaming from the start.
     Tar {
         path: PathBuf,
@@ -38,8 +44,15 @@ pub(crate) fn open(path: &Path, format: ArchiveFormat) -> VfsResult<(ArchiveInde
         ArchiveFormat::Zip => {
             let mut zip =
                 zip::ZipArchive::new(BufReader::new(File::open(path)?)).map_err(zip_error)?;
-            let index = index_zip(&mut zip)?;
-            Ok((index, Backend::Zip(Mutex::new(zip))))
+            let (index, encrypted) = index_zip(&mut zip)?;
+            Ok((
+                index,
+                Backend::Zip {
+                    reader: Mutex::new(zip),
+                    encrypted,
+                    password: None,
+                },
+            ))
         }
         ArchiveFormat::Tar(compression) => {
             let index = index_tar(path, compression)?;
@@ -55,6 +68,35 @@ pub(crate) fn open(path: &Path, format: ArchiveFormat) -> VfsResult<(ArchiveInde
 }
 
 impl Backend {
+    /// Take the password for an archive with encrypted entries, checked by
+    /// decrypting the smallest of them in full: ZipCrypto's header check
+    /// alone lets about one wrong password in 256 through, the CRC does not.
+    /// Archives without encryption ignore the password.
+    pub(crate) fn unlock(&mut self, password: Option<&str>) -> VfsResult<()> {
+        let Backend::Zip {
+            reader,
+            encrypted: Some(probe),
+            password: slot,
+        } = self
+        else {
+            return Ok(());
+        };
+        let password = password.ok_or(VfsError::PasswordRequired)?;
+        let zip = reader
+            .get_mut()
+            .map_err(|_| VfsError::Archive("zip reader lock poisoned".into()))?;
+        let mut entry = match zip.by_index_decrypt(*probe, password.as_bytes()) {
+            Ok(entry) => entry,
+            Err(zip::result::ZipError::InvalidPassword) => return Err(VfsError::WrongPassword),
+            Err(e) => return Err(zip_error(e)),
+        };
+        // A wrong key yields garbage: a failed inflate or a CRC mismatch.
+        io::copy(&mut entry, &mut io::sink()).map_err(|_| VfsError::WrongPassword)?;
+        drop(entry);
+        *slot = Some(password.as_bytes().to_vec());
+        Ok(())
+    }
+
     /// Call `visit` with a reader for each of `sources`. Zip entries are
     /// visited in the given order; tar entries in stream order, in one pass
     /// that stops once every requested entry has been seen.
@@ -64,15 +106,21 @@ impl Backend {
         mut visit: impl FnMut(EntrySource, &mut dyn Read) -> VfsResult<()>,
     ) -> VfsResult<()> {
         match self {
-            Backend::Zip(zip) => {
+            Backend::Zip {
+                reader, password, ..
+            } => {
                 for &source in sources {
                     let EntrySource::Zip(i) = source else {
                         continue;
                     };
-                    let mut zip = zip
+                    let mut zip = reader
                         .lock()
                         .map_err(|_| VfsError::Archive("zip reader lock poisoned".into()))?;
-                    let mut entry = zip.by_index(i).map_err(zip_error)?;
+                    let entry = match password {
+                        Some(password) => zip.by_index_decrypt(i, password),
+                        None => zip.by_index(i),
+                    };
+                    let mut entry = entry.map_err(zip_error)?;
                     visit(source, &mut ArchiveRead(&mut entry))?;
                 }
                 Ok(())
@@ -142,12 +190,14 @@ pub(crate) fn copy_error(e: io::Error) -> VfsError {
     }
 }
 
-fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
+/// The table of contents of a zip, and its smallest encrypted file entry.
+fn index_zip(zip: &mut ZipReader) -> VfsResult<(ArchiveIndex, Option<usize>)> {
     struct Entry {
         raw_name: Vec<u8>,
         cp437_name: String,
         is_dir: bool,
         is_symlink: bool,
+        encrypted: bool,
         meta: VfsMetadata,
     }
 
@@ -175,9 +225,16 @@ fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
             cp437_name: entry.name().to_owned(),
             is_dir: entry.is_dir(),
             is_symlink: entry.is_symlink(),
+            encrypted: entry.encrypted(),
             meta: metadata(file_type, entry.size(), modified, entry.unix_mode()),
         });
     }
+    let encrypted = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.encrypted && !e.is_dir && !e.is_symlink)
+        .min_by_key(|(_, e)| e.meta.size)
+        .map(|(i, _)| i);
 
     let legacy = names::guess(entries.iter().map(|e| e.raw_name.as_slice()));
     let mut index = ArchiveIndex::new();
@@ -185,6 +242,9 @@ fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
         let name = names::decode(&entry.raw_name, &entry.cp437_name, legacy);
         let kind = if entry.is_dir {
             NodeKind::Dir
+        } else if entry.is_symlink && entry.encrypted {
+            // Its target is encrypted content; without it the link dangles.
+            NodeKind::Symlink(String::new())
         } else if entry.is_symlink {
             // A zip symlink stores its target as the entry's content.
             let mut target = String::new();
@@ -198,7 +258,7 @@ fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
         };
         index.insert(&name, kind, entry.meta);
     }
-    Ok(index)
+    Ok((index, encrypted))
 }
 
 fn index_tar(path: &Path, compression: TarCompression) -> VfsResult<ArchiveIndex> {

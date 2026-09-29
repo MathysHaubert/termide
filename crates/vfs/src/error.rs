@@ -63,6 +63,14 @@ pub enum VfsError {
     #[error("Operation cancelled")]
     Cancelled,
 
+    /// The resource is encrypted and no password was given.
+    #[error("Password required")]
+    PasswordRequired,
+
+    /// The password given for an encrypted resource was rejected.
+    #[error("Wrong password")]
+    WrongPassword,
+
     /// Provider is already connected.
     #[error("Already connected")]
     AlreadyConnected,

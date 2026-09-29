@@ -8,6 +8,95 @@ use crate::VfsManager;
 
 const README: &[u8] = b"hello from the archive\n";
 
+mod encryption {
+    use super::*;
+
+    /// Written by Info-ZIP `zip -P hunter2`: `secret/note.txt` encrypted
+    /// with ZipCrypto, `readme.txt` plain.
+    const ZIPCRYPTO: &[u8] = include_bytes!("fixtures/zipcrypto.zip");
+
+    fn connect(archive: &Path, password: Option<&str>) -> VfsResult<ArchiveProvider> {
+        let mut provider = ArchiveProvider::new(VfsPath::local(archive));
+        let options = match password {
+            Some(p) => ConnectOptions::with_password(p),
+            None => ConnectOptions::default(),
+        };
+        provider.connect(options).recv()?;
+        Ok(provider)
+    }
+
+    fn aes_zip(path: &Path) {
+        use zip::write::SimpleFileOptions;
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        zip.start_file(
+            "secret/note.txt",
+            SimpleFileOptions::default().with_aes_encryption(zip::AesMode::Aes256, "hunter2"),
+        )
+        .unwrap();
+        zip.write_all(b"top secret\n").unwrap();
+        zip.start_file("readme.txt", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"plain\n").unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn an_encrypted_zip_asks_for_the_password_and_checks_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let zipcrypto = dir.path().join("zipcrypto.zip");
+        fs::write(&zipcrypto, ZIPCRYPTO).unwrap();
+        let aes = dir.path().join("aes.zip");
+        aes_zip(&aes);
+
+        for archive in [&zipcrypto, &aes] {
+            let what = archive.display().to_string();
+            assert!(
+                matches!(connect(archive, None), Err(VfsError::PasswordRequired)),
+                "{what}"
+            );
+            assert!(
+                matches!(connect(archive, Some("nope")), Err(VfsError::WrongPassword)),
+                "{what}"
+            );
+
+            let provider = connect(archive, Some("hunter2")).unwrap();
+            let secret = provider
+                .read_file(&at(archive, "/secret/note.txt"))
+                .recv()
+                .unwrap();
+            assert_eq!(secret, b"top secret\n", "{what}");
+            let plain = provider
+                .read_file(&at(archive, "/readme.txt"))
+                .recv()
+                .unwrap();
+            assert_eq!(plain, b"plain\n", "{what}");
+
+            let dest = dir.path().join(format!(
+                "out-{}",
+                archive.file_name().unwrap().to_string_lossy()
+            ));
+            provider.download(&at(archive, "/"), &dest).recv().unwrap();
+            assert_eq!(
+                fs::read(dest.join("secret/note.txt")).unwrap(),
+                b"top secret\n"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_archive_ignores_a_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("plain.zip");
+        write_zip(&archive);
+        let provider = connect(&archive, Some("unused")).unwrap();
+        let data = provider
+            .read_file(&at(&archive, "/docs/readme.md"))
+            .recv()
+            .unwrap();
+        assert_eq!(data, README);
+    }
+}
+
 fn big() -> Vec<u8> {
     (0..600_000u32).map(|i| (i % 251) as u8).collect()
 }
