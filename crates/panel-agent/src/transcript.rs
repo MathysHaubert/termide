@@ -924,6 +924,28 @@ fn wrap_plain(
     builder.finish().lines
 }
 
+/// The user's own text after `lead` (the `›` mark, or an indent), keeping its
+/// line breaks: [`wrap_plain`] two columns narrower, with continuation rows
+/// indented under the text. Blank rows stay empty.
+fn prompt_rows(
+    text: &str,
+    lead: Span<'static>,
+    width: u16,
+    style: Style,
+    colors: &ThemeColors,
+    is_light: bool,
+) -> Vec<Line<'static>> {
+    let mut rows = wrap_plain(text, width.saturating_sub(2), style, colors, is_light);
+    for (i, row) in rows.iter_mut().enumerate() {
+        if i == 0 {
+            row.spans.insert(0, lead.clone());
+        } else if !row.spans.is_empty() {
+            row.spans.insert(0, Span::raw("  "));
+        }
+    }
+    rows
+}
+
 /// The `✓`/`✗` status glyph for a finished block.
 fn status_span(ok: bool, colors: &ThemeColors) -> Span<'static> {
     if ok {
@@ -1416,32 +1438,35 @@ fn render_body(
                 // last, like every other block. The model still gets the whole
                 // message; this is only the transcript.
                 let (hidden, tail_start) = fold_split(all.len());
-                let mut head = Builder::new(width, colors, is_light);
-                head.styled("› ", mark);
-                head.push_style(bold);
-                head.text(&all[..FOLD_HEAD_LINES].join("\n"));
-                head.pop_style();
-                head.end_paragraph();
-                plate.extend(head.finish().lines);
+                plate.extend(prompt_rows(
+                    &all[..FOLD_HEAD_LINES].join("\n"),
+                    Span::styled("› ", mark),
+                    width,
+                    bold,
+                    colors,
+                    is_light,
+                ));
                 plate.push(Line::styled(
                     format!("  {}", t.agent_more_lines(hidden)),
                     Style::default().fg(colors.fg),
                 ));
-                let mut tail = Builder::new(width, colors, is_light);
-                tail.styled("  ", bold);
-                tail.push_style(bold);
-                tail.text(&all[tail_start..].join("\n"));
-                tail.pop_style();
-                tail.end_paragraph();
-                plate.extend(tail.finish().lines);
+                plate.extend(prompt_rows(
+                    &all[tail_start..].join("\n"),
+                    Span::raw("  "),
+                    width,
+                    bold,
+                    colors,
+                    is_light,
+                ));
             } else {
-                let mut builder = Builder::new(width, colors, is_light);
-                builder.styled("› ", mark);
-                builder.push_style(bold);
-                builder.text(trimmed);
-                builder.pop_style();
-                builder.end_paragraph();
-                plate.extend(builder.finish().lines);
+                plate.extend(prompt_rows(
+                    trimmed,
+                    Span::styled("› ", mark),
+                    width,
+                    bold,
+                    colors,
+                    is_light,
+                ));
             }
             if !at.is_empty() {
                 push_time_meta(&mut plate, width, at, true, colors.fg, colors);
@@ -2000,6 +2025,26 @@ mod tests {
         assert!(unfolded.contains("› /review a.rs"), "{unfolded}");
         assert!(unfolded.contains("  Review a.rs."), "{unfolded}");
         assert!(unfolded.contains("  Quote the lines."), "{unfolded}");
+    }
+
+    #[test]
+    fn a_prompt_keeps_its_line_breaks_in_the_user_block() {
+        let colors = ThemeColors::default();
+        let mut transcript = Transcript::default();
+        transcript.push(Item::User {
+            text: "first line\n\n- one\n- two and a much longer tail".into(),
+            at: String::new(),
+            command: None,
+        });
+        let rows: Vec<String> = text_of(transcript.lines(20, &colors, false))
+            .into_iter()
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        let text = rows.join("\n");
+        assert!(
+            text.contains("› first line\n\n  - one\n  - two and a much\n  longer tail\n"),
+            "{text}"
+        );
     }
 
     #[test]
