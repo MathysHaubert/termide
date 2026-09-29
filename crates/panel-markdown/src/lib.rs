@@ -384,7 +384,9 @@ impl Panel for MarkdownPanel {
 
         // While the find bar is open it owns input (Esc / Ctrl+F close it).
         if self.find_bar.is_some() {
-            let ctrl_f = key.code == KeyCode::Char('f') && key.modifiers == KeyModifiers::CONTROL;
+            let shortcut = chord.canonical;
+            let ctrl_f =
+                shortcut.code == KeyCode::Char('f') && shortcut.modifiers == KeyModifiers::CONTROL;
             if ctrl_f {
                 self.close_find();
                 return vec![PanelEvent::NeedsRedraw];

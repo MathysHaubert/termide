@@ -690,7 +690,7 @@ impl Panel for FileManager {
 
         // While the inline search bar is open it owns the keyboard.
         if self.search_bar.is_some() {
-            return self.handle_search_bar_key(key);
+            return self.handle_search_bar_key(chord);
         }
 
         // Raw key — HotkeyTable.matches() handles Cyrillic normalization internally.

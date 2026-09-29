@@ -394,6 +394,9 @@ impl Modal for SettingsModal {
             return self.handle_keybindings_key(chord.canonical);
         }
 
+        // Outside a field being edited nothing is typed, so the zones match
+        // the layout-normalized key: `Ctrl+Ы` applies as `Ctrl+S` does.
+        let key = chord.canonical;
         match self.focus {
             FocusArea::Sidebar => self.handle_sidebar_key(key),
             FocusArea::Content => self.handle_content_key(key),

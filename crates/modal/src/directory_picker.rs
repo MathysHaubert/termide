@@ -434,7 +434,9 @@ impl Modal for DirectoryPickerModal {
         &mut self,
         chord: termide_core::KeyChord,
     ) -> Result<Option<ModalResult<Self::Result>>> {
-        let key = chord.raw;
+        // No text input here: letter keys are shortcuts, matched on the
+        // layout-normalized form so they work on a Cyrillic layout too.
+        let key = chord.canonical;
         match key.code {
             KeyCode::Esc => Ok(Some(ModalResult::Cancelled)),
             KeyCode::Tab | KeyCode::BackTab => {

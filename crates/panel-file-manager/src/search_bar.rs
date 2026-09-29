@@ -278,11 +278,14 @@ impl FileManager {
     /// open). Returns the panel events produced.
     pub(crate) fn handle_search_bar_key(
         &mut self,
-        key: crossterm::event::KeyEvent,
+        chord: termide_core::KeyChord,
     ) -> Vec<PanelEvent> {
+        // The query is typed, so the input keeps the raw key; the results
+        // list only takes shortcuts, matched on the layout-normalized form
+        // (`ф` toggles all as `a` does).
         let events = match self.bar_focus {
-            BarFocus::Input => self.handle_bar_input_key(key),
-            BarFocus::Results => self.handle_bar_results_key(key),
+            BarFocus::Input => self.handle_bar_input_key(chord.raw),
+            BarFocus::Results => self.handle_bar_results_key(chord.canonical),
         };
         self.sync_bar_status();
         events
@@ -500,7 +503,10 @@ mod tests {
         assert!(fm.search_bar.is_some());
         assert_eq!(fm.bar_focus, BarFocus::Input);
 
-        fm.handle_search_bar_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        fm.handle_search_bar_key(termide_core::KeyChord::identity(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        )));
         assert!(fm.search_bar.is_none());
         assert!(fm.file_search.is_none());
     }
@@ -511,14 +517,20 @@ mod tests {
         let (mut fm, _t) = create_file_manager_in_temp();
 
         fm.open_content_bar(false); // focus lands on the Find field
-        fm.handle_search_bar_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        fm.handle_search_bar_key(termide_core::KeyChord::identity(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        )));
         assert!(
             fm.file_search.is_some(),
             "typing a query should start a content search"
         );
 
         // Enter on Find jumps focus into the results list for arrow navigation.
-        fm.handle_search_bar_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        fm.handle_search_bar_key(termide_core::KeyChord::identity(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
         assert_eq!(fm.bar_focus, BarFocus::Results);
     }
 
@@ -528,10 +540,16 @@ mod tests {
         let (mut fm, _t) = create_file_manager_in_temp();
 
         fm.open_content_bar(false);
-        fm.handle_search_bar_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        fm.handle_search_bar_key(termide_core::KeyChord::identity(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        )));
         assert!(fm.file_search.is_some());
 
-        fm.handle_search_bar_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        fm.handle_search_bar_key(termide_core::KeyChord::identity(KeyEvent::new(
+            KeyCode::Backspace,
+            KeyModifiers::NONE,
+        )));
         assert!(
             fm.file_search.is_none(),
             "emptying the query should clear the results"

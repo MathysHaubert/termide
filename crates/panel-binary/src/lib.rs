@@ -461,10 +461,13 @@ impl Panel for BinaryPanel {
 
     fn handle_key(&mut self, chord: KeyChord) -> Vec<PanelEvent> {
         let key = chord.raw;
+        // Shortcuts match the layout-normalized key (`Ctrl+А` is `Ctrl+F`, `р`
+        // is `h`); the find bar's query and typed bytes keep the raw one.
+        let shortcut = chord.canonical;
 
         // While the find bar is open it owns input (Esc / Ctrl+F close it).
         if self.find_bar.is_some() {
-            if key.code == KeyCode::Char('f') && key.modifiers == KeyModifiers::CONTROL {
+            if shortcut.code == KeyCode::Char('f') && shortcut.modifiers == KeyModifiers::CONTROL {
                 self.close_find();
                 return vec![PanelEvent::NeedsRedraw];
             }
@@ -474,7 +477,7 @@ impl Panel for BinaryPanel {
                 None => vec![PanelEvent::NeedsRedraw],
             };
         }
-        if key.code == KeyCode::Char('f') && key.modifiers == KeyModifiers::CONTROL {
+        if shortcut.code == KeyCode::Char('f') && shortcut.modifiers == KeyModifiers::CONTROL {
             self.open_find();
             return vec![PanelEvent::NeedsRedraw];
         }
@@ -489,7 +492,7 @@ impl Panel for BinaryPanel {
         }
         // Ctrl+R: re-read the file from disk (pick up external changes), keeping
         // the cursor. Skipped while there are unsaved edits so they aren't lost.
-        if key.code == KeyCode::Char('r') && key.modifiers == KeyModifiers::CONTROL {
+        if shortcut.code == KeyCode::Char('r') && shortcut.modifiers == KeyModifiers::CONTROL {
             if !self.is_modified() {
                 let cursor = self.cursor;
                 self.set_file(self.file_path.clone());
@@ -502,7 +505,7 @@ impl Panel for BinaryPanel {
         // Edit mode: Ctrl+S asks to save; typed hex digits / chars overwrite
         // (handled before navigation so letters aren't treated as motions).
         if self.editable {
-            if key.code == KeyCode::Char('s') && key.modifiers == KeyModifiers::CONTROL {
+            if shortcut.code == KeyCode::Char('s') && shortcut.modifiers == KeyModifiers::CONTROL {
                 if self.is_modified() {
                     let name = self.title.clone();
                     return vec![PanelEvent::ShowConfirm {
@@ -521,7 +524,7 @@ impl Panel for BinaryPanel {
         let page = ((self.last_area.height as i64 - 1).max(1)) * cols;
         let extend = key.modifiers.contains(KeyModifiers::SHIFT);
         let ro = !self.editable; // vim-letter motions only when not editing
-        match key.code {
+        match shortcut.code {
             KeyCode::Tab => {
                 self.zone = match self.zone {
                     Zone::Hex => Zone::Ascii,

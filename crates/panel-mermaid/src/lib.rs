@@ -345,7 +345,9 @@ impl Panel for MermaidPanel {
     }
 
     fn handle_key(&mut self, chord: KeyChord) -> Vec<PanelEvent> {
-        let key = chord.raw;
+        // No text input here: every key is a shortcut, matched on the
+        // layout-normalized form so it works on a Cyrillic layout too.
+        let key = chord.canonical;
         if self.hotkeys.matches("toggle_view", &key) {
             return vec![PanelEvent::SwapActiveToText(self.file_path.clone())];
         }

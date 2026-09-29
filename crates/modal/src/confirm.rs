@@ -123,7 +123,9 @@ impl Modal for ConfirmModal {
         &mut self,
         chord: termide_core::KeyChord,
     ) -> Result<Option<ModalResult<Self::Result>>> {
-        let key = chord.raw;
+        // No text input here: letter keys are shortcuts, matched on the
+        // layout-normalized form so they work on a Cyrillic layout too.
+        let key = chord.canonical;
         match key.code {
             KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
                 self.selected = !self.selected;
@@ -206,6 +208,26 @@ mod tests {
         modal
             .handle_key(KeyChord::identity(KeyEvent::new(code, KeyModifiers::NONE)))
             .unwrap()
+    }
+
+    #[test]
+    fn yes_and_no_keys_answer_on_a_cyrillic_layout_too() {
+        let typed = |c: char| {
+            KeyChord::new(
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                &termide_core::KeyNormalizer::default(),
+            )
+        };
+        // `н` and `т` sit where `y` and `n` do on a Russian layout.
+        let mut modal = ConfirmModal::new("Delete", "Sure?");
+        assert!(matches!(
+            modal.handle_key(typed('н')).unwrap(),
+            Some(ModalResult::Confirmed(true))
+        ));
+        assert!(matches!(
+            modal.handle_key(typed('т')).unwrap(),
+            Some(ModalResult::Confirmed(false))
+        ));
     }
 
     #[test]

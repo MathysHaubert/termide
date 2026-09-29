@@ -493,7 +493,9 @@ impl Modal for InfoModal {
         &mut self,
         chord: termide_core::KeyChord,
     ) -> Result<Option<ModalResult<Self::Result>>> {
-        let key = chord.raw;
+        // No text input here: letter keys are shortcuts, matched on the
+        // layout-normalized form so they work on a Cyrillic layout too.
+        let key = chord.canonical;
         let max_scroll = self.cached_total_lines.saturating_sub(self.cached_visible);
         let page = self.cached_visible.max(1);
 
