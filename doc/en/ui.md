@@ -21,7 +21,7 @@ The application uses interactive modal windows for various operations:
 - `[X]` close button in modal title bar (clickable with mouse)
 - Keyboard navigation with Tab/Shift+Tab (between modal fields / buttons)
 - Mouse support for all buttons
-- Escape key to close modal
+- Escape key to close modal; a click outside a selection list, checklist, input prompt, confirmation or info window closes it the same way
 - Live preview for search/replace operations
 - State preservation (last entered text saved)
 

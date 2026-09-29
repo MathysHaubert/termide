@@ -22,7 +22,7 @@ use termide_config::constants::{
 use termide_i18n as i18n;
 use termide_theme::Theme;
 
-use crate::{centered_rect_with_size, Modal, ModalResult};
+use crate::{centered_rect_with_size, is_click_outside, Modal, ModalResult};
 
 /// Style for a colored segment in modal values.
 #[derive(Debug, Clone, Copy, Default)]
@@ -55,15 +55,17 @@ pub struct InfoModal {
     title: String,
     lines: Vec<(String, ModalValue)>, // (key, value) pairs for table
     spinner_frame: usize,             // Frame counter for spinner animation
-    last_button_area: Option<Rect>,   // For mouse handling
-    last_content_area: Option<Rect>,  // For mouse-wheel scroll hit-test
-    min_width: Option<u16>,           // Optional minimum width to prevent jitter
-    anchor: Option<(u16, u16)>,       // Optional anchor position (x, y) instead of centering
-    anchor_bottom: bool,              // true = anchor specifies bottom edge, not top
-    show_button: bool,                // Whether to show the OK button
-    scroll_offset: usize,             // First visible content line (after wrapping)
-    cached_total_lines: usize,        // Cached total content lines after last render
-    cached_visible: usize,            // Cached visible content-area height after last render
+    /// Screen rect of the modal from the last render, for clicks beside it.
+    last_modal_area: Option<Rect>,
+    last_button_area: Option<Rect>,  // For mouse handling
+    last_content_area: Option<Rect>, // For mouse-wheel scroll hit-test
+    min_width: Option<u16>,          // Optional minimum width to prevent jitter
+    anchor: Option<(u16, u16)>,      // Optional anchor position (x, y) instead of centering
+    anchor_bottom: bool,             // true = anchor specifies bottom edge, not top
+    show_button: bool,               // Whether to show the OK button
+    scroll_offset: usize,            // First visible content line (after wrapping)
+    cached_total_lines: usize,       // Cached total content lines after last render
+    cached_visible: usize,           // Cached visible content-area height after last render
 }
 
 impl InfoModal {
@@ -77,6 +79,7 @@ impl InfoModal {
             title: title.into(),
             lines,
             spinner_frame: 0,
+            last_modal_area: None,
             last_button_area: None,
             last_content_area: None,
             min_width: None,
@@ -95,6 +98,7 @@ impl InfoModal {
             title: title.into(),
             lines,
             spinner_frame: 0,
+            last_modal_area: None,
             last_button_area: None,
             last_content_area: None,
             min_width: None,
@@ -419,6 +423,7 @@ impl Modal for InfoModal {
         } else {
             centered_rect_with_size(modal_width, modal_height, area)
         };
+        self.last_modal_area = Some(modal_area);
 
         let inner = render_modal_block(modal_area, buf, &self.title, theme);
 
@@ -543,6 +548,11 @@ impl Modal for InfoModal {
                 return Ok(None);
             }
             _ => {}
+        }
+
+        // A click beside the modal closes it, as Esc does.
+        if is_click_outside(&mouse, self.last_modal_area) {
+            return Ok(Some(ModalResult::Cancelled));
         }
 
         // Only handle left button press

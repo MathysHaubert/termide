@@ -20,8 +20,8 @@ use termide_theme::Theme;
 use termide_ui::{CompletionItem, CompletionList};
 
 use crate::{
-    calculate_modal_width, centered_rect_with_size, max_line_width, Modal, ModalResult,
-    ModalWidthConfig, TextInputHandler,
+    calculate_modal_width, centered_rect_with_size, is_click_outside, max_line_width, Modal,
+    ModalResult, ModalWidthConfig, TextInputHandler,
 };
 
 /// Focus area in the modal
@@ -83,6 +83,8 @@ pub struct InputModal {
     focus: FocusArea,
     selected_button: usize, // 0 = OK, 1 = Cancel
     last_buttons_area: Option<Rect>,
+    /// Screen rect of the modal from the last render, for clicks beside it.
+    last_modal_area: Option<Rect>,
     last_input_area: Option<Rect>,
     checkboxes: Vec<ModalCheckbox>,
     last_checkbox_areas: Vec<(usize, Rect)>,
@@ -102,6 +104,7 @@ impl InputModal {
             focus: FocusArea::Input,
             selected_button: 0, // OK button selected by default
             last_buttons_area: None,
+            last_modal_area: None,
             last_input_area: None,
             checkboxes: Vec::new(),
             last_checkbox_areas: Vec::new(),
@@ -123,6 +126,7 @@ impl InputModal {
             focus: FocusArea::Input,
             selected_button: 0, // OK button selected by default
             last_buttons_area: None,
+            last_modal_area: None,
             last_input_area: None,
             checkboxes: Vec::new(),
             last_checkbox_areas: Vec::new(),
@@ -530,6 +534,7 @@ impl Modal for InputModal {
 
         // Create centered area
         let modal_area = centered_rect_with_size(modal_width, modal_height, area);
+        self.last_modal_area = Some(modal_area);
 
         let inner = render_modal_block(modal_area, buf, &self.title, theme);
 
@@ -703,6 +708,11 @@ impl Modal for InputModal {
                 }
                 _ => {}
             }
+        }
+        // A click beside the modal (and its suggestions) dismisses it, as Esc
+        // does.
+        if is_click_outside(&mouse, self.last_modal_area) {
+            return Ok(Some(ModalResult::Cancelled));
         }
 
         match mouse.kind {

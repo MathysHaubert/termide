@@ -17,7 +17,8 @@ pub use termide_ui::{
 pub mod base;
 pub mod input_keys;
 pub use base::{
-    check_mouse_click, check_mouse_click_with_item_height, CursorNavigation, MouseClickResult,
+    check_mouse_click, check_mouse_click_with_item_height, is_click_outside, CursorNavigation,
+    MouseClickResult,
 };
 pub use input_keys::{handle_input_key, InputKeyResult};
 pub mod bookmark_add;
@@ -264,5 +265,77 @@ pub trait Modal {
     /// Returns true if the modal handled the paste, false to pass to panel.
     fn handle_paste(&mut self, _text: &str) -> bool {
         false // Default: modals don't handle paste
+    }
+}
+
+#[cfg(test)]
+mod outside_click_tests {
+    use super::*;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::buffer::Buffer;
+    use termide_theme::Theme;
+
+    fn press(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// Render `modal` centred on a large screen, then report what a click in
+    /// the corner (beside it) and one at the centre (on it) do.
+    fn clicks<M: Modal>(mut modal: M) -> (bool, bool) {
+        let screen = Rect::new(0, 0, 120, 40);
+        let before = modal.handle_mouse(press(0, 0), screen).unwrap();
+        assert!(before.is_none(), "no frame yet, nothing to be beside");
+        let mut buf = Buffer::empty(screen);
+        modal.render(screen, &mut buf, &Theme::default());
+        let beside = matches!(
+            modal.handle_mouse(press(0, 0), screen).unwrap(),
+            Some(ModalResult::Cancelled)
+        );
+        let on = matches!(
+            modal.handle_mouse(press(60, 20), screen).unwrap(),
+            Some(ModalResult::Cancelled)
+        );
+        (beside, on)
+    }
+
+    #[test]
+    fn a_click_beside_a_modal_dismisses_it_and_one_on_it_does_not() {
+        let item = termide_core::ChecklistItem {
+            key: "read".into(),
+            label: "read".into(),
+            group: String::new(),
+            checked: true,
+            enabled: true,
+            note: String::new(),
+        };
+        let results = [
+            (
+                "select",
+                clicks(SelectModal::single(
+                    "Pick",
+                    "",
+                    vec!["a".into(), "b".into()],
+                )),
+            ),
+            (
+                "checklist",
+                clicks(ChecklistModal::new("Tools", "", vec![item])),
+            ),
+            ("input", clicks(InputModal::new("Name", "Enter a name"))),
+            ("confirm", clicks(ConfirmModal::new("Delete", "Sure?"))),
+            (
+                "info",
+                clicks(InfoModal::new("Info", vec![("key".into(), "value".into())])),
+            ),
+        ];
+        for (name, (beside, on)) in results {
+            assert!(beside, "{name}: a click beside it dismisses it");
+            assert!(!on, "{name}: a click on it does not");
+        }
     }
 }

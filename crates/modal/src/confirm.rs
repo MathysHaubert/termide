@@ -16,8 +16,8 @@ use termide_theme::Theme;
 
 use crate::{
     base::{button_style, render_modal_block},
-    calculate_modal_width, centered_rect_with_size, max_line_width, Modal, ModalResult,
-    ModalWidthConfig,
+    calculate_modal_width, centered_rect_with_size, is_click_outside, max_line_width, Modal,
+    ModalResult, ModalWidthConfig,
 };
 
 /// Confirmation modal window (Yes/No)
@@ -26,6 +26,8 @@ pub struct ConfirmModal {
     title: String,
     message: String,
     selected: bool, // true = Yes, false = No
+    /// Screen rect of the modal from the last render, for clicks beside it.
+    last_modal_area: Option<Rect>,
     last_buttons_area: Option<Rect>,
 }
 
@@ -36,6 +38,7 @@ impl ConfirmModal {
             title: title.into(),
             message: message.into(),
             selected: true, // Default is Yes
+            last_modal_area: None,
             last_buttons_area: None,
         }
     }
@@ -77,6 +80,7 @@ impl Modal for ConfirmModal {
 
         // Create centered area with calculated dimensions
         let modal_area = centered_rect_with_size(modal_width, modal_height, area);
+        self.last_modal_area = Some(modal_area);
 
         let inner = render_modal_block(modal_area, buf, &self.title, theme);
 
@@ -139,6 +143,11 @@ impl Modal for ConfirmModal {
         _modal_area: Rect,
     ) -> Result<Option<ModalResult<Self::Result>>> {
         use crossterm::event::MouseEventKind;
+
+        // A click beside the modal answers nothing, as Esc does.
+        if is_click_outside(&mouse, self.last_modal_area) {
+            return Ok(Some(ModalResult::Cancelled));
+        }
 
         // Only handle left button press
         if mouse.kind != MouseEventKind::Down(crossterm::event::MouseButton::Left) {

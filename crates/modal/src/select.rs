@@ -26,6 +26,7 @@ pub struct SelectModal {
     prompt: String,
     items: Vec<String>,
     cursor: usize,
+    last_modal_area: Option<Rect>,
     last_list_area: Option<Rect>,
 }
 
@@ -41,6 +42,7 @@ impl SelectModal {
             prompt: prompt.into(),
             items: labels,
             cursor: 0,
+            last_modal_area: None,
             last_list_area: None,
         }
     }
@@ -82,6 +84,7 @@ impl Modal for SelectModal {
 
         // Create centered area
         let modal_area = centered_rect_with_size(modal_width, modal_height, area);
+        self.last_modal_area = Some(modal_area);
         let inner = render_modal_block(modal_area, buf, &self.title, theme);
 
         let chunks = Layout::default()
@@ -190,11 +193,13 @@ impl Modal for SelectModal {
         match check_mouse_click(
             mouse.column,
             mouse.row,
-            None, // No modal area check
+            self.last_modal_area,
             self.last_list_area,
             0, // No scroll offset in simple select
         ) {
-            MouseClickResult::OutsideModal | MouseClickResult::OutsideList => Ok(None),
+            // A click beside the modal dismisses it, as Esc does.
+            MouseClickResult::OutsideModal => Ok(Some(ModalResult::Cancelled)),
+            MouseClickResult::OutsideList => Ok(None),
             MouseClickResult::OnListItem(clicked_index) => {
                 if clicked_index < self.items.len() {
                     // Item clicked - select and confirm immediately

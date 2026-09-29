@@ -257,6 +257,16 @@ pub fn check_mouse_click_with_item_height(
     MouseClickResult::OnListItem(clicked_index)
 }
 
+/// Whether `mouse` is a left press outside `modal_area`, the frame the modal
+/// last drew: the click that dismisses it, as `Esc` does. `false` before the
+/// first render, when there is no frame to be outside of.
+#[must_use]
+pub fn is_click_outside(mouse: &crossterm::event::MouseEvent, modal_area: Option<Rect>) -> bool {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && modal_area.is_some_and(|area| !area.contains((mouse.column, mouse.row).into()))
+}
+
 /// Trait for cursor navigation in search modals.
 ///
 /// Provides default implementations for common navigation patterns

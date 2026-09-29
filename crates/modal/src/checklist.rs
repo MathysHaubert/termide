@@ -13,7 +13,8 @@ use termide_core::ChecklistItem;
 use termide_theme::Theme;
 
 use crate::{
-    base::render_modal_block, centered_rect_with_size, fit_modal_width, Modal, ModalResult,
+    base::render_modal_block, centered_rect_with_size, fit_modal_width, is_click_outside, Modal,
+    ModalResult,
 };
 
 /// Rows the list shows at most before it scrolls.
@@ -39,6 +40,8 @@ pub struct ChecklistModal {
     cursor: usize,
     /// First row shown.
     scroll: usize,
+    /// Screen rect of the modal from the last render, for clicks beside it.
+    modal_area: Option<Rect>,
     /// Screen rect of the list from the last render, for clicks.
     list_area: Option<Rect>,
 }
@@ -68,6 +71,7 @@ impl ChecklistModal {
             rows,
             cursor: 0,
             scroll: 0,
+            modal_area: None,
             list_area: None,
         }
     }
@@ -161,6 +165,7 @@ impl Modal for ChecklistModal {
         }
         let height = 2 + prompt_lines + u16::from(prompt_lines > 0) + visible as u16;
         let modal = centered_rect_with_size(width, height, area);
+        self.modal_area = Some(modal);
         let inner = render_modal_block(modal, buf, &self.title, theme);
 
         let dim = Style::default().fg(theme.disabled);
@@ -238,6 +243,10 @@ impl Modal for ChecklistModal {
         mouse: MouseEvent,
         _modal_area: Rect,
     ) -> Result<Option<ModalResult<Self::Result>>> {
+        // A click beside the modal leaves everything as it was, as Esc does.
+        if is_click_outside(&mouse, self.modal_area) {
+            return Ok(Some(ModalResult::Cancelled));
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.move_by(-3),
             MouseEventKind::ScrollDown => self.move_by(3),
