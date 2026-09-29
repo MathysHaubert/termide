@@ -443,6 +443,91 @@ fn the_manager_opens_and_serves_an_archive() {
     assert_eq!(data, README);
 }
 
+/// A stored zip whose names are raw bytes with no UTF-8 flag, the way zip
+/// tools on Windows write them.
+fn legacy_zip(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
+    fn u16le(out: &mut Vec<u8>, v: u16) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u32le(out: &mut Vec<u8>, v: u32) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    const DOS_DATE_1980_01_01: u16 = 0x21;
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in entries {
+        let mut crc = flate2::Crc::new();
+        crc.update(data);
+        let offset = out.len() as u32;
+        for (buf, central_entry) in [(&mut out, false), (&mut central, true)] {
+            u32le(
+                buf,
+                if central_entry {
+                    0x0201_4b50
+                } else {
+                    0x0403_4b50
+                },
+            );
+            if central_entry {
+                u16le(buf, 20); // version made by
+            }
+            u16le(buf, 20); // version needed
+            u16le(buf, 0); // flags: no UTF-8 bit
+            u16le(buf, 0); // stored
+            u16le(buf, 0); // time
+            u16le(buf, DOS_DATE_1980_01_01);
+            u32le(buf, crc.sum());
+            u32le(buf, data.len() as u32);
+            u32le(buf, data.len() as u32);
+            u16le(buf, name.len() as u16);
+            u16le(buf, 0); // extra field length
+            if central_entry {
+                u16le(buf, 0); // comment length
+                u16le(buf, 0); // disk
+                u16le(buf, 0); // internal attributes
+                u32le(buf, 0); // external attributes
+                u32le(buf, offset);
+            }
+            buf.extend_from_slice(name);
+        }
+        out.extend_from_slice(data);
+    }
+    let central_offset = out.len() as u32;
+    let central_size = central.len() as u32;
+    out.extend_from_slice(&central);
+    u32le(&mut out, 0x0605_4b50);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, entries.len() as u16);
+    u16le(&mut out, entries.len() as u16);
+    u32le(&mut out, central_size);
+    u32le(&mut out, central_offset);
+    u16le(&mut out, 0);
+    out
+}
+
+#[test]
+fn zip_names_from_russian_windows_read_as_cp866() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join("windows.zip");
+    // "Документы/отчёт.txt" in CP866, plus a plain ASCII entry.
+    let report: &[u8] = b"\x84\xae\xaa\xe3\xac\xa5\xad\xe2\xeb/\xae\xe2\xe7\xf1\xe2.txt";
+    fs::write(
+        &archive,
+        legacy_zip(&[(report, b"report"), (b"readme.txt", b"hi")]),
+    )
+    .unwrap();
+
+    let provider = opened(&archive);
+    let root = provider.list_dir(&at(&archive, "/")).recv().unwrap();
+    assert_eq!(names(&root), ["readme.txt", "Документы"]);
+    let data = provider
+        .read_file(&at(&archive, "/Документы/отчёт.txt"))
+        .recv()
+        .unwrap();
+    assert_eq!(data, b"report");
+}
+
 mod packing {
     use super::*;
     use crate::archive::pack::{self, PackProgress};

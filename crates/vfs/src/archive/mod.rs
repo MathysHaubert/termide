@@ -12,6 +12,7 @@
 mod extract;
 mod format;
 mod index;
+mod names;
 pub mod pack;
 mod source;
 

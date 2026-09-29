@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::format::{ArchiveFormat, TarCompression};
 use super::index::{normalize_entry_name, ArchiveIndex, EntrySource, NodeKind};
+use super::names;
 use crate::error::{VfsError, VfsResult};
 use crate::types::{VfsFileType, VfsMetadata};
 
@@ -142,49 +143,60 @@ pub(crate) fn copy_error(e: io::Error) -> VfsError {
 }
 
 fn index_zip(zip: &mut ZipReader) -> VfsResult<ArchiveIndex> {
-    let mut index = ArchiveIndex::new();
+    struct Entry {
+        raw_name: Vec<u8>,
+        cp437_name: String,
+        is_dir: bool,
+        is_symlink: bool,
+        meta: VfsMetadata,
+    }
+
+    let mut entries = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
-        let (name, is_dir, is_symlink, meta) = {
-            let entry = zip.by_index_raw(i).map_err(zip_error)?;
-            // The extended timestamp is exact UTC; the DOS field has no zone.
-            let modified = entry
-                .extra_data_fields()
-                .find_map(|field| match field {
-                    zip::extra_fields::ExtraField::ExtendedTimestamp(ts) => ts.mod_time(),
-                    _ => None,
-                })
-                .map(|secs| UNIX_EPOCH + Duration::from_secs(u64::from(secs)))
-                .or_else(|| entry.last_modified().and_then(dos_time));
-            let file_type = if entry.is_dir() {
-                VfsFileType::Directory
-            } else if entry.is_symlink() {
-                VfsFileType::Symlink
-            } else {
-                VfsFileType::File
-            };
-            let meta = metadata(file_type, entry.size(), modified, entry.unix_mode());
-            (
-                entry.name().to_owned(),
-                entry.is_dir(),
-                entry.is_symlink(),
-                meta,
-            )
+        let entry = zip.by_index_raw(i).map_err(zip_error)?;
+        // The extended timestamp is exact UTC; the DOS field has no zone.
+        let modified = entry
+            .extra_data_fields()
+            .find_map(|field| match field {
+                zip::extra_fields::ExtraField::ExtendedTimestamp(ts) => ts.mod_time(),
+                _ => None,
+            })
+            .map(|secs| UNIX_EPOCH + Duration::from_secs(u64::from(secs)))
+            .or_else(|| entry.last_modified().and_then(dos_time));
+        let file_type = if entry.is_dir() {
+            VfsFileType::Directory
+        } else if entry.is_symlink() {
+            VfsFileType::Symlink
+        } else {
+            VfsFileType::File
         };
-        let kind = if is_dir {
+        entries.push(Entry {
+            raw_name: entry.name_raw().to_vec(),
+            cp437_name: entry.name().to_owned(),
+            is_dir: entry.is_dir(),
+            is_symlink: entry.is_symlink(),
+            meta: metadata(file_type, entry.size(), modified, entry.unix_mode()),
+        });
+    }
+
+    let legacy = names::guess(entries.iter().map(|e| e.raw_name.as_slice()));
+    let mut index = ArchiveIndex::new();
+    for (i, entry) in entries.into_iter().enumerate() {
+        let name = names::decode(&entry.raw_name, &entry.cp437_name, legacy);
+        let kind = if entry.is_dir {
             NodeKind::Dir
-        } else if is_symlink {
+        } else if entry.is_symlink {
             // A zip symlink stores its target as the entry's content.
             let mut target = String::new();
-            let entry = zip.by_index(i).map_err(zip_error)?;
-            entry
-                .take(MAX_LINK_TARGET)
+            let file = zip.by_index(i).map_err(zip_error)?;
+            file.take(MAX_LINK_TARGET)
                 .read_to_string(&mut target)
                 .map_err(|e| VfsError::Archive(format!("symlink {name:?}: {e}")))?;
             NodeKind::Symlink(target)
         } else {
             NodeKind::File(EntrySource::Zip(i))
         };
-        index.insert(&name, kind, meta);
+        index.insert(&name, kind, entry.meta);
     }
     Ok(index)
 }

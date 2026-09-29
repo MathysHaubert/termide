@@ -151,6 +151,11 @@ of contents once — for a large compressed tar that takes a pass over
 the whole file, and `Esc` cancels it. If the archive changes on disk
 while it is open, the next access reads it again.
 
+ZIP names are read as UTF-8 whenever they are valid UTF-8 (macOS writes
+them so without saying). Older archives from Windows store names in the
+system's code page; one whose names look like Cyrillic in CP866 is read
+as CP866, anything else as CP437, the encoding the ZIP format names.
+
 Archives are **read-only**. Opening a file from one works as for a
 remote file (a temporary copy), and copying with `C` / `F5` to a
 local panel extracts the selected files and directories, with the
