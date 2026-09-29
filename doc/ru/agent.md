@@ -867,13 +867,6 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
-# Tools
-{{if tools}}
-{{tools}}
-{{else}}
-No tool is described here. Call only what you are actually offered, and say what you could not check.
-{{/if}}
-
 # Guidelines
 - Read a file before you change it, and keep edits small and targeted.
 - Name file paths clearly when you talk about files.
@@ -893,7 +886,9 @@ When a task matches one of these, load it with the `skill` tool before starting.
 {{project_instructions}}
 ```
 
-`{{tools}}` — список инструментов по строке на каждый, `{{guidelines}}` —
+`{{tools}}` — список инструментов по строке на каждый (в сиде его нет: модель
+и так получает каждый инструмент с описанием и схемой рядом с промптом, но
+шаблону для слабой модели такой обзор может пригодиться), `{{guidelines}}` —
 правила, которые добавляют сами инструменты, `{{skills}}` — скиллы с именем и
 описанием, `{{environment}}` — рабочий каталог, платформа и признак
 git-репозитория, `{{project_instructions}}` — файлы инструкций, описанные
@@ -901,7 +896,7 @@ git-репозитория, `{{project_instructions}}` — файлы инстр
 тихо протухает, поэтому сид вместо этого велит проверять ситуативный факт
 инструментом — `date` для сегодняшней даты, — а не помнить его наизусть.
 
-`{{if tools}} … {{else}} … {{/if}}` убирает раздел из промпта, когда показать
+`{{if skills}} … {{else}} … {{/if}}` убирает раздел из промпта, когда показать
 нечего: ветка `{{if}}` остаётся, если у имени есть что показать, иначе —
 `{{else}}`, а без `{{else}}` блок исчезает целиком. Поэтому сессия без
 скиллов не рассказывает модели про скиллы и не зовёт её вызывать `skill`,

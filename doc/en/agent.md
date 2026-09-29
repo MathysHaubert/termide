@@ -845,13 +845,6 @@ which then replaces it:
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
 
-# Tools
-{{if tools}}
-{{tools}}
-{{else}}
-No tool is described here. Call only what you are actually offered, and say what you could not check.
-{{/if}}
-
 # Guidelines
 - Read a file before you change it, and keep edits small and targeted.
 - Name file paths clearly when you talk about files.
@@ -871,7 +864,10 @@ When a task matches one of these, load it with the `skill` tool before starting.
 {{project_instructions}}
 ```
 
-`{{tools}}` is the tool list with a line per tool, `{{guidelines}}` the rules
+`{{tools}}` is the tool list with a line per tool — the seed leaves it out,
+since the model already receives every tool with its description and schema
+beside the prompt, but a template for a weaker model may want the overview —
+`{{guidelines}}` the rules
 the tools themselves contribute, `{{skills}}` the skills by name and
 description, `{{environment}}` the working directory, platform and whether it
 is a git repository, and `{{project_instructions}}` the instruction files
@@ -880,7 +876,7 @@ hours and the date would quietly rot in it, so the seed instead tells the
 model to check a situational fact with a tool — `date` for today's date —
 rather than guess it.
 
-`{{if tools}} … {{else}} … {{/if}}` keeps a section out of the prompt when
+`{{if skills}} … {{else}} … {{/if}}` keeps a section out of the prompt when
 there is nothing for it: the `{{if}}` branch survives when that name has
 something to show, the `{{else}}` branch otherwise, and the whole block
 vanishes when you write no `{{else}}`. So a session with no skills never tells

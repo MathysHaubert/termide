@@ -439,12 +439,9 @@ mod tests {
         let prompt = build_system_prompt(&options);
 
         assert!(prompt.starts_with("You are a coding agent working inside termide"));
-        // The echo tool has no snippet, so the tools list is empty and the
-        // template's `{{else}}` branch stands for it.
-        assert!(
-            prompt.contains("# Tools\nNo tool is described here"),
-            "{prompt}"
-        );
+        // The model gets the tools beside the prompt; the seed does not
+        // list them a second time.
+        assert!(!prompt.contains("# Tools"), "{prompt}");
         assert!(prompt.contains("- Be concise."));
         assert!(
             prompt.contains("- Check the facts of the moment with a tool"),
@@ -496,6 +493,9 @@ mod tests {
         assert!(custom.starts_with("You are terse.\n\n- Working directory:"));
         assert!(custom.contains("{{unknown}}"));
         assert!(!custom.contains("# Tools"));
+        // `{{tools}}` still fills in for a template that asks for it.
+        options.soul = Some("{{tools}}");
+        assert!(build_system_prompt(&options).starts_with("(none)\n"));
         assert!(custom.contains("Use conventional commits."));
         assert!(custom.ends_with("Answer in Russian.\n"));
 
@@ -574,7 +574,6 @@ mod tests {
         // branches resolve to something: the seed is the file users edit.
         let empty = evaluate_blocks(SEED_TEMPLATE, filled(&[])).unwrap();
         assert!(!empty.contains("# Skills"));
-        assert!(empty.contains("No tool is described here"));
         let full = evaluate_blocks(
             SEED_TEMPLATE,
             filled(&[
@@ -586,7 +585,6 @@ mod tests {
             ]),
         )
         .unwrap();
-        assert!(full.contains("# Tools\n{{tools}}\n"));
         assert!(full.contains("# Skills\nWhen a task matches"));
         assert!(full.contains("{{environment}}"));
         assert!(!full.contains("{{if "));
