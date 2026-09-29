@@ -753,6 +753,10 @@ impl Translation for RuntimeTranslation {
         modal_pack_title,
         fm_pack_local_only,
         modal_archive_password_title,
+        status_vfs_resolving_link,
+        status_vfs_loading,
+        status_vfs_connected,
+        status_vfs_cancelled,
         git_no_repo,
         git_branch_detached,
         git_refreshed,
@@ -1266,6 +1270,22 @@ impl Translation for RuntimeTranslation {
 
     fn fm_archive_password_wrong(&self, name: &str) -> String {
         self.format("fm_archive_password_wrong", &[("name", name)])
+    }
+
+    fn status_vfs_connecting(&self, host: &str) -> String {
+        self.format("status_vfs_connecting", &[("host", host)])
+    }
+
+    fn status_vfs_opening(&self, name: &str) -> String {
+        self.format("status_vfs_opening", &[("name", name)])
+    }
+
+    fn status_item_count(&self, count: usize) -> String {
+        let element = self.pluralize(count, "element");
+        self.format(
+            "status_item_count",
+            &[("count", &count.to_string()), ("element", element)],
+        )
     }
 
     fn status_file_saved(&self, name: &str) -> String {
@@ -1946,6 +1966,16 @@ mod tests {
         assert_eq!(file(22), "22 файла");
         assert_eq!(file(111), "111 файлов");
         assert_eq!(file(0), "0 файлов");
+    }
+
+    #[test]
+    fn item_counts_are_pluralized() {
+        let ru = RuntimeTranslation::new("ru").unwrap();
+        assert_eq!(ru.status_item_count(3), "3 элемента");
+        assert_eq!(ru.status_item_count(5), "5 элементов");
+        assert_eq!(ru.status_item_count(21), "21 элемент");
+        let en = RuntimeTranslation::new("en").unwrap();
+        assert_eq!(en.status_item_count(2), "2 elements");
     }
 
     #[test]

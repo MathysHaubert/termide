@@ -300,6 +300,11 @@ pub trait Translation: Send + Sync {
     fn fm_archive_password_prompt(&self, name: &str) -> String;
     /// Re-asks after the archive rejected the password.
     fn fm_archive_password_wrong(&self, name: &str) -> String;
+    fn status_vfs_connecting(&self, host: &str) -> String;
+    /// Status while an archive's table of contents is read.
+    fn status_vfs_opening(&self, name: &str) -> String;
+    /// "3 items": the source of an operation over several entries.
+    fn status_item_count(&self, count: usize) -> String;
     fn status_file_saved(&self, name: &str) -> String;
     fn status_error_save(&self, error: &str) -> String;
     fn status_file_reloaded(&self) -> &str;
@@ -1147,6 +1152,10 @@ pub trait Translation: Send + Sync {
     /// Shown when packing is asked for in a remote or archive panel.
     fn fm_pack_local_only(&self) -> &str;
     fn modal_archive_password_title(&self) -> &str;
+    fn status_vfs_resolving_link(&self) -> &str;
+    fn status_vfs_loading(&self) -> &str;
+    fn status_vfs_connected(&self) -> &str;
+    fn status_vfs_cancelled(&self) -> &str;
 
     // Git panel strings
     fn git_no_repo(&self) -> &str;

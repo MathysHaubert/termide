@@ -57,7 +57,7 @@ impl App {
 
         let source_display = match &sources[..] {
             [single] => single.display().to_string(),
-            many => format!("{} items", many.len()),
+            many => t.status_item_count(many.len()),
         };
         let request = OperationRequest::pack(sources, archive.clone());
         if let Err(e) = self.start_tracked_operation(

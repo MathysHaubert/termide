@@ -22,7 +22,7 @@ impl App {
                 let source_display = if paths.len() == 1 {
                     path_utils::get_file_name_str(&paths[0]).to_string()
                 } else {
-                    format!("{} items", paths.len())
+                    termide_i18n::t().status_item_count(paths.len())
                 };
                 let sources: Vec<OperationPath> =
                     paths.into_iter().map(OperationPath::Local).collect();
@@ -48,7 +48,7 @@ impl App {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "file".to_string())
                 } else {
-                    format!("{} items", paths.len())
+                    termide_i18n::t().status_item_count(paths.len())
                 };
                 let sources: Vec<OperationPath> =
                     paths.into_iter().map(OperationPath::Remote).collect();

@@ -297,7 +297,7 @@ impl VfsState {
     /// into it (directory) or hands it back to be opened (file).
     pub fn start_resolve_symlink(&mut self, name: &str) {
         let target = self.current_path.join(name);
-        self.connection_status = Some("Resolving link...".to_string());
+        self.connection_status = Some(termide_i18n::t().status_vfs_resolving_link().to_string());
         let op = self.manager.metadata(&target);
         self.pending_operation = Some(PendingVfsOperation::ResolveSymlink {
             op,
@@ -400,7 +400,7 @@ impl VfsState {
         }
 
         // Set connection status to show loading spinner
-        self.connection_status = Some("Loading directory...".to_string());
+        self.connection_status = Some(termide_i18n::t().status_vfs_loading().to_string());
         let operation = self.manager.list_dir(&self.current_path);
         self.pending_operation = Some(PendingVfsOperation::ListDir(operation));
     }
@@ -444,7 +444,8 @@ impl VfsState {
                 match op.try_recv() {
                     Some(Ok(())) => {
                         // Connection succeeded, start listing
-                        self.connection_status = Some("Connected".to_string());
+                        self.connection_status =
+                            Some(termide_i18n::t().status_vfs_connected().to_string());
                         self.clear_connection_tracking();
 
                         // If current path is root ("/") or empty, navigate to home directory
@@ -569,10 +570,7 @@ impl VfsState {
         }
 
         let options = ConnectOptions::with_password(password);
-        self.connection_status = Some(format!(
-            "Connecting to {}...",
-            self.current_path.host.as_deref().unwrap_or("remote")
-        ));
+        self.connection_status = Some(connecting_status(&self.current_path));
         self.connection_started = Some(Instant::now());
 
         let operation = match self.current_path.protocol {
@@ -681,7 +679,7 @@ impl VfsState {
                 self.current_path = VfsPath::local(home);
             }
             self.awaiting_password = false;
-            return Some("Connection cancelled".to_string());
+            return Some(termide_i18n::t().status_vfs_cancelled().to_string());
         }
         // Other operations just get dropped
         self.awaiting_password = false;
@@ -696,18 +694,15 @@ impl VfsState {
 
 /// Status line while the provider for `path` is being set up.
 fn connecting_status(path: &VfsPath) -> String {
+    let t = termide_i18n::t();
     match path.container() {
-        Some(archive) => format!(
-            "Opening {}...",
-            archive
+        Some(archive) => t.status_vfs_opening(
+            &archive
                 .file_name()
                 .map(|name| name.to_string_lossy())
-                .unwrap_or_default()
+                .unwrap_or_default(),
         ),
-        None => format!(
-            "Connecting to {}...",
-            path.host.as_deref().unwrap_or("remote")
-        ),
+        None => t.status_vfs_connecting(path.host.as_deref().unwrap_or("remote")),
     }
 }
 
