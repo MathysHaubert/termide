@@ -14,6 +14,24 @@ use crate::{git, word_wrap};
 use super::Editor;
 
 impl Editor {
+    /// The cursor with its column in display columns (tabs expanded, wide
+    /// characters counted twice): the unit `Viewport::left_column` scrolls in
+    /// without word wrap.
+    pub(crate) fn cursor_in_display_columns(&self) -> Cursor {
+        let column = self
+            .buffer
+            .line_cow(self.cursor.line)
+            .map(|line| {
+                termide_buffer::display_column(
+                    line.trim_end_matches('\n'),
+                    self.cursor.column,
+                    self.config.tab_size,
+                )
+            })
+            .unwrap_or(self.cursor.column);
+        Cursor::at(self.cursor.line, column)
+    }
+
     /// Check if visual movement should be used (word wrap enabled and width cached).
     pub(crate) fn should_use_visual_movement(&self) -> bool {
         self.config.word_wrap && self.render_cache.content_width > 0
@@ -91,6 +109,7 @@ impl Editor {
                         self.cursor.line,
                         content_width,
                         use_smart_wrap,
+                        self.config.tab_size,
                     );
                     let current_visual_row =
                         wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
@@ -133,6 +152,7 @@ impl Editor {
             self.cursor.column,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
         );
 
         // Handle cursor above viewport (physical line check)
@@ -170,6 +190,7 @@ impl Editor {
             self.viewport.top_line,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
         );
         let rows_remaining_in_top_line =
             top_line_visual_rows.saturating_sub(self.viewport.top_visual_row_offset);
@@ -209,6 +230,7 @@ impl Editor {
                     line,
                     content_width,
                     use_smart_wrap,
+                    self.config.tab_size,
                 );
                 rows += line_visual_rows;
             }
@@ -234,7 +256,12 @@ impl Editor {
         let scroll_needed = cursor_visual_pos - (content_height - 1);
 
         // Apply scroll directly by computing final position
-        self.apply_visual_scroll_down(scroll_needed, content_width, use_smart_wrap);
+        self.apply_visual_scroll_down(
+            scroll_needed,
+            content_width,
+            use_smart_wrap,
+            self.config.tab_size,
+        );
     }
 
     /// Apply scroll down by a given number of visual rows.
@@ -245,6 +272,7 @@ impl Editor {
         mut remaining: usize,
         content_width: usize,
         use_smart_wrap: bool,
+        tab_size: usize,
     ) {
         let show_git_diff = self.render_cache.config.editor.show_git_diff;
 
@@ -255,6 +283,7 @@ impl Editor {
                 self.viewport.top_line,
                 content_width,
                 use_smart_wrap,
+                tab_size,
             );
 
             let rows_available =
@@ -340,7 +369,7 @@ impl Editor {
 
         // Ensure cache is valid for current width settings
         self.render_cache
-            .update_wrap_settings(content_width, use_smart_wrap);
+            .update_wrap_settings(content_width, use_smart_wrap, self.config.tab_size);
 
         for _ in 0..count {
             if self.viewport.top_visual_row_offset > 0 {
@@ -355,6 +384,7 @@ impl Editor {
                     self.viewport.top_line,
                     content_width,
                     use_smart_wrap,
+                    self.config.tab_size,
                 );
                 self.viewport.top_visual_row_offset = visual_rows.saturating_sub(1);
             } else {
@@ -387,7 +417,7 @@ impl Editor {
 
         // Ensure cache is valid for current width settings
         self.render_cache
-            .update_wrap_settings(content_width, use_smart_wrap);
+            .update_wrap_settings(content_width, use_smart_wrap, self.config.tab_size);
 
         for _ in 0..count {
             let visual_rows = word_wrap::get_visual_rows_cached(
@@ -396,6 +426,7 @@ impl Editor {
                 self.viewport.top_line,
                 content_width,
                 use_smart_wrap,
+                self.config.tab_size,
             );
 
             if self.viewport.top_visual_row_offset + 1 < visual_rows {
@@ -522,6 +553,7 @@ impl Editor {
             current_line,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
         );
         let rows_in_first_line =
             first_line_visual_rows.saturating_sub(self.viewport.top_visual_row_offset);
@@ -541,6 +573,7 @@ impl Editor {
                 current_line,
                 content_width,
                 use_smart_wrap,
+                self.config.tab_size,
             );
 
             if line_visual_rows >= visual_rows_remaining {
@@ -574,6 +607,7 @@ impl Editor {
                 content_width,
                 word_wrap,
                 use_smart_wrap,
+                self.config.tab_size,
             );
 
             // Add deletion markers if git diff is shown (O(1) lookup)

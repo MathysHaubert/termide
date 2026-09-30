@@ -50,6 +50,19 @@ pub(crate) fn itoa_right_align(n: usize, width: usize, buf: &mut [u8; 20]) -> &s
     }
 }
 
+/// Cells grapheme `g` is drawn into when it takes `width` columns, and the
+/// symbol each gets: a TAB fills every column it spans with a blank (so a
+/// selection or the cursor-line background covers all of it); any other
+/// cluster is drawn in its first column, a wide one's second being ratatui's
+/// to skip.
+pub(crate) fn drawn_cells(g: &str, width: usize) -> (usize, &str) {
+    if g == "\t" {
+        (width, " ")
+    } else {
+        (1, termide_ui::cell_symbol(g))
+    }
+}
+
 /// Gutter cells that follow the digits: LSP marker + separator space.
 pub const LINE_NUMBER_MARKER_CELLS: usize = 2;
 
@@ -116,6 +129,7 @@ pub fn render_editor_content<H: LineHighlighter>(
     show_git_diff: bool,
     word_wrap_enabled: bool,
     use_smart_wrap: bool,
+    tab_size: usize,
     content_width: usize,
     content_height: usize,
 ) {
@@ -150,8 +164,13 @@ pub fn render_editor_content<H: LineHighlighter>(
             .top_line
             .saturating_add(content_height)
             .saturating_add(1);
-    let mut render_context =
-        context::RenderContext::prepare(search_state, selection, diagnostics, visible_lines);
+    let mut render_context = context::RenderContext::prepare(
+        search_state,
+        selection,
+        diagnostics,
+        visible_lines,
+        tab_size,
+    );
 
     // Group diagnostics by line once per render — hot paths read this
     // instead of rebuilding the HashMap for every visible row.
@@ -190,6 +209,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             content_height,
             line_number_width,
             use_smart_wrap,
+            tab_size,
             text_style,
             cursor_line_style,
             line_number_style,

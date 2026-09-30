@@ -36,6 +36,9 @@ pub(crate) struct RenderingCache {
     pub content_height: usize,
     /// Cached smart wrap setting from last render.
     pub use_smart_wrap: bool,
+    /// Tab stop interval the wrap cache was computed with. Entries are not
+    /// tagged with it: a change clears the whole cache.
+    pub tab_size: usize,
     /// Cache of wrap points for each line: line_index -> (visual_rows, wrap_points).
     wrap_cache: HashMap<usize, CachedWrapData>,
     /// Cumulative visual row counts: cumulative_rows[i] = total visual rows for lines 0..i.
@@ -72,6 +75,7 @@ impl RenderingCache {
             content_width: 0,
             content_height: 0,
             use_smart_wrap: false,
+            tab_size: 0,
             wrap_cache: HashMap::new(),
             cumulative_visual_rows: Vec::new(),
             cumulative_valid: false,
@@ -91,7 +95,11 @@ impl RenderingCache {
         line: usize,
         content_width: usize,
         use_smart_wrap: bool,
+        tab_size: usize,
     ) -> Option<&CachedWrapData> {
+        if self.tab_size != tab_size {
+            return None;
+        }
         self.wrap_cache.get(&line).filter(|cached| {
             cached.computed_width == content_width && cached.computed_smart_wrap == use_smart_wrap
         })
@@ -165,16 +173,29 @@ impl RenderingCache {
     }
 
     /// Check if wrap settings match current parameters (for cache invalidation on settings change).
-    pub fn wrap_settings_match(&self, content_width: usize, use_smart_wrap: bool) -> bool {
-        self.content_width == content_width && self.use_smart_wrap == use_smart_wrap
+    pub fn wrap_settings_match(
+        &self,
+        content_width: usize,
+        use_smart_wrap: bool,
+        tab_size: usize,
+    ) -> bool {
+        self.content_width == content_width
+            && self.use_smart_wrap == use_smart_wrap
+            && self.tab_size == tab_size
     }
 
     /// Update wrap settings and invalidate cache if they changed.
-    pub fn update_wrap_settings(&mut self, content_width: usize, use_smart_wrap: bool) {
-        if !self.wrap_settings_match(content_width, use_smart_wrap) {
+    pub fn update_wrap_settings(
+        &mut self,
+        content_width: usize,
+        use_smart_wrap: bool,
+        tab_size: usize,
+    ) {
+        if !self.wrap_settings_match(content_width, use_smart_wrap, tab_size) {
             self.invalidate_wrap_cache();
             self.content_width = content_width;
             self.use_smart_wrap = use_smart_wrap;
+            self.tab_size = tab_size;
         }
     }
 
@@ -199,6 +220,7 @@ impl RenderingCache {
 
         let content_width = self.content_width;
         let use_smart_wrap = self.use_smart_wrap;
+        let tab_size = self.tab_size;
 
         for line_idx in 0..line_count {
             // Get visual rows from wrap cache, or compute and cache if missing
@@ -214,6 +236,7 @@ impl RenderingCache {
                     line_text,
                     content_width,
                     use_smart_wrap,
+                    tab_size,
                 );
                 self.wrap_cache.insert(
                     line_idx,

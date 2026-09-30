@@ -6,6 +6,39 @@
 
 use unicode_width::UnicodeWidthStr;
 
+/// Columns grapheme cluster `g` takes on screen when it starts at display
+/// column `col` of its row.
+///
+/// A TAB reaches the next multiple of `tab_size`; every other cluster takes
+/// its Unicode display width (a control character counts one column, drawn
+/// as a blank). Rendering, cursor placement, mouse hit-testing and wrapping
+/// all measure through this one function, so a tab is the same width
+/// everywhere it is looked at. `tab_size` 0 is treated as 1.
+pub fn grapheme_columns(g: &str, col: usize, tab_size: usize) -> usize {
+    if g == "\t" {
+        let tab_size = tab_size.max(1);
+        tab_size - col % tab_size
+    } else {
+        g.width()
+    }
+}
+
+/// Display width of `text` laid out from column 0, tabs expanded.
+pub fn display_width(text: &str, tab_size: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    text.graphemes(true)
+        .fold(0, |col, g| col + grapheme_columns(g, col, tab_size))
+}
+
+/// Display column where grapheme `idx` of `text` starts (or the width of the
+/// whole text when `idx` is past its end), tabs expanded from column 0.
+pub fn display_column(text: &str, idx: usize, tab_size: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    text.graphemes(true)
+        .take(idx)
+        .fold(0, |col, g| col + grapheme_columns(g, col, tab_size))
+}
+
 /// Calculate the optimal wrap point for a line segment using graphemes
 ///
 /// This function tries to find a word boundary (non-alphanumeric character)
@@ -21,6 +54,8 @@ use unicode_width::UnicodeWidthStr;
 /// * `start` - Starting position in the grapheme array
 /// * `max_width` - Maximum display width before wrapping (content width)
 /// * `line_len` - Total length of the line (grapheme count)
+/// * `tab_size` - Tab stop interval; tab stops restart at `start`, the first
+///   column of the visual row
 ///
 /// # Returns
 /// The grapheme index where the line should be wrapped
@@ -29,6 +64,7 @@ pub fn calculate_wrap_point(
     start: usize,
     max_width: usize,
     line_len: usize,
+    tab_size: usize,
 ) -> usize {
     if start >= line_len {
         return line_len;
@@ -44,7 +80,7 @@ pub fn calculate_wrap_point(
         .skip(start)
         .take(line_len - start)
     {
-        let grapheme_width = grapheme.width();
+        let grapheme_width = grapheme_columns(grapheme, display_width, tab_size);
 
         if display_width + grapheme_width > max_width {
             ideal_end = i;
@@ -113,7 +149,7 @@ mod tests {
         let graphemes: Vec<&str> = text.graphemes(true).collect();
 
         // Should wrap after "hello "
-        let wrap_point = calculate_wrap_point(&graphemes, 0, 10, graphemes.len());
+        let wrap_point = calculate_wrap_point(&graphemes, 0, 10, graphemes.len(), 4);
         assert_eq!(wrap_point, 6); // After space
     }
 
@@ -125,8 +161,35 @@ mod tests {
         let graphemes: Vec<&str> = text.graphemes(true).collect();
 
         // Should force break at max_width
-        let wrap_point = calculate_wrap_point(&graphemes, 0, 5, graphemes.len());
+        let wrap_point = calculate_wrap_point(&graphemes, 0, 5, graphemes.len(), 4);
         assert_eq!(wrap_point, 5);
+    }
+
+    #[test]
+    fn tabs_reach_the_next_tab_stop() {
+        assert_eq!(grapheme_columns("\t", 0, 4), 4);
+        assert_eq!(grapheme_columns("\t", 1, 4), 3);
+        assert_eq!(grapheme_columns("\t", 4, 4), 4);
+        assert_eq!(grapheme_columns("\t", 3, 0), 1);
+        assert_eq!(grapheme_columns("漢", 1, 4), 2);
+        assert_eq!(display_width("\tx", 4), 5);
+        assert_eq!(display_width("ab\tx", 4), 5);
+        assert_eq!(display_width("ab\tx", 8), 9);
+        assert_eq!(display_column("ab\tx", 3, 4), 4);
+        assert_eq!(display_column("ab\tx", 9, 4), 5);
+    }
+
+    #[test]
+    fn a_tab_that_does_not_fit_wraps_to_the_next_row() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        // "abc" fills three columns; the tab would take the next five of an
+        // eight-column row, so the row ends before it at the word boundary.
+        let graphemes: Vec<&str> = "abc\tdefg".graphemes(true).collect();
+        assert_eq!(
+            calculate_wrap_point(&graphemes, 0, 6, graphemes.len(), 8),
+            3
+        );
     }
 
     #[test]

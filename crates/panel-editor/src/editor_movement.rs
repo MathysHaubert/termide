@@ -190,6 +190,7 @@ impl Editor {
             preferred_column,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
         ) {
             self.cursor = Cursor::at(line, col);
         }
@@ -219,6 +220,7 @@ impl Editor {
             preferred_column,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
         ) {
             self.cursor = Cursor::at(line, col);
         }
@@ -242,6 +244,7 @@ impl Editor {
             &self.buffer,
             self.render_cache.content_width,
             self.render_cache.use_smart_wrap,
+            self.config.tab_size,
         );
     }
 
@@ -261,6 +264,7 @@ impl Editor {
             &self.buffer,
             self.render_cache.content_width,
             self.render_cache.use_smart_wrap,
+            self.config.tab_size,
         );
     }
 
@@ -315,6 +319,7 @@ impl Editor {
             preferred_column,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
             page_size,
         );
         self.cursor = Cursor::at(line, col);
@@ -347,6 +352,7 @@ impl Editor {
             preferred_column,
             content_width,
             use_smart_wrap,
+            self.config.tab_size,
             page_size,
         );
         self.cursor = Cursor::at(line, col);

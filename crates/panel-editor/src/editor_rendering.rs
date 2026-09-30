@@ -45,8 +45,11 @@ impl Editor {
 
         // Update wrap settings BEFORE building cumulative cache
         // This ensures cache is invalidated if width changed
-        self.render_cache
-            .update_wrap_settings(effective_width, use_smart_wrap);
+        self.render_cache.update_wrap_settings(
+            effective_width,
+            use_smart_wrap,
+            self.config.tab_size,
+        );
         self.render_cache.content_height = content_height;
 
         self.viewport.resize(content_width, content_height);
@@ -59,8 +62,9 @@ impl Editor {
             if self.config.word_wrap && content_width > 0 {
                 self.ensure_cursor_visible_word_wrap(content_height);
             } else {
+                let cursor = self.cursor_in_display_columns();
                 self.viewport
-                    .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+                    .ensure_cursor_visible(&cursor, virtual_lines_total);
             }
         }
 
@@ -82,6 +86,7 @@ impl Editor {
             config.editor.show_git_diff,
             self.config.word_wrap,
             use_smart_wrap,
+            self.config.tab_size,
             content_width,
             content_height,
         );
@@ -160,8 +165,12 @@ impl Editor {
                 None => return,
             };
             let line_text = line_cow.trim_end_matches('\n');
-            let (_, wrap_points) =
-                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            let (_, wrap_points) = word_wrap::get_line_wrap_points(
+                line_text,
+                content_width,
+                use_smart_wrap,
+                self.config.tab_size,
+            );
 
             // Last wrap-row index inside the logical line. With N wrap
             // points the line spans N+1 visual rows, so the last one is
@@ -200,13 +209,9 @@ impl Editor {
             let last_chunk_start = wrap_points.last().copied().unwrap_or(0);
             let last_chunk_width: usize = {
                 use unicode_segmentation::UnicodeSegmentation;
-                use unicode_width::UnicodeWidthChar;
-                line_text
-                    .graphemes(true)
-                    .skip(last_chunk_start)
-                    .flat_map(|g| g.chars())
-                    .map(|c| c.width().unwrap_or(0))
-                    .sum()
+                // Tab stops restart at each visual row, as when it was drawn.
+                let last_chunk: String = line_text.graphemes(true).skip(last_chunk_start).collect();
+                termide_buffer::display_width(&last_chunk, self.config.tab_size)
             };
 
             (row as u16, last_chunk_width.min(content_width))
@@ -232,8 +237,7 @@ impl Editor {
                 .buffer
                 .line(self.cursor.line)
                 .map(|l| {
-                    use unicode_width::UnicodeWidthChar;
-                    l.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>()
+                    termide_buffer::display_width(l.trim_end_matches('\n'), self.config.tab_size)
                 })
                 .unwrap_or(0);
             let visible = line_visual_width
@@ -291,8 +295,11 @@ impl Editor {
 
         // Update wrap settings BEFORE building cumulative cache
         // This ensures cache is invalidated if width changed
-        self.render_cache
-            .update_wrap_settings(effective_width, use_smart_wrap);
+        self.render_cache.update_wrap_settings(
+            effective_width,
+            use_smart_wrap,
+            self.config.tab_size,
+        );
         self.render_cache.content_height = content_height;
 
         self.viewport.resize(content_width, content_height);
@@ -308,8 +315,9 @@ impl Editor {
                 self.ensure_cursor_visible_word_wrap(content_height);
             } else {
                 // Standard mode: use physical line scrolling
+                let cursor = self.cursor_in_display_columns();
                 self.viewport
-                    .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+                    .ensure_cursor_visible(&cursor, virtual_lines_total);
             }
         }
 
@@ -331,6 +339,7 @@ impl Editor {
             config.editor.show_git_diff,
             self.config.word_wrap,
             use_smart_wrap,
+            self.config.tab_size,
             content_width,
             content_height,
         );
@@ -365,8 +374,6 @@ impl Editor {
 
         // Render completion popup if active
         if let Some(ref popup) = self.lsp.completion_popup {
-            use unicode_width::UnicodeWidthChar;
-
             // Only render if cursor is in visible area
             if self.cursor.line >= self.viewport.top_line
                 && self.cursor.line < self.viewport.top_line + content_height
@@ -382,10 +389,11 @@ impl Editor {
                     .buffer
                     .line(self.cursor.line)
                     .map(|line| {
-                        line.chars()
-                            .take(self.cursor.column)
-                            .map(|c| c.width().unwrap_or(0))
-                            .sum()
+                        termide_buffer::display_column(
+                            line.trim_end_matches('\n'),
+                            self.cursor.column,
+                            self.config.tab_size,
+                        )
                     })
                     .unwrap_or(0);
 
@@ -404,7 +412,6 @@ impl Editor {
         // Render code-action popup if active (anchored at the cursor like
         // completion).
         if let Some(ref popup) = self.lsp.code_action_popup {
-            use unicode_width::UnicodeWidthChar;
             if self.cursor.line >= self.viewport.top_line
                 && self.cursor.line < self.viewport.top_line + content_height
             {
@@ -415,10 +422,11 @@ impl Editor {
                     .buffer
                     .line(self.cursor.line)
                     .map(|line| {
-                        line.chars()
-                            .take(self.cursor.column)
-                            .map(|c| c.width().unwrap_or(0))
-                            .sum()
+                        termide_buffer::display_column(
+                            line.trim_end_matches('\n'),
+                            self.cursor.column,
+                            self.config.tab_size,
+                        )
                     })
                     .unwrap_or(0);
                 let cursor_x = content_x + cursor_screen_col as u16;

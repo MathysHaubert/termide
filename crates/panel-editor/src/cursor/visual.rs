@@ -61,6 +61,7 @@ pub fn move_up(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> Option<Cursor> {
     // Calculate visual offset from current position if not provided
     let visual_offset = preferred_column.unwrap_or_else(|| {
@@ -69,7 +70,7 @@ pub fn move_up(
             let line_len = line_text.graphemes(true).count();
             let cursor_col = cursor.column.min(line_len);
             let (_visual_rows, wrap_points) =
-                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
             let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
             let (visual_row_start, _) =
                 get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
@@ -86,7 +87,7 @@ pub fn move_up(
         let cursor_col = cursor.column.min(line_len);
 
         let (_visual_rows, wrap_points) =
-            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
         let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
 
@@ -114,7 +115,7 @@ pub fn move_up(
             }
 
             let (visual_rows, wrap_points) =
-                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
             let last_visual_row = visual_rows - 1;
 
             let (visual_row_start, visual_row_end) =
@@ -138,6 +139,7 @@ pub fn move_down(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> Option<Cursor> {
     // Calculate visual offset from current position if not provided
     let visual_offset = preferred_column.unwrap_or_else(|| {
@@ -146,7 +148,7 @@ pub fn move_down(
             let line_len = line_text.graphemes(true).count();
             let cursor_col = cursor.column.min(line_len);
             let (_visual_rows, wrap_points) =
-                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
             let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
             let (visual_row_start, _) =
                 get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
@@ -163,7 +165,7 @@ pub fn move_down(
         let cursor_col = cursor.column.min(line_len);
 
         let (total_visual_rows, wrap_points) =
-            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
         let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
 
@@ -192,7 +194,7 @@ pub fn move_down(
             }
 
             let (_visual_rows, wrap_points) =
-                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+                word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
             // First visual row
             let visual_row_end = if !wrap_points.is_empty() {
@@ -217,6 +219,7 @@ pub fn move_to_visual_line_start(
     buffer: &TextBuffer,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
     if let Some(line_text) = buffer.line(cursor.line) {
         let line_text = line_text.trim_end_matches('\n');
@@ -224,7 +227,7 @@ pub fn move_to_visual_line_start(
         let cursor_col = cursor.column.min(line_len);
 
         let (_visual_rows, wrap_points) =
-            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
         // Find which visual row the cursor is on
         let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
@@ -246,6 +249,7 @@ pub fn move_to_visual_line_end(
     buffer: &TextBuffer,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
     if let Some(line_text) = buffer.line(cursor.line) {
         let line_text = line_text.trim_end_matches('\n');
@@ -253,7 +257,7 @@ pub fn move_to_visual_line_end(
         let cursor_col = cursor.column.min(line_len);
 
         let (_visual_rows, wrap_points) =
-            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            word_wrap::get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
         // Find which visual row the cursor is on
         let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
@@ -284,6 +288,7 @@ pub fn page_up(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     page_size: usize,
 ) -> Cursor {
     let mut current_cursor = *cursor;
@@ -298,6 +303,7 @@ pub fn page_up(
             preferred_column,
             content_width,
             use_smart_wrap,
+            tab_size,
         ) {
             current_cursor = new_cursor;
             moves_made += 1;
@@ -327,6 +333,7 @@ pub fn page_down(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     page_size: usize,
 ) -> Cursor {
     let mut current_cursor = *cursor;
@@ -342,6 +349,7 @@ pub fn page_down(
             preferred_column,
             content_width,
             use_smart_wrap,
+            tab_size,
         ) {
             current_cursor = new_cursor;
             moves_made += 1;

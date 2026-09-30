@@ -10,7 +10,6 @@ use lsp_types::Diagnostic;
 use termide_buffer::{calculate_wrap_point, TextBuffer};
 use termide_git::GitDiffCache;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 /// Calculate wrap points for a single line of text.
 ///
@@ -23,13 +22,14 @@ pub fn get_line_wrap_points(
     line_text: &str,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> (usize, Vec<usize>) {
     if content_width == 0 {
         return (1, Vec::new());
     }
 
     // Check display width, not char/grapheme count
-    let display_width = line_text.width();
+    let display_width = termide_buffer::display_width(line_text, tab_size);
     if display_width == 0 {
         return (1, Vec::new());
     }
@@ -46,9 +46,15 @@ pub fn get_line_wrap_points(
 
     while grapheme_offset < line_len {
         let chunk_end = if use_smart_wrap {
-            calculate_wrap_point(&graphemes, grapheme_offset, content_width, line_len)
+            calculate_wrap_point(
+                &graphemes,
+                grapheme_offset,
+                content_width,
+                line_len,
+                tab_size,
+            )
         } else {
-            calculate_simple_wrap_point(&graphemes, grapheme_offset, content_width)
+            calculate_simple_wrap_point(&graphemes, grapheme_offset, content_width, tab_size)
         };
 
         // Push chunk_end as start of NEXT visual line (not grapheme_offset!)
@@ -70,12 +76,18 @@ pub fn get_line_wrap_points(
 /// Calculate simple wrap point for a single visual line (iterative version).
 ///
 /// Returns the grapheme index where the visual line ends.
-/// This mirrors the logic in wrap_rendering.rs for consistency.
-fn calculate_simple_wrap_point(graphemes: &[&str], start: usize, max_width: usize) -> usize {
+/// This mirrors the logic in wrap_rendering.rs for consistency: tab stops
+/// restart at `start`, the first column of the visual row.
+fn calculate_simple_wrap_point(
+    graphemes: &[&str],
+    start: usize,
+    max_width: usize,
+    tab_size: usize,
+) -> usize {
     let mut display_width = 0;
 
     for (i, grapheme) in graphemes.iter().enumerate().skip(start) {
-        let grapheme_width = grapheme.width();
+        let grapheme_width = termide_buffer::grapheme_columns(grapheme, display_width, tab_size);
 
         if display_width + grapheme_width > max_width {
             return i;
@@ -97,17 +109,24 @@ pub(crate) fn get_cursor_visual_row_in_line_cached(
     column: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
     if content_width == 0 {
         return 0;
     }
 
     let (_, wrap_points) =
-        get_line_wrap_points_cached(cache, buffer, line, content_width, use_smart_wrap);
+        get_line_wrap_points_cached(cache, buffer, line, content_width, use_smart_wrap, tab_size);
 
     // Clamp column to line length (using cached grapheme count)
-    let line_len =
-        get_line_grapheme_count_cached(cache, buffer, line, content_width, use_smart_wrap);
+    let line_len = get_line_grapheme_count_cached(
+        cache,
+        buffer,
+        line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
     let column_clamped = column.min(line_len);
 
     // Find which visual row contains the cursor column
@@ -130,6 +149,7 @@ pub fn visual_row_to_buffer_position_with_diagnostics(
     viewport_top: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     diagnostics: &[Diagnostic],
 ) -> (usize, usize, usize, bool) {
     // Group diagnostics by line with total row count (accounting for multi-row diagnostics)
@@ -196,9 +216,20 @@ pub fn visual_row_to_buffer_position_with_diagnostics(
 
                 while grapheme_offset < line_len {
                     let chunk_end = if use_smart_wrap {
-                        calculate_wrap_point(&graphemes, grapheme_offset, content_width, line_len)
+                        calculate_wrap_point(
+                            &graphemes,
+                            grapheme_offset,
+                            content_width,
+                            line_len,
+                            tab_size,
+                        )
                     } else {
-                        calculate_simple_wrap_point(&graphemes, grapheme_offset, content_width)
+                        calculate_simple_wrap_point(
+                            &graphemes,
+                            grapheme_offset,
+                            content_width,
+                            tab_size,
+                        )
                     };
 
                     if current_visual_row == visual_row {
@@ -318,9 +349,10 @@ pub(crate) fn get_line_wrap_points_cached(
     line: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> (usize, Vec<usize>) {
     // Check if cache has valid data for this line with matching width settings
-    if let Some(cached) = cache.get_wrap_data(line, content_width, use_smart_wrap) {
+    if let Some(cached) = cache.get_wrap_data(line, content_width, use_smart_wrap, tab_size) {
         return (cached.visual_rows, cached.wrap_points.clone());
     }
 
@@ -332,17 +364,21 @@ pub(crate) fn get_line_wrap_points_cached(
         .unwrap_or("");
 
     let grapheme_count = line_text.graphemes(true).count();
-    let (visual_rows, wrap_points) = get_line_wrap_points(line_text, content_width, use_smart_wrap);
+    let (visual_rows, wrap_points) =
+        get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
 
-    // Store in cache with width settings
-    cache.set_wrap_data(
-        line,
-        visual_rows,
-        wrap_points.clone(),
-        grapheme_count,
-        content_width,
-        use_smart_wrap,
-    );
+    // Store in cache with width settings. The cache holds one tab size for
+    // all its entries, so a lookup made with another one is not stored.
+    if cache.tab_size == tab_size {
+        cache.set_wrap_data(
+            line,
+            visual_rows,
+            wrap_points.clone(),
+            grapheme_count,
+            content_width,
+            use_smart_wrap,
+        );
+    }
 
     (visual_rows, wrap_points)
 }
@@ -357,14 +393,15 @@ pub(crate) fn get_visual_rows_cached(
     line: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
-    if let Some(cached) = cache.get_wrap_data(line, content_width, use_smart_wrap) {
+    if let Some(cached) = cache.get_wrap_data(line, content_width, use_smart_wrap, tab_size) {
         return cached.visual_rows;
     }
 
     // Cache miss — compute and cache, return only visual_rows
     let (visual_rows, _) =
-        get_line_wrap_points_cached(cache, buffer, line, content_width, use_smart_wrap);
+        get_line_wrap_points_cached(cache, buffer, line, content_width, use_smart_wrap, tab_size);
     visual_rows
 }
 
@@ -378,18 +415,19 @@ pub(crate) fn get_line_grapheme_count_cached(
     line: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
     // Ensure wrap data is cached (populates grapheme_count)
     if cache
-        .get_wrap_data(line, content_width, use_smart_wrap)
+        .get_wrap_data(line, content_width, use_smart_wrap, tab_size)
         .is_none()
     {
         // Populate cache
-        get_visual_rows_cached(cache, buffer, line, content_width, use_smart_wrap);
+        get_visual_rows_cached(cache, buffer, line, content_width, use_smart_wrap, tab_size);
     }
 
     cache
-        .get_wrap_data(line, content_width, use_smart_wrap)
+        .get_wrap_data(line, content_width, use_smart_wrap, tab_size)
         .map(|c| c.grapheme_count)
         .unwrap_or(0)
 }
@@ -403,13 +441,14 @@ pub(crate) fn calculate_total_visual_rows_cached(
     content_width: usize,
     word_wrap_enabled: bool,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> usize {
     if content_width == 0 || !word_wrap_enabled {
         return buffer.line_count();
     }
 
     // Update wrap settings (invalidates cache if changed)
-    cache.update_wrap_settings(content_width, use_smart_wrap);
+    cache.update_wrap_settings(content_width, use_smart_wrap, tab_size);
 
     // Try to use cumulative cache (verify it covers all buffer lines)
     if cache.cumulative_covers_line_count(buffer.line_count()) {
@@ -434,6 +473,7 @@ pub(crate) fn move_up_cached(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> Option<(usize, usize)> {
     use unicode_segmentation::UnicodeSegmentation;
 
@@ -453,11 +493,23 @@ pub(crate) fn move_up_cached(
     }
 
     // Get wrap data for current line
-    let (_, wrap_points) =
-        get_line_wrap_points_cached(cache, buffer, cursor_line, content_width, use_smart_wrap);
+    let (_, wrap_points) = get_line_wrap_points_cached(
+        cache,
+        buffer,
+        cursor_line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
 
-    let line_len =
-        get_line_grapheme_count_cached(cache, buffer, cursor_line, content_width, use_smart_wrap);
+    let line_len = get_line_grapheme_count_cached(
+        cache,
+        buffer,
+        cursor_line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
     let cursor_col = cursor_col.min(line_len);
 
     // Find which visual row within this line the cursor is on
@@ -478,11 +530,23 @@ pub(crate) fn move_up_cached(
     } else if cursor_line > 0 {
         // Move to previous physical line
         let prev_line = cursor_line - 1;
-        let (prev_visual_rows, prev_wrap_points) =
-            get_line_wrap_points_cached(cache, buffer, prev_line, content_width, use_smart_wrap);
+        let (prev_visual_rows, prev_wrap_points) = get_line_wrap_points_cached(
+            cache,
+            buffer,
+            prev_line,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
-        let prev_line_len =
-            get_line_grapheme_count_cached(cache, buffer, prev_line, content_width, use_smart_wrap);
+        let prev_line_len = get_line_grapheme_count_cached(
+            cache,
+            buffer,
+            prev_line,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
         // Target the last visual row of previous line
         let target_visual_row = prev_visual_rows.saturating_sub(1);
@@ -511,6 +575,7 @@ pub(crate) fn move_down_cached(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> Option<(usize, usize)> {
     use unicode_segmentation::UnicodeSegmentation;
 
@@ -531,11 +596,23 @@ pub(crate) fn move_down_cached(
     }
 
     // Get wrap data for current line
-    let (total_visual_rows, wrap_points) =
-        get_line_wrap_points_cached(cache, buffer, cursor_line, content_width, use_smart_wrap);
+    let (total_visual_rows, wrap_points) = get_line_wrap_points_cached(
+        cache,
+        buffer,
+        cursor_line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
 
-    let line_len =
-        get_line_grapheme_count_cached(cache, buffer, cursor_line, content_width, use_smart_wrap);
+    let line_len = get_line_grapheme_count_cached(
+        cache,
+        buffer,
+        cursor_line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
     let cursor_col = cursor_col.min(line_len);
 
     // Find which visual row within this line the cursor is on
@@ -563,11 +640,23 @@ pub(crate) fn move_down_cached(
     } else if cursor_line + 1 < line_count {
         // Move to next physical line
         let next_line = cursor_line + 1;
-        let (_, next_wrap_points) =
-            get_line_wrap_points_cached(cache, buffer, next_line, content_width, use_smart_wrap);
+        let (_, next_wrap_points) = get_line_wrap_points_cached(
+            cache,
+            buffer,
+            next_line,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
-        let next_line_len =
-            get_line_grapheme_count_cached(cache, buffer, next_line, content_width, use_smart_wrap);
+        let next_line_len = get_line_grapheme_count_cached(
+            cache,
+            buffer,
+            next_line,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
         // Target the first visual row of next line
         let (next_start, next_end) = get_visual_row_bounds(0, &next_wrap_points, next_line_len);
@@ -595,6 +684,7 @@ pub(crate) fn page_up_cached(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     page_size: usize,
 ) -> (usize, usize) {
     let (mut line, mut col) = cursor_pos;
@@ -607,6 +697,7 @@ pub(crate) fn page_up_cached(
             preferred_column,
             content_width,
             use_smart_wrap,
+            tab_size,
         ) {
             line = new_line;
             col = new_col;
@@ -629,6 +720,7 @@ pub(crate) fn page_down_cached(
     preferred_column: Option<usize>,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     page_size: usize,
 ) -> (usize, usize) {
     let (mut line, mut col) = cursor_pos;
@@ -641,6 +733,7 @@ pub(crate) fn page_down_cached(
             preferred_column,
             content_width,
             use_smart_wrap,
+            tab_size,
         ) {
             line = new_line;
             col = new_col;
@@ -700,6 +793,7 @@ pub(crate) fn visual_row_to_buffer_position_cached(
     viewport_top: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
     diagnostics: &[Diagnostic],
     git_diff_cache: &Option<GitDiffCache>,
     show_git_diff: bool,
@@ -712,6 +806,7 @@ pub(crate) fn visual_row_to_buffer_position_cached(
             viewport_top,
             content_width,
             use_smart_wrap,
+            tab_size,
             diagnostics,
         );
     }
@@ -727,11 +822,23 @@ pub(crate) fn visual_row_to_buffer_position_cached(
 
     while line_idx < buffer.line_count() {
         // Use cached wrap data
-        let (visual_rows, wrap_points) =
-            get_line_wrap_points_cached(cache, buffer, line_idx, content_width, use_smart_wrap);
+        let (visual_rows, wrap_points) = get_line_wrap_points_cached(
+            cache,
+            buffer,
+            line_idx,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
-        let line_len =
-            get_line_grapheme_count_cached(cache, buffer, line_idx, content_width, use_smart_wrap);
+        let line_len = get_line_grapheme_count_cached(
+            cache,
+            buffer,
+            line_idx,
+            content_width,
+            use_smart_wrap,
+            tab_size,
+        );
 
         // Check if target is within this line's visual rows
         if visual_row < current_visual_row + visual_rows {
@@ -768,7 +875,13 @@ pub(crate) fn visual_row_to_buffer_position_cached(
 
     // If we've exhausted all lines, return the last line
     let last_line = buffer.line_count().saturating_sub(1);
-    let last_line_len =
-        get_line_grapheme_count_cached(cache, buffer, last_line, content_width, use_smart_wrap);
+    let last_line_len = get_line_grapheme_count_cached(
+        cache,
+        buffer,
+        last_line,
+        content_width,
+        use_smart_wrap,
+        tab_size,
+    );
     (last_line, 0, last_line_len, false)
 }

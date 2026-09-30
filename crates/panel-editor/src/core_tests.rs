@@ -511,9 +511,8 @@ fn a_buffer_with_unsaved_work_keeps_it_and_flags_the_conflict() {
 
 /// A TAB (or any control character) in a line must not reach a cell: the
 /// host terminal would move its cursor to the next tab stop and every cell
-/// written after it would land off by the difference (#55). The control
-/// character keeps its one column as a blank, so the text after it stays
-/// where the cursor arithmetic puts it.
+/// written after it would land off by the difference (#55). A TAB is drawn
+/// as blanks up to its tab stop, any other control character as one blank.
 #[test]
 fn control_characters_never_reach_the_frame() {
     use ratatui::{buffer::Buffer, layout::Rect};
@@ -540,7 +539,7 @@ fn control_characters_never_reach_the_frame() {
         assert_eq!(
             &first[name_col - 1..name_col],
             " ",
-            "word_wrap={word_wrap}: the TAB keeps one blank column: {first:?}"
+            "word_wrap={word_wrap}: the TAB is drawn blank: {first:?}"
         );
         assert!(
             row(1).contains("x y"),
@@ -636,4 +635,88 @@ fn a_click_in_the_find_bar_places_its_cursor_and_a_drag_selects() {
     );
     typed(&mut editor, 'Y');
     assert_eq!(editor.find_bar.as_ref().unwrap().find_text(), "nYdle");
+}
+
+/// Render `content` into a `width`-column frame and return its rows with the
+/// line-number gutter cut off.
+fn rendered_text_rows(editor: &mut Editor, width: u16, height: u16) -> Vec<String> {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    let theme = *termide_theme::Theme::get_by_name("github-light");
+    let config = termide_config::Config::default();
+    let area = Rect::new(0, 0, width, height);
+    let mut buf = Buffer::empty(area);
+    editor.render_content(area, &mut buf, &theme, &config, true, None);
+    let gutter = crate::rendering::line_number_width(editor.buffer.line_count()) as u16;
+    (0..height)
+        .map(|y| (gutter..width).map(|x| buf[(x, y)].symbol()).collect())
+        .collect()
+}
+
+/// A TAB reaches the next multiple of the tab size, with and without word
+/// wrap, and follows a per-editor tab size change.
+#[test]
+fn tabs_expand_to_the_next_tab_stop() {
+    for word_wrap in [false, true] {
+        let (mut editor, _file) = create_editor_with_content("\tname\nab\tc\n");
+        editor.config.word_wrap = word_wrap;
+        editor.config.tab_size = 4;
+        let rows = rendered_text_rows(&mut editor, 30, 4);
+        assert!(
+            rows[0].starts_with("    name "),
+            "word_wrap={word_wrap}: {rows:?}"
+        );
+        assert!(
+            rows[1].starts_with("ab  c "),
+            "word_wrap={word_wrap}: {rows:?}"
+        );
+
+        editor.config.tab_size = 8;
+        let rows = rendered_text_rows(&mut editor, 30, 4);
+        assert!(
+            rows[0].starts_with("        name "),
+            "word_wrap={word_wrap}: {rows:?}"
+        );
+        assert!(
+            rows[1].starts_with("ab      c "),
+            "word_wrap={word_wrap}: {rows:?}"
+        );
+    }
+}
+
+/// Wrap points are measured with tabs expanded, and a tab size change
+/// re-wraps lines whose rows were cached with the old one.
+#[test]
+fn a_tab_size_change_rewraps_the_line() {
+    let (mut editor, _file) = create_editor_with_content("ab\tcdefgh\nz\n");
+    editor.config.word_wrap = true;
+    editor.config.tab_size = 4;
+    let gutter = crate::rendering::line_number_width(editor.buffer.line_count()) as u16;
+    // Ten content columns: "ab" + a two-column tab + "cdefgh" fill one row.
+    let rows = rendered_text_rows(&mut editor, gutter + 10, 4);
+    assert_eq!(rows[0], "ab  cdefgh");
+    assert!(rows[1].starts_with('z'), "{rows:?}");
+
+    // With tab stops every 8 columns the tab takes six, so the row wraps.
+    editor.config.tab_size = 8;
+    let rows = rendered_text_rows(&mut editor, gutter + 10, 4);
+    assert!(rows[0].starts_with("ab      "), "{rows:?}");
+    assert!(rows[1].starts_with("cdefgh"), "{rows:?}");
+    assert!(rows[2].starts_with('z'), "{rows:?}");
+}
+
+/// Without word wrap the view scrolls by display columns: a cursor past a
+/// few tabs is scrolled into view even though its grapheme index is small.
+#[test]
+fn horizontal_scroll_counts_tab_columns() {
+    let (mut editor, _file) = create_editor_with_content("\t\t\t\tabc\n");
+    editor.config.word_wrap = false;
+    editor.config.tab_size = 4;
+    editor.cursor = termide_buffer::Cursor::at(0, 5); // on the "b", column 17
+    let gutter = crate::rendering::line_number_width(editor.buffer.line_count()) as u16;
+    let rows = rendered_text_rows(&mut editor, gutter + 10, 2);
+    assert_eq!(editor.cursor_in_display_columns().column, 17);
+    assert_eq!(editor.viewport().left_column, 8);
+    // Columns 8..18: the last two tabs, then "ab" with the cursor on "b".
+    assert_eq!(rows[0], "        ab");
 }

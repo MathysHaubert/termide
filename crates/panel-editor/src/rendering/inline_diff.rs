@@ -68,20 +68,6 @@ pub fn apply_diff_style(
     }
 }
 
-/// Calculate extra visual width added by deleted text.
-///
-/// Deleted text is shown visually but doesn't exist in the buffer,
-/// so we need to account for this when calculating positions.
-pub fn calculate_deleted_width(inline_changes: &[InlineChange]) -> usize {
-    use unicode_width::UnicodeWidthStr;
-
-    inline_changes
-        .iter()
-        .filter(|c| c.change_type == InlineChangeType::Deleted)
-        .map(|c| c.text.width())
-        .sum()
-}
-
 /// Convert buffer column to visual column.
 ///
 /// Accounts for deleted text that appears before the given buffer position.
@@ -116,34 +102,36 @@ pub fn buffer_to_visual_col(buffer_col: usize, inline_changes: &[InlineChange]) 
     visual_col
 }
 
-/// Convert visual column to buffer column.
+/// Convert a visual (screen) column to a grapheme index in the buffer line.
 ///
-/// Accounts for deleted text when mapping visual position to buffer position.
-pub fn visual_to_buffer_col(visual_col: usize, inline_changes: &[InlineChange]) -> usize {
-    use unicode_width::UnicodeWidthStr;
+/// Walks the line as it is drawn, deleted text included and tabs expanded, so
+/// the result is the grapheme under that column. A column on deleted text maps
+/// to the buffer position where it was deleted; a column past the end maps to
+/// the end of the line.
+pub fn visual_to_buffer_col(
+    visual_col: usize,
+    inline_changes: &[InlineChange],
+    tab_size: usize,
+) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
 
-    let mut current_visual = 0;
-    let mut buffer_col = 0;
-
+    let mut col = 0;
+    let mut buffer_idx = 0;
     for change in inline_changes {
-        let text_width = change.text.width();
-
-        if current_visual + text_width > visual_col {
-            // Target is within this segment
-            let offset = visual_col - current_visual;
-            return match change.change_type {
-                InlineChangeType::Deleted => buffer_col, // Clicking on deleted = position after
-                _ => buffer_col + offset,
-            };
-        }
-
-        current_visual += text_width;
-        if change.change_type != InlineChangeType::Deleted {
-            buffer_col += text_width;
+        let deleted = change.change_type == InlineChangeType::Deleted;
+        for g in change.text.graphemes(true) {
+            let width = termide_buffer::grapheme_columns(g, col, tab_size);
+            if col + width > visual_col {
+                return buffer_idx;
+            }
+            col += width;
+            if !deleted {
+                buffer_idx += 1;
+            }
         }
     }
 
-    buffer_col
+    buffer_idx
 }
 
 #[cfg(test)]
@@ -173,17 +161,6 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_deleted_width() {
-        let changes = vec![
-            make_change("Hello ", InlineChangeType::Unchanged),
-            make_change("world", InlineChangeType::Deleted),
-            make_change("beautiful world", InlineChangeType::Inserted),
-        ];
-
-        assert_eq!(calculate_deleted_width(&changes), 5); // "world" = 5 chars
-    }
-
-    #[test]
     fn test_buffer_to_visual_col() {
         // "Hello " -> "Hello beautiful "
         // Changes: "Hello "(unchanged) + ""(deleted) + "beautiful "(inserted)
@@ -209,10 +186,25 @@ mod tests {
         ];
 
         // Visual col 0 -> buffer col 0
-        assert_eq!(visual_to_buffer_col(0, &changes), 0);
+        assert_eq!(visual_to_buffer_col(0, &changes, 4), 0);
 
         // Visual col in deleted region -> buffer col after unchanged
-        assert_eq!(visual_to_buffer_col(7, &changes), 6);
+        assert_eq!(visual_to_buffer_col(7, &changes, 4), 6);
+    }
+
+    /// Deleted text drawn before a tab moves its tab stop, and the click
+    /// mapping follows the line as drawn.
+    #[test]
+    fn visual_to_buffer_col_expands_tabs_after_deleted_text() {
+        // Drawn: "ab" (deleted) then "\tx": the tab spans columns 2..4.
+        let changes = vec![
+            make_change("ab", InlineChangeType::Deleted),
+            make_change("\tx", InlineChangeType::Unchanged),
+        ];
+        assert_eq!(visual_to_buffer_col(1, &changes, 4), 0);
+        assert_eq!(visual_to_buffer_col(3, &changes, 4), 0);
+        assert_eq!(visual_to_buffer_col(4, &changes, 4), 1);
+        assert_eq!(visual_to_buffer_col(9, &changes, 4), 2);
     }
 
     #[test]

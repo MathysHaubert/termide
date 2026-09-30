@@ -28,6 +28,9 @@ pub struct RenderContext {
 
     /// Map of line -> most severe diagnostic severity for gutter markers.
     pub diagnostic_line_severity: HashMap<usize, DiagnosticSeverity>,
+
+    /// Tab stop interval: a TAB is drawn up to the next multiple of it.
+    pub tab_size: usize,
 }
 
 impl RenderContext {
@@ -44,6 +47,7 @@ impl RenderContext {
         selection: &Option<Selection>,
         diagnostics: &[Diagnostic],
         visible_lines: std::ops::Range<usize>,
+        tab_size: usize,
     ) -> Self {
         // Pre-extract match information
         let search_matches: Vec<(usize, usize, usize)> = if let Some(ref search) = search_state {
@@ -74,6 +78,7 @@ impl RenderContext {
             selection_range,
             cursor_viewport_pos: None,
             diagnostic_line_severity,
+            tab_size,
         }
     }
 

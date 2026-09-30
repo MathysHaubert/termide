@@ -16,17 +16,17 @@ use termide_ui::{extract_hex_color_at_col, ColorPreview};
 use crate::rendering::inline_diff;
 use crate::{git, rendering, selection, word_wrap, Editor};
 
-/// Convert screen column to grapheme index, accounting for display widths.
+/// Convert screen column to grapheme index, accounting for display widths
+/// and tab stops (counted from the start of `text`).
 ///
 /// Used for mouse click position conversion.
-fn screen_col_to_grapheme_idx(text: &str, target_col: usize) -> usize {
+fn screen_col_to_grapheme_idx(text: &str, target_col: usize, tab_size: usize) -> usize {
     use unicode_segmentation::UnicodeSegmentation;
-    use unicode_width::UnicodeWidthStr;
 
     let mut col = 0;
     let mut last_idx = 0;
     for (idx, g) in text.graphemes(true).enumerate() {
-        let w = g.width();
+        let w = termide_buffer::grapheme_columns(g, col, tab_size);
         if col + w > target_col {
             return idx;
         }
@@ -215,6 +215,7 @@ impl Editor {
                 self.viewport.top_line,
                 cached_width,
                 use_smart_wrap,
+                self.config.tab_size,
                 &self.lsp.diagnostics,
                 &self.git.diff_cache,
                 show_git_diff,
@@ -307,7 +308,8 @@ impl Editor {
                 .skip(wrapped_offset)
                 .take(visual_line_len)
                 .collect();
-            let grapheme_in_segment = screen_col_to_grapheme_idx(&segment, rel_x);
+            let grapheme_in_segment =
+                screen_col_to_grapheme_idx(&segment, rel_x, self.config.tab_size);
             // For intermediate wrapped rows (not the last visual row of the line),
             // clamp to visual_line_len - 1 to keep cursor on this visual row.
             // Position chunk_end belongs to the NEXT visual row.
@@ -324,22 +326,19 @@ impl Editor {
 
             // Adjust for inline diff: deleted text is shown visually but
             // doesn't exist in the buffer, shifting all positions after it.
-            let buffer_col = if self.render_cache.config.editor.show_git_diff {
-                if let Some(changes) = self
-                    .git
+            let tab_size = self.config.tab_size;
+            let inline_changes = if self.render_cache.config.editor.show_git_diff {
+                self.git
                     .diff_cache
                     .as_ref()
                     .and_then(|cache| cache.get_inline_diff(target_line, &line_text))
-                {
-                    inline_diff::visual_to_buffer_col(visual_col, &changes)
-                } else {
-                    visual_col
-                }
             } else {
-                visual_col
+                None
             };
-
-            screen_col_to_grapheme_idx(&line_text, buffer_col)
+            match inline_changes {
+                Some(changes) => inline_diff::visual_to_buffer_col(visual_col, &changes, tab_size),
+                None => screen_col_to_grapheme_idx(&line_text, visual_col, tab_size),
+            }
         };
 
         let line_len = self.buffer.line_len_graphemes(target_line);
@@ -446,8 +445,9 @@ impl Editor {
                 if self.config.word_wrap && self.render_cache.content_width > 0 {
                     self.ensure_cursor_visible_word_wrap(self.render_cache.content_height);
                 } else {
+                    let cursor = self.cursor_in_display_columns();
                     self.viewport
-                        .ensure_cursor_visible(&self.cursor, self.render_cache.virtual_line_count);
+                        .ensure_cursor_visible(&cursor, self.render_cache.virtual_line_count);
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -502,5 +502,20 @@ impl Editor {
         }
 
         vec![]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::screen_col_to_grapheme_idx;
+
+    /// A click anywhere on the columns a tab spans lands on the tab.
+    #[test]
+    fn a_click_inside_a_tab_lands_on_the_tab() {
+        assert_eq!(screen_col_to_grapheme_idx("a\tb", 0, 4), 0);
+        assert_eq!(screen_col_to_grapheme_idx("a\tb", 1, 4), 1);
+        assert_eq!(screen_col_to_grapheme_idx("a\tb", 3, 4), 1);
+        assert_eq!(screen_col_to_grapheme_idx("a\tb", 4, 4), 2);
+        assert_eq!(screen_col_to_grapheme_idx("a\tb", 9, 4), 3);
     }
 }

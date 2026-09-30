@@ -5,7 +5,6 @@
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use termide_buffer::{Cursor, TextBuffer, Viewport};
 use termide_git::GitDiffCache;
@@ -45,6 +44,7 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
     content_height: usize,
     line_number_width: u16,
     use_smart_wrap: bool,
+    tab_size: usize,
     text_style: Style,
     cursor_line_style: Style,
     line_number_style: Style,
@@ -73,7 +73,8 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
             // running `calculate_wrap_point` O(n) for every visual row.
             // `wrap_points` holds the grapheme index where each *next* visual
             // row starts; the final chunk ends at `line_len`.
-            let (_, wrap_points) = get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            let (_, wrap_points) =
+                get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
             let line_len = line_text.graphemes(true).count();
 
             let mut grapheme_offset = 0;
@@ -401,8 +402,10 @@ fn render_visual_line<H: LineHighlighter>(
     for (segment_text, segment_style) in segments {
         for grapheme in segment_text.graphemes(true) {
             if grapheme_idx >= char_offset && grapheme_idx < chunk_end {
-                // Get display width of grapheme cluster
-                let grapheme_width = grapheme.width();
+                // Get display width of grapheme cluster. Tab stops restart
+                // at the start of each visual row, as the wrap points assume.
+                let grapheme_width =
+                    termide_buffer::grapheme_columns(grapheme, visual_col, render_context.tab_size);
 
                 // Skip zero-width graphemes (shouldn't happen with proper grapheme iteration)
                 if grapheme_width == 0 {
@@ -410,26 +413,29 @@ fn render_visual_line<H: LineHighlighter>(
                     continue;
                 }
 
-                let x = area.x + line_number_width + visual_col as u16;
-                let y = area.y + visual_row as u16;
+                let (cells, symbol) = super::drawn_cells(grapheme, grapheme_width);
+                for col in visual_col..visual_col + cells {
+                    let x = area.x + line_number_width + col as u16;
+                    let y = area.y + visual_row as u16;
 
-                if x < area.x + area.width && y < area.y + area.height {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        // Use set_symbol for proper grapheme cluster handling
-                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
+                    if x < area.x + area.width && y < area.y + area.height {
+                        if let Some(cell) = buf.cell_mut((x, y)) {
+                            // Use set_symbol for proper grapheme cluster handling
+                            cell.set_symbol(symbol);
 
-                        let final_style = highlight_renderer::determine_cell_style(
-                            line_idx,
-                            grapheme_idx,
-                            *segment_style,
-                            is_cursor_line,
-                            render_context,
-                            search_match_style,
-                            current_match_style,
-                            selection_style,
-                            theme.accented_bg,
-                        );
-                        cell.set_style(final_style);
+                            let final_style = highlight_renderer::determine_cell_style(
+                                line_idx,
+                                grapheme_idx,
+                                *segment_style,
+                                is_cursor_line,
+                                render_context,
+                                search_match_style,
+                                current_match_style,
+                                selection_style,
+                                theme.accented_bg,
+                            );
+                            cell.set_style(final_style);
+                        }
                     }
                 }
 

@@ -139,7 +139,9 @@ right, shared info follows, and the variable-width position sits last:
 - **`Edit: Yes`/`Edit: No`** — toggles read-only, also bound to `Ctrl+E`
   (`[viewer.keybindings] toggle_view`).
 - **`Highlight: <lang>`** — opens the language picker (below).
-- **`Tab: <n>`** — sets the tab size.
+- **`Tab: <n>`** — sets the tab size. A tab character is drawn as blank
+  space up to the next multiple of it; with word wrap, tab stops start over
+  on each wrapped row.
 - **`EOL`** / **`Encoding`** — informational.
 - **`Pos: <line>:<col>`** — opens go-to-line; accepts a line (`12`) or a
   line and column (`12:4`).

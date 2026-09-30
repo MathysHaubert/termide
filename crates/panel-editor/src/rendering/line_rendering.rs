@@ -5,7 +5,6 @@
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use termide_buffer::{Cursor, TextBuffer, Viewport};
 use termide_git::{truncate_right, GitDiffCache, InlineChangeType};
@@ -91,14 +90,23 @@ pub fn render_line_no_wrap<H: LineHighlighter>(
     // Fill remainder of line with cursor line background
     if is_cursor_line {
         // Calculate visual line width (including deleted text from inline diff)
+        let tab_size = render_context.tab_size;
         let visual_line_width = if show_git_diff {
             git_diff_cache
                 .as_ref()
                 .and_then(|cache| cache.get_inline_diff(line_idx, line_text))
-                .map(|changes| line_text.width() + inline_diff::calculate_deleted_width(&changes))
-                .unwrap_or_else(|| line_text.width())
+                .map(|changes| {
+                    // Deleted text is drawn inline, so it moves the tab stops
+                    // after it: measure the line as drawn.
+                    let drawn: String = inline_diff::build_visual_line(&changes)
+                        .iter()
+                        .map(|segment| segment.text)
+                        .collect();
+                    termide_buffer::display_width(&drawn, tab_size)
+                })
+                .unwrap_or_else(|| termide_buffer::display_width(line_text, tab_size))
         } else {
-            line_text.width()
+            termide_buffer::display_width(line_text, tab_size)
         };
 
         fill_line_remainder(
@@ -288,7 +296,8 @@ fn render_line_regular<H: LineHighlighter>(
     for (segment_text, segment_style) in segments {
         for grapheme in segment_text.graphemes(true) {
             // Get display width of grapheme cluster
-            let grapheme_width = grapheme.width();
+            let grapheme_width =
+                termide_buffer::grapheme_columns(grapheme, col_offset, render_context.tab_size);
 
             // Skip zero-width graphemes
             if grapheme_width == 0 {
@@ -296,14 +305,18 @@ fn render_line_regular<H: LineHighlighter>(
                 continue;
             }
 
-            if col_offset >= left_column && col_offset < left_column + content_width {
-                let x = area.x + line_number_width + (col_offset - left_column) as u16;
+            let (cells, symbol) = super::drawn_cells(grapheme, grapheme_width);
+            for col in col_offset..col_offset + cells {
+                if col < left_column || col >= left_column + content_width {
+                    continue;
+                }
+                let x = area.x + line_number_width + (col - left_column) as u16;
                 let y = area.y + row as u16;
 
                 if x < area.x + area.width && y < area.y + area.height {
                     if let Some(cell) = buf.cell_mut((x, y)) {
                         // Use set_symbol for proper grapheme cluster handling
-                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
+                        cell.set_symbol(symbol);
 
                         // Determine final style using highlight renderer
                         let final_style = highlight_renderer::determine_cell_style(
@@ -392,7 +405,8 @@ fn render_line_with_inline_diff<H: LineHighlighter>(
         let change_type = segment.change_type;
 
         for grapheme in segment.text.graphemes(true) {
-            let grapheme_width = grapheme.width();
+            let grapheme_width =
+                termide_buffer::grapheme_columns(grapheme, visual_col, render_context.tab_size);
 
             if grapheme_width == 0 {
                 if change_type != InlineChangeType::Deleted {
@@ -402,13 +416,17 @@ fn render_line_with_inline_diff<H: LineHighlighter>(
             }
 
             // Check if visible in viewport
-            if visual_col >= left_column && visual_col < left_column + content_width {
-                let x = area.x + line_number_width + (visual_col - left_column) as u16;
+            let (cells, symbol) = super::drawn_cells(grapheme, grapheme_width);
+            for col in visual_col..visual_col + cells {
+                if col < left_column || col >= left_column + content_width {
+                    continue;
+                }
+                let x = area.x + line_number_width + (col - left_column) as u16;
                 let y = area.y + row as u16;
 
                 if x < area.x + area.width && y < area.y + area.height {
                     if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
+                        cell.set_symbol(symbol);
 
                         // Get base style from syntax highlighting (for non-deleted text)
                         let base_style = if change_type == InlineChangeType::Deleted {
@@ -832,32 +850,16 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
 
     if let Some(viewport_row) = cursor_viewport_row {
         // cursor.column is a grapheme index — convert to display width for correct
-        // positioning with wide characters (CJK, emoji).
+        // positioning with wide characters (CJK, emoji) and tabs.
         let cursor_display_col = if let Some(line_text) = buffer.line(cursor.line) {
-            use unicode_segmentation::UnicodeSegmentation;
-            use unicode_width::UnicodeWidthStr;
             let trimmed = line_text.trim_end_matches('\n');
-            trimmed
-                .graphemes(true)
-                .take(cursor.column)
-                .map(|g| g.width())
-                .sum::<usize>()
+            termide_buffer::display_column(trimmed, cursor.column, render_context.tab_size)
         } else {
             cursor.column
         };
 
-        let left_display_col = if let Some(line_text) = buffer.line(cursor.line) {
-            use unicode_segmentation::UnicodeSegmentation;
-            use unicode_width::UnicodeWidthStr;
-            let trimmed = line_text.trim_end_matches('\n');
-            trimmed
-                .graphemes(true)
-                .take(viewport.left_column)
-                .map(|g| g.width())
-                .sum::<usize>()
-        } else {
-            viewport.left_column
-        };
+        // `left_column` is a display column, the one the rows are drawn from.
+        let left_display_col = viewport.left_column;
 
         if cursor_display_col >= left_display_col {
             let viewport_col = cursor_display_col - left_display_col;

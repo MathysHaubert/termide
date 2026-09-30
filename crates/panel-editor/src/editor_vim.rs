@@ -31,6 +31,7 @@ impl Editor {
                     viewport_height,
                     content_width,
                     true, // use_smart_wrap
+                    self.config.tab_size,
                 );
                 self.cursor = new_cursor;
                 // Clear selection on normal mode motion
@@ -47,6 +48,7 @@ impl Editor {
                     viewport_height,
                     content_width,
                     true, // use_smart_wrap
+                    self.config.tab_size,
                 );
 
                 // Update selection
@@ -74,6 +76,7 @@ impl Editor {
                     viewport_height,
                     content_width,
                     true, // use_smart_wrap
+                    self.config.tab_size,
                 );
 
                 if let Some(vim) = self.vim.as_mut() {

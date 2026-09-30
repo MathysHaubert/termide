@@ -56,6 +56,7 @@ pub enum VimMotion {
 /// * `viewport_height` - Height of the viewport (for page motions)
 /// * `content_width` - Width of the content area (for visual line motions)
 /// * `use_smart_wrap` - Whether to use smart word wrapping
+#[allow(clippy::too_many_arguments)]
 pub fn execute_motion(
     motion: VimMotion,
     cursor: &Cursor,
@@ -64,6 +65,7 @@ pub fn execute_motion(
     viewport_height: usize,
     content_width: usize,
     use_smart_wrap: bool,
+    tab_size: usize,
 ) -> Cursor {
     let mut new_cursor = *cursor;
     let count = count.max(1);
@@ -181,6 +183,7 @@ pub fn execute_motion(
                     None,
                     content_width,
                     use_smart_wrap,
+                    tab_size,
                 ) {
                     new_cursor = new;
                 }
@@ -196,6 +199,7 @@ pub fn execute_motion(
                     None,
                     content_width,
                     use_smart_wrap,
+                    tab_size,
                 ) {
                     new_cursor = new;
                 }
@@ -369,6 +373,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 3);
 
@@ -380,6 +385,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 7);
     }
@@ -397,6 +403,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.line, 0);
 
@@ -408,6 +415,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.line, 2);
     }
@@ -425,6 +433,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 0);
 
@@ -436,6 +445,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 2);
 
@@ -447,6 +457,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 12); // "  hello world" has 13 chars, last index is 12
     }
@@ -464,6 +475,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.line, 0);
         assert_eq!(new_cursor.column, 0);
@@ -476,6 +488,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.line, 2);
     }
@@ -493,6 +506,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 6); // Start of "world"
 
@@ -504,6 +518,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.column, 12); // Start of "test"
     }
@@ -521,6 +536,7 @@ mod tests {
             24,
             TEST_CONTENT_WIDTH,
             TEST_SMART_WRAP,
+            4,
         );
         assert_eq!(new_cursor.line, 1);
     }
