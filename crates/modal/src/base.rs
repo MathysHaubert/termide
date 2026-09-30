@@ -84,6 +84,37 @@ pub fn render_input_field(
     is_focused: bool,
     theme: &Theme,
 ) {
+    let scroll = input_scroll_offset(text, cursor_pos, width as usize);
+    render_input_field_scrolled(
+        buf,
+        x,
+        y,
+        width,
+        text,
+        cursor_pos,
+        selection_range,
+        is_focused,
+        theme,
+        scroll,
+    );
+}
+
+/// [`render_input_field`] with the first `scroll` characters of `text` scrolled
+/// out of view, for a field that keeps its scroll between frames (see
+/// [`follow_input_scroll`]).
+#[allow(clippy::too_many_arguments)]
+pub fn render_input_field_scrolled(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    text: &str,
+    cursor_pos: usize,
+    selection_range: Option<(usize, usize)>,
+    is_focused: bool,
+    theme: &Theme,
+    scroll_offset: usize,
+) {
     use unicode_width::UnicodeWidthChar;
 
     let width = width as usize;
@@ -110,32 +141,6 @@ pub fn render_input_field(
         .collect();
 
     let total_chars = chars.len();
-    let total_display_width: usize = chars.iter().map(|(_, _, w)| w).sum();
-
-    // Calculate scroll offset (how many chars to skip from start)
-    let mut scroll_offset = 0;
-    if total_display_width >= width {
-        // Need to scroll - ensure cursor is visible
-        let mut cursor_display_x = 0;
-        for (char_idx, _, cw) in &chars {
-            if *char_idx >= cursor_pos {
-                break;
-            }
-            cursor_display_x += cw;
-        }
-
-        // If cursor would be past visible area, scroll
-        if cursor_display_x >= width {
-            let mut skipped_width = 0;
-            for (char_idx, _, cw) in &chars {
-                if cursor_display_x - skipped_width < width {
-                    scroll_offset = *char_idx;
-                    break;
-                }
-                skipped_width += cw;
-            }
-        }
-    }
 
     // Render characters
     let mut screen_x = x;
@@ -174,6 +179,56 @@ pub fn render_input_field(
         };
         buf.set_string(screen_x, y, " ", style);
     }
+}
+
+/// How many characters of `text` [`render_input_field`] scrolls past so the
+/// cursor stays visible in a field `width` cells wide: none while the cursor
+/// fits, else just enough to put it at the right edge.
+fn input_scroll_offset(text: &str, cursor_pos: usize, width: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+
+    let widths: Vec<usize> = text
+        .chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+        .collect();
+    if widths.iter().sum::<usize>() < width {
+        return 0;
+    }
+    let cursor_display_x: usize = widths.iter().take(cursor_pos).sum();
+    if cursor_display_x < width {
+        return 0;
+    }
+    let mut skipped_width = 0;
+    for (char_idx, cw) in widths.iter().enumerate() {
+        if cursor_display_x - skipped_width < width {
+            return char_idx;
+        }
+        skipped_width += cw;
+    }
+    0
+}
+
+/// The scroll of a field `width` cells wide after its cursor moved to
+/// `cursor_pos`, from the `scroll` it had: kept while the cursor stays in view,
+/// else moved just enough to bring it back, and never past what shows the end
+/// of the text. A field that keeps its scroll this way does not jump when a
+/// click places the cursor.
+pub fn follow_input_scroll(text: &str, cursor_pos: usize, width: u16, scroll: usize) -> usize {
+    let width = width as usize;
+    let to_cursor = input_scroll_offset(text, cursor_pos, width);
+    let to_end = input_scroll_offset(text, text.chars().count(), width);
+    if cursor_pos < scroll {
+        cursor_pos
+    } else {
+        scroll.max(to_cursor).min(to_end)
+    }
+}
+
+/// The character of `text` under column `x` of a field scrolled by `scroll`
+/// characters (see [`render_input_field_scrolled`]).
+pub fn input_field_char_at(text: &str, scroll: usize, x: usize) -> usize {
+    let visible: String = text.chars().skip(scroll).collect();
+    scroll + screen_x_to_char_pos(&visible, x)
 }
 
 /// Result of checking mouse click position in a modal.

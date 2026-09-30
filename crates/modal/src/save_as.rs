@@ -10,7 +10,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::base::{button_style, render_input_field, render_modal_block};
+use crate::base::{
+    button_style, follow_input_scroll, input_field_char_at, render_input_field_scrolled,
+    render_modal_block,
+};
 use crate::input_keys::{handle_input_key, InputKeyResult};
 
 use termide_config::constants::MODAL_BUTTON_SPACING;
@@ -49,6 +52,10 @@ pub struct SaveAsModal {
     selected_button: usize, // 0 = OK, 1 = Cancel
     last_buttons_area: Option<Rect>,
     last_checkbox_area: Option<Rect>,
+    last_input_area: Option<Rect>,
+    /// Characters of the path scrolled out of the field's left edge, kept
+    /// between frames so a click does not make the field jump.
+    input_scroll: usize,
 }
 
 impl SaveAsModal {
@@ -62,6 +69,8 @@ impl SaveAsModal {
             selected_button: 0, // OK button selected by default
             last_buttons_area: None,
             last_checkbox_area: None,
+            last_input_area: None,
+            input_scroll: 0,
         }
     }
 
@@ -104,6 +113,18 @@ impl SaveAsModal {
             FocusArea::Checkbox => FocusArea::Input,
             FocusArea::Buttons => FocusArea::Checkbox,
         };
+    }
+
+    /// The character under screen column `column` of the input field drawn
+    /// in `area`. Left of the field it is the character just scrolled out, so
+    /// a drag past the edge keeps scrolling.
+    fn input_char_at(&self, area: Rect, column: u16) -> usize {
+        match column.checked_sub(area.x) {
+            Some(x) => {
+                input_field_char_at(self.input_handler.text(), self.input_scroll, x as usize)
+            }
+            None => self.input_scroll.saturating_sub(1),
+        }
     }
 
     /// Confirm and return result
@@ -155,9 +176,16 @@ impl Modal for SaveAsModal {
             .border_style(Style::default().fg(input_border_color));
         let input_inner = input_block.inner(chunks[0]);
         input_block.render(chunks[0], buf);
+        self.last_input_area = Some(input_inner);
 
         // Render input content with cursor and selection
-        render_input_field(
+        self.input_scroll = follow_input_scroll(
+            self.input_handler.text(),
+            self.input_handler.cursor_pos(),
+            input_inner.width,
+            self.input_scroll,
+        );
+        render_input_field_scrolled(
             buf,
             input_inner.x,
             input_inner.y,
@@ -167,6 +195,7 @@ impl Modal for SaveAsModal {
             self.input_handler.selection_range(),
             self.focus == FocusArea::Input,
             theme,
+            self.input_scroll,
         );
 
         // Render checkbox
@@ -317,11 +346,36 @@ impl Modal for SaveAsModal {
         mouse: crossterm::event::MouseEvent,
         _modal_area: Rect,
     ) -> Result<Option<ModalResult<Self::Result>>> {
-        use crossterm::event::MouseEventKind;
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        // Dragging from the input field extends its selection, also past the
+        // field's edges.
+        if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
+            if let Some(input_area) = self.last_input_area {
+                if self.focus == FocusArea::Input && mouse.row == input_area.y {
+                    let pos = self.input_char_at(input_area, mouse.column);
+                    self.input_handler.extend_selection_to(pos);
+                }
+            }
+            return Ok(None);
+        }
 
         // Only handle left button press
-        if mouse.kind != MouseEventKind::Down(crossterm::event::MouseButton::Left) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Ok(None);
+        }
+
+        // A click in the input field places the cursor and anchors a selection.
+        if let Some(input_area) = self.last_input_area {
+            if mouse.row == input_area.y
+                && mouse.column >= input_area.x
+                && mouse.column < input_area.x + input_area.width
+            {
+                self.focus = FocusArea::Input;
+                let pos = self.input_char_at(input_area, mouse.column);
+                self.input_handler.set_cursor_with_selection_start(pos);
+                return Ok(None);
+            }
         }
 
         let t = i18n::t();
@@ -377,5 +431,110 @@ impl Modal for SaveAsModal {
         } else {
             Ok(None)
         }
+    }
+
+    fn handle_paste(&mut self, text: &str) -> bool {
+        self.input_handler.paste(text);
+        self.focus = FocusArea::Input;
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    fn rendered(default: &str, width: u16) -> SaveAsModal {
+        let mut modal = SaveAsModal::new("Save As", default);
+        let area = Rect::new(0, 0, width, 20);
+        let mut buf = Buffer::empty(area);
+        modal.render(area, &mut buf, &Theme::default());
+        modal
+    }
+
+    fn mouse(modal: &mut SaveAsModal, kind: MouseEventKind, column: u16) {
+        let row = modal.last_input_area.unwrap().y;
+        let event = MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        modal.handle_mouse(event, Rect::default()).unwrap();
+    }
+
+    #[test]
+    fn clicking_and_dragging_in_the_field_selects_text() {
+        let mut modal = rendered("/tmp/page.md", 80);
+        let x = modal.last_input_area.unwrap().x;
+        mouse(&mut modal, MouseEventKind::Down(MouseButton::Left), x + 5);
+        assert_eq!(modal.input_handler.cursor_pos(), 5);
+        assert!(!modal.input_handler.has_selection());
+        mouse(&mut modal, MouseEventKind::Drag(MouseButton::Left), x + 9);
+        assert_eq!(modal.input_handler.selection_range(), Some((5, 9)));
+        // Dragging past the left edge selects to the start.
+        mouse(&mut modal, MouseEventKind::Drag(MouseButton::Left), 0);
+        assert_eq!(modal.input_handler.selection_range(), Some((0, 5)));
+    }
+
+    fn rerender(modal: &mut SaveAsModal, width: u16) {
+        let area = Rect::new(0, 0, width, 20);
+        modal.render(area, &mut Buffer::empty(area), &Theme::default());
+    }
+
+    #[test]
+    fn a_click_in_a_scrolled_field_lands_where_it_points_and_the_field_stays() {
+        let path = format!("/{}/page.md", "d".repeat(100));
+        let mut modal = rendered(&path, 60);
+        let area = modal.last_input_area.unwrap();
+        let scroll = modal.input_scroll;
+        assert!(scroll > 0, "the long path scrolls to show its end");
+        mouse(
+            &mut modal,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 3,
+        );
+        assert_eq!(modal.input_handler.cursor_pos(), scroll + 3);
+        rerender(&mut modal, 60);
+        assert_eq!(modal.input_scroll, scroll, "the field does not jump");
+        mouse(
+            &mut modal,
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 7,
+        );
+        assert_eq!(
+            modal.input_handler.selection_range(),
+            Some((scroll + 3, scroll + 7))
+        );
+    }
+
+    #[test]
+    fn dragging_past_the_left_edge_scrolls_the_field() {
+        let path = format!("/{}/page.md", "d".repeat(100));
+        let mut modal = rendered(&path, 60);
+        let area = modal.last_input_area.unwrap();
+        let scroll = modal.input_scroll;
+        mouse(
+            &mut modal,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 3,
+        );
+        mouse(&mut modal, MouseEventKind::Drag(MouseButton::Left), 0);
+        rerender(&mut modal, 60);
+        assert_eq!(modal.input_scroll, scroll - 1);
+        assert_eq!(
+            modal.input_handler.selection_range(),
+            Some((scroll - 1, scroll + 3))
+        );
+    }
+
+    #[test]
+    fn paste_goes_into_the_field() {
+        let mut modal = SaveAsModal::new("Save As", "a");
+        modal.focus = FocusArea::Buttons;
+        assert!(modal.handle_paste("bc"));
+        assert_eq!(modal.input_handler.text(), "abc");
+        assert_eq!(modal.focus, FocusArea::Input);
     }
 }
