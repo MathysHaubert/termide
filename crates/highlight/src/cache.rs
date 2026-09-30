@@ -552,6 +552,14 @@ mod tests {
     }
 
     #[test]
+    fn lua_line_is_highlighted() {
+        assert!(
+            segment_count("lua", "local function area(r) return r * r end") > 1,
+            "Lua line should produce multiple highlighted segments"
+        );
+    }
+
+    #[test]
     fn jsx_line_is_highlighted() {
         // Regression: jsx was advertised but never loaded.
         assert!(

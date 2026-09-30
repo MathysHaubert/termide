@@ -201,6 +201,15 @@ impl TreeSitterHighlighter {
             &highlight_names,
         );
 
+        Self::load_language_config(
+            &mut configs,
+            "lua",
+            tree_sitter_lua::LANGUAGE.into(),
+            tree_sitter_lua::HIGHLIGHTS_QUERY,
+            tree_sitter_lua::INJECTIONS_QUERY,
+            &highlight_names,
+        );
+
         // Web technologies
         Self::load_language_config(
             &mut configs,
@@ -435,8 +444,8 @@ mod tests {
         let h = global_highlighter();
         let samples = [
             "a.rs", "a.py", "a.go", "a.js", "a.ts", "a.tsx", "a.jsx", "a.c", "a.cpp", "a.java",
-            "a.kt", "a.rb", "a.php", "a.hs", "a.nix", "a.html", "a.css", "a.json", "a.toml",
-            "a.yaml", "a.sh", "a.md",
+            "a.kt", "a.rb", "a.php", "a.hs", "a.nix", "a.lua", "a.html", "a.css", "a.json",
+            "a.toml", "a.yaml", "a.sh", "a.md",
         ];
         for sample in samples {
             let lang = detect_language(Path::new(sample))

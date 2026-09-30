@@ -159,7 +159,7 @@ pub trait Panel {
 
 **Editor** (`crates/panel-editor/src/lib.rs`)
 - Text editing with undo/redo
-- Syntax highlighting via tree-sitter (22 languages)
+- Syntax highlighting via tree-sitter (23 languages)
 - Search and replace with inline find bars
 - Line numbers, cursor position, word wrap
 - Word navigation (Ctrl+Left/Right), paragraph/symbol navigation (Ctrl+Up/Down)

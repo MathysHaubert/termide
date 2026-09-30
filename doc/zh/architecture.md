@@ -158,7 +158,7 @@ pub trait Panel {
 
 **编辑器** (`crates/panel-editor/src/lib.rs`)
 - 带撤销/重做的文本编辑
-- 通过 tree-sitter 实现语法高亮（15+ 种语言）
+- 通过 tree-sitter 实现语法高亮（23 种语言）
 - 带内嵌查找栏的搜索和替换
 - 行号、光标位置、自动换行
 - 单词导航（Ctrl+Left/Right）、段落/符号导航（Ctrl+Up/Down）
