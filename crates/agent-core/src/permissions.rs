@@ -549,7 +549,6 @@ impl PermissionHooks {
     /// loosen it, since each part must earn its own allow.
     fn judge_command(&self, command: &str, ctx: &ToolContext) -> (Decision, Vec<AskedPart>) {
         let mode = self.mode.get();
-        let substituted = split_shell(command).has_substitution;
         let parts = shell_parts(command, &ctx.cwd);
         let mut verdict = Decision::Allow;
         if parts.len() > 1 {
@@ -566,11 +565,12 @@ impl PermissionHooks {
                 .max();
             let decision = match matched {
                 // A rule cannot vouch for a substitution, nor for a program
-                // whose directory is unknown.
-                Some(Decision::Allow) if substituted || !part.savable => Decision::Ask,
+                // whose directory is unknown; the parts beside them, which a
+                // rule does cover, are not dragged into it.
+                Some(Decision::Allow) if part.substituted || !part.savable => Decision::Ask,
                 Some(decision) => decision,
                 None if mode == Mode::All => Decision::Allow,
-                None if !substituted && is_read_only_command(&part.text) => Decision::Allow,
+                None if !part.substituted && is_read_only_command(&part.text) => Decision::Allow,
                 // Plan mode refuses a command that could change something.
                 None if mode == Mode::Plan => Decision::Deny,
                 None => Decision::Ask,
@@ -787,6 +787,12 @@ pub fn suggested_pattern(tool: &str, subject: &str) -> String {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ParsedShell {
     parts: Vec<String>,
+    /// Whether the part at the same index expands: a substitution it carries
+    /// or a here-document body feeding it. A substitution belongs to the
+    /// command that carries it, so it marks that part and not the line, and
+    /// a dropped word passes what it expanded to the command that follows.
+    substituted: Vec<bool>,
+    /// Whether any part expands.
     has_substitution: bool,
 }
 
@@ -797,7 +803,13 @@ struct ParsedShell {
 fn split_shell(command: &str) -> ParsedShell {
     let mut parsed = ParsedShell::default();
     let mut current = String::new();
+    // Whether the command being read expands; carried to the part it becomes,
+    // or to the next one when this segment is not a command at all.
+    let mut expands = false;
     let mut quote: Option<char> = None;
+    // An open `$(…)` or `` `…` ``: its operators belong to the substitution,
+    // so they are not separators of the line around it.
+    let mut depth = 0usize;
     // Here-documents opened on the current line: delimiter, whether tabs
     // are stripped (`<<-`), whether the body expands (unquoted delimiter).
     let mut heredocs: Vec<(String, bool, bool)> = Vec::new();
@@ -817,7 +829,7 @@ fn split_shell(command: &str) -> ParsedShell {
                 quote = None;
             } else if q == '"' && (c == '`' || (c == '$' && chars.get(i + 1) == Some(&'('))) {
                 // Double quotes still expand substitutions.
-                parsed.has_substitution = true;
+                expands = true;
             }
             current.push(c);
             i += 1;
@@ -838,11 +850,17 @@ fn split_shell(command: &str) -> ParsedShell {
                 current.push(c);
             }
             '`' => {
-                parsed.has_substitution = true;
+                expands = true;
+                depth += 1;
                 current.push(c);
             }
             '$' if chars.get(i + 1) == Some(&'(') => {
-                parsed.has_substitution = true;
+                expands = true;
+                depth += 1;
+                current.push(c);
+            }
+            ')' if depth > 0 => {
+                depth -= 1;
                 current.push(c);
             }
             '<' if chars.get(i + 1) == Some(&'<') && chars.get(i + 2) != Some(&'<') => {
@@ -852,30 +870,36 @@ fn split_shell(command: &str) -> ParsedShell {
                 i = end;
                 continue;
             }
-            '&' if chars.get(i + 1) == Some(&'&') => {
-                push_part(&mut parsed.parts, &mut current);
+            '&' if chars.get(i + 1) == Some(&'&') && depth == 0 => {
+                expands = !push_part(&mut parsed, &mut current, expands) && expands;
                 i += 1;
             }
-            '|' => {
-                push_part(&mut parsed.parts, &mut current);
+            '|' if depth == 0 => {
+                expands = !push_part(&mut parsed, &mut current, expands) && expands;
                 if chars.get(i + 1) == Some(&'|') {
                     i += 1;
                 }
             }
             '\n' if !heredocs.is_empty() => {
-                push_part(&mut parsed.parts, &mut current);
-                i = skip_heredocs(&chars, i + 1, &mut heredocs, &mut parsed);
+                // The bodies feed the command just ended, so they are read
+                // while its segment is still open and mark it when they expand.
+                i = skip_heredocs(&chars, i + 1, &mut heredocs, &mut expands);
+                expands = !push_part(&mut parsed, &mut current, expands) && expands;
                 continue;
             }
-            ';' | '\n' => push_part(&mut parsed.parts, &mut current),
+            ';' | '\n' if depth == 0 => {
+                expands = !push_part(&mut parsed, &mut current, expands) && expands;
+            }
             _ => current.push(c),
         }
         i += 1;
     }
-    push_part(&mut parsed.parts, &mut current);
+    push_part(&mut parsed, &mut current, expands);
     if parsed.parts.is_empty() {
         parsed.parts.push(command.trim().to_string());
+        parsed.substituted.push(false);
     }
+    parsed.has_substitution = parsed.substituted.iter().any(|e| *e);
     parsed
 }
 
@@ -923,15 +947,16 @@ fn heredoc_at(chars: &[char], start: usize) -> (Option<(String, bool, bool)>, us
 
 /// Skip the bodies of the here-documents opened on the line just ended,
 /// from `start`, each up to its delimiter line; returns where the commands
-/// go on. An unquoted delimiter's body that substitutes marks the command.
+/// go on. An unquoted delimiter's body that substitutes marks `expands`, the
+/// command being fed by them.
 fn skip_heredocs(
     chars: &[char],
     start: usize,
     heredocs: &mut Vec<(String, bool, bool)>,
-    parsed: &mut ParsedShell,
+    expands: &mut bool,
 ) -> usize {
     let mut i = start;
-    for (delimiter, strip, expands) in heredocs.drain(..) {
+    for (delimiter, strip, body_expands) in heredocs.drain(..) {
         while i < chars.len() {
             let end = chars[i..]
                 .iter()
@@ -947,8 +972,8 @@ fn skip_heredocs(
             if line == delimiter {
                 break;
             }
-            if expands && (line.contains("$(") || line.contains('`')) {
-                parsed.has_substitution = true;
+            if body_expands && (line.contains("$(") || line.contains('`')) {
+                *expands = true;
             }
         }
     }
@@ -968,6 +993,11 @@ pub struct ShellPart {
     /// Whether a rule can be recorded for it: not when its program's
     /// directory is unknown, nor when it runs a command substitution.
     pub savable: bool,
+    /// Whether the part expands a command substitution of its own. A
+    /// substitution asks, but it asks about the part that carries it and not
+    /// about the parts beside it, so a `cd && ls && echo $(date)` line asks
+    /// about the one unknown command instead of listing all three.
+    pub substituted: bool,
 }
 
 /// Split `command` into its parts, following `cd`, `pushd` and `popd` from
@@ -978,11 +1008,12 @@ pub struct ShellPart {
 pub fn shell_parts(command: &str, cwd: &Path) -> Vec<ShellPart> {
     let mut dir = Some(normalize(cwd));
     let mut stack: Vec<Option<std::path::PathBuf>> = Vec::new();
-    split_shell(command)
+    let parsed = split_shell(command);
+    parsed
         .parts
-        .into_iter()
-        .map(|text| {
-            let substitution = text.contains("$(") || text.contains('`');
+        .iter()
+        .zip(parsed.substituted.iter())
+        .map(|(text, &substituted)| {
             let mut words = text.split_whitespace();
             let head = words.next().unwrap_or("");
             let rest = &text.trim_start()[head.len()..];
@@ -1005,8 +1036,9 @@ pub fn shell_parts(command: &str, cwd: &Path) -> Vec<ShellPart> {
                 dir = None;
             }
             ShellPart {
-                savable: known && !substitution,
-                text,
+                savable: known && !substituted,
+                substituted,
+                text: text.clone(),
                 resolved,
             }
         })
@@ -1063,11 +1095,17 @@ fn resolve_program(head: &str, dir: Option<&Path>, project: &Path) -> Option<Str
     ))
 }
 
-fn push_part(parts: &mut Vec<String>, current: &mut String) {
-    if let Some(part) = without_shell_keywords(current.trim()) {
-        parts.push(part.to_string());
-    }
+fn push_part(parsed: &mut ParsedShell, current: &mut String, expands: bool) -> bool {
+    let kept = match without_shell_keywords(current.trim()) {
+        Some(part) => {
+            parsed.substituted.push(expands);
+            parsed.parts.push(part.to_string());
+            true
+        }
+        None => false,
+    };
     current.clear();
+    kept
 }
 
 /// `part` without the shell's reserved words, which run nothing of their
@@ -1759,6 +1797,57 @@ mod tests {
         );
         // A substitution in a header still marks the line.
         assert!(split_shell("for f in $(rm -rf x); do echo $f; done").has_substitution);
+    }
+
+    /// A substitution asks about the part that carries it, not about the
+    /// parts beside it: a session of read commands should not be listed as
+    /// seven grants because one of them expanded `$(…)`.
+    #[test]
+    fn a_substitution_asks_about_its_own_part_only() {
+        let mut rules = PermissionRules::default();
+        rules.add("bash", "cd *", Decision::Allow);
+        rules.add("bash", "ls *", Decision::Allow);
+        rules.add("bash", "echo *", Decision::Allow);
+        rules.add("bash", "head *", Decision::Allow);
+        let (hooks, _) = hooks(rules, vec![]);
+
+        let (verdict, asked) = hooks.judge_command("cd x && ls && echo hi && tail -1 f", &ctx());
+        assert_eq!(verdict, Decision::Allow, "no part expands");
+        assert!(asked.is_empty());
+
+        let (verdict, asked) =
+            hooks.judge_command("cd x && ls && echo $(date) && head -1 f", &ctx());
+        assert_eq!(verdict, Decision::Ask);
+        // Only the expanding part is asked about, and it has no rule to keep.
+        let texts: Vec<&str> = asked.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(texts, ["echo $(date)"]);
+        assert!(asked[0].pattern.is_none());
+
+        // The parts a rule covers pass even when a neighbour substitutes.
+        let (verdict, _) = hooks.judge_command("ls 2>/dev/null && wc -l f", &ctx());
+        assert_eq!(verdict, Decision::Allow);
+        let (verdict, asked) = hooks.judge_command("ls $(pwd)", &ctx());
+        assert_eq!(verdict, Decision::Ask, "the substituting part asks");
+        assert_eq!(asked.len(), 1);
+    }
+
+    /// A loop header that expands is still run, so it marks the command it
+    /// hands its words to.
+    #[test]
+    fn a_substitution_in_a_dropped_header_marks_the_command_it_feeds() {
+        let (hooks, _) = hooks(PermissionRules::default(), vec![]);
+        let parsed = split_shell("for f in $(rm -rf x); do echo $f; done");
+        assert!(parsed.has_substitution);
+        // The header is not a command, and the operators inside `$(…)` are
+        // not separators either, so `rm -rf x` is no part of its own: it is
+        // never offered the pattern `rm *`. What runs is the body, marked by
+        // the expansion the dropped header hands it.
+        assert_eq!(parsed.parts, ["echo $f"]);
+        assert_eq!(parsed.substituted, [true]);
+        assert_eq!(
+            hooks.decide(&bash("for f in $(ls); do cat $f; done"), &ctx()),
+            Decision::Ask
+        );
     }
 
     #[test]
