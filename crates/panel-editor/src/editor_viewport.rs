@@ -9,7 +9,7 @@
 use termide_buffer::Cursor;
 use termide_config::Config;
 
-use crate::word_wrap;
+use crate::word_wrap::{self, WrapLayout};
 
 use super::Editor;
 
@@ -30,6 +30,16 @@ impl Editor {
             })
             .unwrap_or(self.cursor.column);
         Cursor::at(self.cursor.line, column)
+    }
+
+    /// The layout the last render wrapped lines with, for wrap-aware
+    /// movement and scrolling.
+    pub(crate) fn wrap_layout(&self) -> WrapLayout {
+        WrapLayout {
+            width: self.render_cache.content_width,
+            smart: self.render_cache.use_smart_wrap,
+            tab_size: self.config.tab_size,
+        }
     }
 
     /// Check if visual movement should be used (word wrap enabled and width cached).
@@ -118,9 +128,11 @@ impl Editor {
                         &mut self.render_cache,
                         &self.buffer,
                         self.cursor.line,
-                        content_width,
-                        use_smart_wrap,
-                        self.config.tab_size,
+                        WrapLayout {
+                            width: content_width,
+                            smart: use_smart_wrap,
+                            tab_size: self.config.tab_size,
+                        },
                     );
                     let current_visual_row =
                         wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
@@ -166,9 +178,11 @@ impl Editor {
             &self.buffer,
             self.cursor.line,
             self.cursor.column,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         );
 
         // Handle cursor above viewport (physical line check)
@@ -204,9 +218,11 @@ impl Editor {
             &mut self.render_cache,
             &self.buffer,
             self.viewport.top_line,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         );
         let rows_remaining_in_top_line =
             top_line_visual_rows.saturating_sub(self.viewport.top_visual_row_offset);
@@ -244,9 +260,11 @@ impl Editor {
                     &mut self.render_cache,
                     &self.buffer,
                     line,
-                    content_width,
-                    use_smart_wrap,
-                    self.config.tab_size,
+                    WrapLayout {
+                        width: content_width,
+                        smart: use_smart_wrap,
+                        tab_size: self.config.tab_size,
+                    },
                 );
                 rows += line_visual_rows;
             }
@@ -274,22 +292,23 @@ impl Editor {
         // Apply scroll directly by computing final position
         self.apply_visual_scroll_down(
             scroll_needed,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         );
     }
 
     /// Apply scroll down by a given number of visual rows.
     /// Updates top_line and top_visual_row_offset directly.
     /// Accounts for deletion markers and diagnostic virtual rows between lines.
-    fn apply_visual_scroll_down(
-        &mut self,
-        mut remaining: usize,
-        content_width: usize,
-        use_smart_wrap: bool,
-        tab_size: usize,
-    ) {
+    fn apply_visual_scroll_down(&mut self, mut remaining: usize, layout: WrapLayout) {
+        let WrapLayout {
+            width: content_width,
+            tab_size,
+            ..
+        } = layout;
         let show_git_diff = self.render_cache.config.editor.show_git_diff;
         // Deduplicated like the drawing, so the rows skipped are the rows drawn.
         let diagnostic_rows = word_wrap::count_diagnostic_rows_by_line(
@@ -304,9 +323,7 @@ impl Editor {
                 &mut self.render_cache,
                 &self.buffer,
                 self.viewport.top_line,
-                content_width,
-                use_smart_wrap,
-                tab_size,
+                layout,
             );
 
             let rows_available =
@@ -376,8 +393,11 @@ impl Editor {
         let use_smart_wrap = self.render_cache.use_smart_wrap;
 
         // Ensure cache is valid for current width settings
-        self.render_cache
-            .update_wrap_settings(content_width, use_smart_wrap, self.config.tab_size);
+        self.render_cache.update_wrap_settings(WrapLayout {
+            width: content_width,
+            smart: use_smart_wrap,
+            tab_size: self.config.tab_size,
+        });
 
         for _ in 0..count {
             if self.viewport.top_visual_row_offset > 0 {
@@ -390,9 +410,11 @@ impl Editor {
                     &mut self.render_cache,
                     &self.buffer,
                     self.viewport.top_line,
-                    content_width,
-                    use_smart_wrap,
-                    self.config.tab_size,
+                    WrapLayout {
+                        width: content_width,
+                        smart: use_smart_wrap,
+                        tab_size: self.config.tab_size,
+                    },
                 );
                 self.viewport.top_visual_row_offset = visual_rows.saturating_sub(1);
             } else {
@@ -424,17 +446,22 @@ impl Editor {
         let line_count = self.buffer.line_count();
 
         // Ensure cache is valid for current width settings
-        self.render_cache
-            .update_wrap_settings(content_width, use_smart_wrap, self.config.tab_size);
+        self.render_cache.update_wrap_settings(WrapLayout {
+            width: content_width,
+            smart: use_smart_wrap,
+            tab_size: self.config.tab_size,
+        });
 
         for _ in 0..count {
             let visual_rows = word_wrap::get_visual_rows_cached(
                 &mut self.render_cache,
                 &self.buffer,
                 self.viewport.top_line,
-                content_width,
-                use_smart_wrap,
-                self.config.tab_size,
+                WrapLayout {
+                    width: content_width,
+                    smart: use_smart_wrap,
+                    tab_size: self.config.tab_size,
+                },
             );
 
             if self.viewport.top_visual_row_offset + 1 < visual_rows {
@@ -559,9 +586,11 @@ impl Editor {
             &mut self.render_cache,
             &self.buffer,
             current_line,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         );
         let rows_in_first_line =
             first_line_visual_rows.saturating_sub(self.viewport.top_visual_row_offset);
@@ -579,9 +608,11 @@ impl Editor {
                 &mut self.render_cache,
                 &self.buffer,
                 current_line,
-                content_width,
-                use_smart_wrap,
-                self.config.tab_size,
+                WrapLayout {
+                    width: content_width,
+                    smart: use_smart_wrap,
+                    tab_size: self.config.tab_size,
+                },
             );
 
             if line_visual_rows >= visual_rows_remaining {
@@ -605,17 +636,14 @@ impl Editor {
         // If word wrap is enabled, count visual rows instead of buffer lines
         if self.should_use_visual_movement() {
             // Use cached version for O(1) lookup when cache is valid
-            let content_width = self.render_cache.content_width;
+            let layout = self.wrap_layout();
             let word_wrap = self.config.word_wrap;
-            let use_smart_wrap = self.render_cache.use_smart_wrap;
 
             let total_visual_rows = word_wrap::calculate_total_visual_rows_cached(
                 &mut self.render_cache,
                 &self.buffer,
-                content_width,
+                layout,
                 word_wrap,
-                use_smart_wrap,
-                self.config.tab_size,
             );
 
             // Add deletion markers if git diff is shown (O(1) lookup)

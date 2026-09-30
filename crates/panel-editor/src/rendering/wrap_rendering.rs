@@ -15,7 +15,7 @@ use super::{
     context::RenderContext, cursor_renderer, deletion_markers, highlight_renderer, line_rendering,
 };
 use crate::git;
-use crate::word_wrap::get_line_wrap_points;
+use crate::word_wrap::{get_line_wrap_points, WrapLayout};
 
 /// Render editor content in word wrap mode.
 ///
@@ -73,8 +73,14 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
             // running `calculate_wrap_point` O(n) for every visual row.
             // `wrap_points` holds the grapheme index where each *next* visual
             // row starts; the final chunk ends at `line_len`.
-            let (_, wrap_points) =
-                get_line_wrap_points(line_text, content_width, use_smart_wrap, tab_size);
+            let (_, wrap_points) = get_line_wrap_points(
+                line_text,
+                WrapLayout {
+                    width: content_width,
+                    smart: use_smart_wrap,
+                    tab_size,
+                },
+            );
             let line_len = line_text.graphemes(true).count();
 
             let mut grapheme_offset = 0;

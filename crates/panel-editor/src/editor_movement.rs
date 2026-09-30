@@ -9,6 +9,7 @@
 
 use termide_buffer::Cursor;
 
+use crate::word_wrap::WrapLayout;
 use crate::{cursor, selection, word_wrap};
 
 use super::Editor;
@@ -205,9 +206,11 @@ impl Editor {
             &self.buffer,
             cursor_pos,
             preferred_column,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         ) {
             self.cursor = Cursor::at(line, col);
         }
@@ -236,9 +239,11 @@ impl Editor {
             &self.buffer,
             cursor_pos,
             preferred_column,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
         ) {
             self.cursor = Cursor::at(line, col);
         }
@@ -261,9 +266,7 @@ impl Editor {
         self.cursor.column = cursor::visual::move_to_visual_line_start(
             &self.cursor,
             &self.buffer,
-            self.render_cache.content_width,
-            self.render_cache.use_smart_wrap,
-            self.config.tab_size,
+            self.wrap_layout(),
         );
     }
 
@@ -278,13 +281,8 @@ impl Editor {
             return;
         }
 
-        self.cursor.column = cursor::visual::move_to_visual_line_end(
-            &self.cursor,
-            &self.buffer,
-            self.render_cache.content_width,
-            self.render_cache.use_smart_wrap,
-            self.config.tab_size,
-        );
+        self.cursor.column =
+            cursor::visual::move_to_visual_line_end(&self.cursor, &self.buffer, self.wrap_layout());
     }
 
     // =========================================================================
@@ -359,9 +357,11 @@ impl Editor {
             &self.buffer,
             cursor_pos,
             preferred_column,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
             page_size,
         );
         self.cursor = Cursor::at(line, col);
@@ -393,9 +393,11 @@ impl Editor {
             &self.buffer,
             cursor_pos,
             preferred_column,
-            content_width,
-            use_smart_wrap,
-            self.config.tab_size,
+            WrapLayout {
+                width: content_width,
+                smart: use_smart_wrap,
+                tab_size: self.config.tab_size,
+            },
             page_size,
         );
         self.cursor = Cursor::at(line, col);

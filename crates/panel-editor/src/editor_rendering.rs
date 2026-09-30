@@ -10,6 +10,7 @@ use termide_config::Config;
 use termide_theme::Theme;
 use termide_ui::ScrollBar;
 
+use crate::word_wrap::WrapLayout;
 use crate::{rendering, word_wrap};
 
 use super::Editor;
@@ -45,11 +46,11 @@ impl Editor {
 
         // Update wrap settings BEFORE building cumulative cache
         // This ensures cache is invalidated if width changed
-        self.render_cache.update_wrap_settings(
-            effective_width,
-            use_smart_wrap,
-            self.config.tab_size,
-        );
+        self.render_cache.update_wrap_settings(WrapLayout {
+            width: effective_width,
+            smart: use_smart_wrap,
+            tab_size: self.config.tab_size,
+        });
         self.render_cache.content_height = content_height;
 
         self.viewport.resize(content_width, content_height);
@@ -168,9 +169,11 @@ impl Editor {
             let line_text = line_cow.trim_end_matches('\n');
             let (_, wrap_points) = word_wrap::get_line_wrap_points(
                 line_text,
-                content_width,
-                use_smart_wrap,
-                self.config.tab_size,
+                WrapLayout {
+                    width: content_width,
+                    smart: use_smart_wrap,
+                    tab_size: self.config.tab_size,
+                },
             );
 
             // Last wrap-row index inside the logical line. With N wrap
@@ -296,11 +299,11 @@ impl Editor {
 
         // Update wrap settings BEFORE building cumulative cache
         // This ensures cache is invalidated if width changed
-        self.render_cache.update_wrap_settings(
-            effective_width,
-            use_smart_wrap,
-            self.config.tab_size,
-        );
+        self.render_cache.update_wrap_settings(WrapLayout {
+            width: effective_width,
+            smart: use_smart_wrap,
+            tab_size: self.config.tab_size,
+        });
         self.render_cache.content_height = content_height;
 
         self.viewport.resize(content_width, content_height);

@@ -9,6 +9,8 @@ use termide_highlight::{global_highlighter, HighlightCache};
 use termide_theme::Theme;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::word_wrap::WrapLayout;
+
 /// Cached wrap data for a single line.
 #[derive(Clone, Debug)]
 pub struct CachedWrapData {
@@ -93,19 +95,13 @@ impl RenderingCache {
 
     /// Get cached wrap data for a line, if available and valid for current settings.
     ///
-    /// Returns `None` if the cached data was computed with different width or smart_wrap settings.
-    pub fn get_wrap_data(
-        &self,
-        line: usize,
-        content_width: usize,
-        use_smart_wrap: bool,
-        tab_size: usize,
-    ) -> Option<&CachedWrapData> {
-        if self.tab_size != tab_size {
+    /// Returns `None` if the cached data was computed with a different layout.
+    pub fn get_wrap_data(&self, line: usize, layout: WrapLayout) -> Option<&CachedWrapData> {
+        if self.tab_size != layout.tab_size {
             return None;
         }
         self.wrap_cache.get(&line).filter(|cached| {
-            cached.computed_width == content_width && cached.computed_smart_wrap == use_smart_wrap
+            cached.computed_width == layout.width && cached.computed_smart_wrap == layout.smart
         })
     }
 
@@ -177,32 +173,22 @@ impl RenderingCache {
     }
 
     /// Check if wrap settings match current parameters (for cache invalidation on settings change).
-    pub fn wrap_settings_match(
-        &self,
-        content_width: usize,
-        use_smart_wrap: bool,
-        tab_size: usize,
-    ) -> bool {
-        self.content_width == content_width
-            && self.use_smart_wrap == use_smart_wrap
-            && self.tab_size == tab_size
+    pub fn wrap_settings_match(&self, layout: WrapLayout) -> bool {
+        self.content_width == layout.width
+            && self.use_smart_wrap == layout.smart
+            && self.tab_size == layout.tab_size
     }
 
     /// Update wrap settings and invalidate cache if they changed.
-    pub fn update_wrap_settings(
-        &mut self,
-        content_width: usize,
-        use_smart_wrap: bool,
-        tab_size: usize,
-    ) {
-        if !self.wrap_settings_match(content_width, use_smart_wrap, tab_size) {
+    pub fn update_wrap_settings(&mut self, layout: WrapLayout) {
+        if !self.wrap_settings_match(layout) {
             self.invalidate_wrap_cache();
             // Diagnostic spans are measured in display columns, so a tab
             // size change moves them too.
             self.invalidate_diagnostic_cache();
-            self.content_width = content_width;
-            self.use_smart_wrap = use_smart_wrap;
-            self.tab_size = tab_size;
+            self.content_width = layout.width;
+            self.use_smart_wrap = layout.smart;
+            self.tab_size = layout.tab_size;
         }
     }
 
@@ -241,9 +227,11 @@ impl RenderingCache {
                 let grapheme_count = line_text.graphemes(true).count();
                 let (visual_rows, wrap_points) = crate::word_wrap::get_line_wrap_points(
                     line_text,
-                    content_width,
-                    use_smart_wrap,
-                    tab_size,
+                    WrapLayout {
+                        width: content_width,
+                        smart: use_smart_wrap,
+                        tab_size,
+                    },
                 );
                 self.wrap_cache.insert(
                     line_idx,

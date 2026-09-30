@@ -14,6 +14,7 @@ use termide_core::PanelEvent;
 use termide_ui::{extract_hex_color_at_col, ColorPreview};
 
 use crate::rendering::inline_diff;
+use crate::word_wrap::WrapLayout;
 use crate::{git, rendering, selection, word_wrap, Editor};
 
 /// Convert screen column to grapheme index, accounting for display widths
@@ -213,9 +214,11 @@ impl Editor {
                 &self.buffer,
                 effective_visual_row,
                 self.viewport.top_line,
-                cached_width,
-                use_smart_wrap,
-                self.config.tab_size,
+                WrapLayout {
+                    width: cached_width,
+                    smart: use_smart_wrap,
+                    tab_size: self.config.tab_size,
+                },
                 &self.lsp.diagnostics,
                 &self.git.diff_cache,
                 show_git_diff,
