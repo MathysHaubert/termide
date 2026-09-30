@@ -836,3 +836,28 @@ fn a_repeated_diagnostic_is_counted_as_drawn() {
     assert!(rows[1].starts_with("~~~ boom"), "{rows:?}");
     assert!(rows[2].starts_with("bar"), "{rows:?}");
 }
+
+/// Without word wrap too, passing through a short line keeps the screen
+/// column: the cursor comes back to it on the next long line. A cursor set
+/// by anything else (a click, a jump) starts from its own column.
+#[test]
+fn a_short_line_does_not_lose_the_column() {
+    let (mut editor, _file) = create_editor_with_content("abcdefgh\nab\n\tefgh\nabcdefgh\n");
+    editor.config.word_wrap = false;
+    editor.config.tab_size = 4;
+    rendered_text_rows(&mut editor, 40, 6);
+    editor.cursor = termide_buffer::Cursor::at(0, 6);
+
+    editor.move_cursor_down();
+    assert_eq!((editor.cursor.line, editor.cursor.column), (1, 2));
+    editor.move_cursor_down();
+    // Column 6 on "\tefgh" is the "g" (the tab spans columns 0..4).
+    assert_eq!((editor.cursor.line, editor.cursor.column), (2, 3));
+    editor.move_cursor_down();
+    assert_eq!((editor.cursor.line, editor.cursor.column), (3, 6));
+
+    // Placed elsewhere, the cursor keeps its own column from there.
+    editor.cursor = termide_buffer::Cursor::at(3, 1);
+    editor.move_cursor_up();
+    assert_eq!((editor.cursor.line, editor.cursor.column), (2, 0));
+}

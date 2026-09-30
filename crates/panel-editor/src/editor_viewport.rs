@@ -76,6 +76,26 @@ impl Editor {
         extra_rows
     }
 
+    /// Start a vertical move: settle the screen column it keeps.
+    ///
+    /// The column the previous vertical move kept holds while the cursor
+    /// still stands where that move left it, so passing through a short line
+    /// does not lose it. Anything else that moved the cursor (a click, a
+    /// jump, a search, an edit) makes it stale, and the cursor's own column
+    /// is taken instead.
+    pub(crate) fn begin_vertical_move(&mut self) {
+        if self.input.preferred_column_cursor != Some((self.cursor.line, self.cursor.column)) {
+            self.input.preferred_column = None;
+        }
+        self.ensure_preferred_column();
+    }
+
+    /// Finish a vertical move: record where it left the cursor, for
+    /// [`Self::begin_vertical_move`].
+    pub(crate) fn end_vertical_move(&mut self) {
+        self.input.preferred_column_cursor = Some((self.cursor.line, self.cursor.column));
+    }
+
     /// Ensure preferred column is set for vertical navigation.
     ///
     /// Sets preferred_column to the visual offset, in screen columns, within

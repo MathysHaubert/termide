@@ -34,6 +34,12 @@ The text editor panel provides a functional editor for working with text files w
 | `Ctrl+Shift+Up`   | Select to previous paragraph/symbol boundary |
 | `Ctrl+Shift+Down` | Select to next paragraph/symbol boundary   |
 
+`↑`/`↓` and `PageUp`/`PageDown` keep the cursor in its screen column, tabs and
+wide characters counted as drawn. Passing through a shorter line does not lose
+that column: the cursor returns to it on the next line long enough. Moving the
+cursor any other way (arrows sideways, a click, a jump, an edit) starts from
+its new column.
+
 ## Editing
 
 | Shortcut           | Action                                     |
