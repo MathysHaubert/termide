@@ -654,7 +654,23 @@ cannot be told (after `cd $DIR`, `cd -` or a subshell) or that runs a
 substitution is marked "this time only": no rule is recorded for it, and
 when no part can have one, the card offers only allow once and deny.
 
+An answer that outlasts the call is a decision made without seeing the calls
+it will cover, so the card offers it only where the rule says enough to trust.
+**Allow always** appears for one command whose pattern states its scope: not
+for a command made of several parts, which you answered as a whole; not for
+one that destroys what it touches (`rm`, `git clean`, `git push`, `git stash
+drop`, installing or publishing a package); not for one that runs some *other*
+program, whose name the pattern would not show (`env rm`, `xargs rm`,
+`./deploy.sh`, `sh -c …`, `python3 -c …`, `make`, `nix run`). **Allow for
+this session** is withheld only from a command that destroys: it is short
+enough to live with, and ends when the panel closes. So a destructive command
+is allowed once at a time — `all` is the mode that lets a run through without
+asking. **Deny for this session** is always on
+offer: it trusts nothing. The rows withheld are absent, not dimmed, so the
+answer you give is the answer that is recorded.
+
 The mode decides which rules count and what happens to anything none covers.
+
 `mode` in the configuration is the starting point every new session takes
 (`configured` unless you change it), also set from the settings modal's **AI**
 section under Permissions; the panel's **Permissions** chip and `Shift+Tab` change it

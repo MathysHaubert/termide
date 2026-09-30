@@ -2600,6 +2600,7 @@ fn permission_prompt_is_answered_in_the_panel() {
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,
+            can_allow_session: true,
             parts: vec![termide_agent_core::AskedPart {
                 text: "git push".into(),
                 pattern: Some("git push *".into()),
@@ -2662,6 +2663,7 @@ fn permission_prompt_is_answered_in_the_panel() {
         },
         suggested_pattern: "src/x.rs".into(),
         can_persist: true,
+        can_allow_session: true,
         parts: Vec::new(),
     };
     let asked = request.clone();
@@ -2721,6 +2723,7 @@ fn a_compound_command_card_lists_the_parts_it_asks_about() {
             },
             suggested_pattern: "make install *".into(),
             can_persist: true,
+            can_allow_session: true,
             parts: vec![
                 termide_agent_core::AskedPart {
                     text: "./run".into(),
@@ -2779,6 +2782,7 @@ fn a_compound_command_card_lists_the_parts_it_asks_about() {
             },
             suggested_pattern: String::new(),
             can_persist: true,
+            can_allow_session: true,
             parts: vec![termide_agent_core::AskedPart {
                 text: "./run".into(),
                 pattern: None,
@@ -2812,6 +2816,7 @@ fn always_is_not_offered_where_the_configured_rules_do_not_count() {
             },
             suggested_pattern: "make *".into(),
             can_persist: false,
+            can_allow_session: true,
             parts: vec![termide_agent_core::AskedPart {
                 text: "make".into(),
                 pattern: Some("make *".into()),
@@ -2853,6 +2858,7 @@ fn a_single_click_selects_and_a_double_click_answers_a_permission() {
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,
+            can_allow_session: true,
             parts: vec![termide_agent_core::AskedPart {
                 text: "git push".into(),
                 pattern: Some("git push *".into()),
@@ -3185,6 +3191,7 @@ fn a_permission_wait_is_timed_apart_from_the_call() {
                 call: call.clone(),
                 suggested_pattern: "cat *".into(),
                 can_persist: true,
+                can_allow_session: true,
                 parts: vec![termide_agent_core::AskedPart {
                     text: "cat notes.txt".into(),
                     pattern: Some("cat *".into()),
@@ -3247,6 +3254,7 @@ fn a_grant_reaches_the_panel_rules_so_it_survives_a_rebuild() {
                     },
                     suggested_pattern: "cat *".into(),
                     can_persist: true,
+                    can_allow_session: true,
                     parts: vec![termide_agent_core::AskedPart {
                         text: "cat notes.txt".into(),
                         pattern: Some("cat *".into()),

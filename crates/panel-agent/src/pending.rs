@@ -159,14 +159,15 @@ impl AgentPanel {
             // The answers the form offers, each with its row. The rows that
             // outlast this call name the rules they record, and show only
             // when there is one to record; "always" only where the
-            // configured rules count.
+            // configured rules count, and neither "session" nor "always" for
+            // a command too broad or too destructive to trust sight unseen.
             let pattern = &request.suggested_pattern;
             let remember = request.can_remember();
             let mut rows: Vec<(PermissionAnswer, String)> = vec![(
                 PermissionAnswer::AllowOnce,
                 t.agent_perm_allow_once().to_string(),
             )];
-            if remember {
+            if remember && request.can_allow_session {
                 rows.push((
                     PermissionAnswer::AllowSession,
                     format!("{} ({pattern})", t.agent_perm_allow_session()),
@@ -303,7 +304,8 @@ impl AgentPanel {
         // agent (undo, a model or agent switch) carries it, not just the hooks
         // on the worker thread. "Always" is also written to the configuration
         // by the persist callback, where it is on offer; "for this session"
-        // lives only here.
+        // lives only here. Neither is recorded where the request does not
+        // offer it, so an answer cannot smuggle a grant the card withheld.
         let request = &envelope.request;
         for pattern in request.patterns() {
             match answer {
@@ -312,6 +314,7 @@ impl AgentPanel {
                 {
                     self.rules.add(&request.tool, &pattern, Decision::Allow);
                 }
+                PermissionAnswer::AllowSession if !request.can_allow_session => {}
                 PermissionAnswer::AllowAlways
                 | PermissionAnswer::AllowAlwaysGlobal
                 | PermissionAnswer::AllowSession => {

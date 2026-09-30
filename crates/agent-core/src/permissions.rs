@@ -273,10 +273,16 @@ pub struct PermissionRequest {
     pub call: ToolCall,
     /// Rule pattern offered for the answers that last beyond this call.
     pub suggested_pattern: String,
-    /// Whether "allow always" is on offer: only in `configured` mode, which
-    /// is the one the configured rules count in, and only with somewhere to
-    /// write the rule.
+    /// Whether "allow always" is on offer: in `configured` mode, which is the
+    /// one the configured rules count in, with somewhere to write the rule,
+    /// and only for the one command whose scope its pattern states — a bundle
+    /// of parts and a command that destroys or runs some other program leave
+    /// no rule behind.
     pub can_persist: bool,
+    /// Whether "allow for the session" is on offer: not for a command that
+    /// destroys, which is allowed once at a time. Denying for the session is
+    /// always on offer, since it tightens rather than trusts.
+    pub can_allow_session: bool,
     /// For a shell command, the parts the question is about — those no rule
     /// or safe default settles — each with the rule an answer can record for
     /// it; empty for other tools, whose `suggested_pattern` is the rule.
@@ -623,12 +629,30 @@ impl Hooks for PermissionHooks {
             },
             Decision::Ask => {
                 let subject = subject_of(call, ctx);
-                let can_persist = self.mode.get() == Mode::Configured && self.persist.is_some();
                 let parts = if call.name == "bash" {
                     self.judge_command(&subject, ctx).1
                 } else {
                     Vec::new()
                 };
+                // A rule outliving this call is an answer given without seeing
+                // the calls it will cover, so it is on offer only where it
+                // states enough to trust: one command, not a bundle answered
+                // without being picked apart, not one that destroys what it
+                // touches, and not one that runs some other program a rule for
+                // it would vouch for blindly.
+                let bundle = parts.len() > 1;
+                let destructive = parts.iter().any(|p| destructive_command(&p.text));
+                let delegating = parts.iter().any(|p| delegating_command(&p.text));
+                let can_persist = self.mode.get() == Mode::Configured
+                    && self.persist.is_some()
+                    && !bundle
+                    && !destructive
+                    && !delegating
+                    && (call.name != "bash" || parts[0].pattern.is_some());
+                // A destructive call is allowed once at a time; `all` is the
+                // mode that lets a run through without asking. Denying for the
+                // session stays on offer: it trusts nothing.
+                let can_allow_session = !destructive;
                 let suggested = if call.name == "bash" {
                     parts
                         .iter()
@@ -644,10 +668,14 @@ impl Hooks for PermissionHooks {
                     subject,
                     call: call.clone(),
                     can_persist,
+                    can_allow_session,
                     parts,
                 };
                 match self.prompter.ask(&request) {
                     PermissionAnswer::AllowOnce => ToolDecision::Allow,
+                    // An answer outlasting the call when none was on offer
+                    // stands for this call only.
+                    PermissionAnswer::AllowSession if !can_allow_session => ToolDecision::Allow,
                     PermissionAnswer::AllowSession => {
                         self.remember(&request, Decision::Allow, None);
                         ToolDecision::Allow
@@ -1095,6 +1123,10 @@ fn resolve_program(head: &str, dir: Option<&Path>, project: &Path) -> Option<Str
     ))
 }
 
+/// Push `current` as a part when it is a command, and say whether it was: a
+/// dropped word — a `for … in` header in particular — is not a command, but
+/// what it expanded is still run, so `expands` is left set for the command
+/// that follows it to carry.
 fn push_part(parsed: &mut ParsedShell, current: &mut String, expands: bool) -> bool {
     let kept = match without_shell_keywords(current.trim()) {
         Some(part) => {
@@ -1211,6 +1243,151 @@ pub fn is_read_only_command(part: &str) -> bool {
             .iter()
             .any(|action| part.contains(action)),
         "git" => is_read_only_git(args),
+        _ => false,
+    }
+}
+
+/// Whether the command runs a program its own name does not tell: a wrapper
+/// taking the program as an argument, an inline script, a script named by a
+/// path, or a manager pulling an image or a target. A rule for such a command
+/// would vouch for every program it might ever run.
+#[must_use]
+fn delegating_command(part: &str) -> bool {
+    let words: Vec<&str> = part.split_whitespace().collect();
+    let Some((&head, args)) = words.split_first() else {
+        return false;
+    };
+    if matches!(
+        head,
+        "env"
+            | "xargs"
+            | "parallel"
+            | "timeout"
+            | "watch"
+            | "nohup"
+            | "eval"
+            | "nice"
+            | "time"
+            | "arch"
+            | "script"
+    ) {
+        return true;
+    }
+    // A script or an interpreter running a snippet: what runs is in the file
+    // or the argument, not in the name.
+    if matches!(head, "sh" | "bash" | "zsh" | "fish" | "csh" | "dash") {
+        return true;
+    }
+    if head.contains('/') {
+        return true;
+    }
+    if matches!(
+        head,
+        "python" | "python2" | "python3" | "ruby" | "perl" | "node" | "php"
+    ) {
+        // `python -c`, and a bare script path, run code the rule cannot show.
+        // `python --version` and the like do not.
+        return args.iter().any(|a| *a == "-c" || !a.starts_with('-'));
+    }
+    // `make` runs the targets its Makefile names, `nix`/`orb` a program pulled
+    // from outside; both are code the pattern does not name.
+    if matches!(head, "make" | "gmake" | "nix" | "orb") {
+        return true;
+    }
+    // `docker run`, `kubectl run`: the image and its command are the payload.
+    matches!(
+        head,
+        "docker" | "podman" | "kubectl" | "npm" | "pnpm" | "yarn" | "bun" | "uv"
+    ) && args.iter().any(|a| matches!(*a, "run" | "exec" | "start"))
+}
+
+/// Whether a command destroys what it cannot recover or reaches beyond this
+/// machine: the question that decides whether "allow always" is on offer. A
+/// rule for a build, an edit or a `git checkout` states its scope and what it
+/// changes can be got back; a rule for `rm -rf`, a `git clean`, a force push
+/// or a publish cannot be undone or says nothing about what it destroys.
+#[must_use]
+fn destructive_command(part: &str) -> bool {
+    let words: Vec<&str> = part.split_whitespace().collect();
+    let Some((&head, args)) = words.split_first() else {
+        return false;
+    };
+    // Deleting or overwriting what no undo reaches, or acting as another
+    // account. `chmod`/`chown` are recoverable but open or lock files down.
+    if matches!(
+        head,
+        "rm" | "rmdir"
+            | "unlink"
+            | "shred"
+            | "dd"
+            | "mkfs"
+            | "sudo"
+            | "doas"
+            | "truncate"
+            | "chmod"
+            | "chown"
+    ) {
+        return true;
+    }
+    let sub = args.first().copied().unwrap_or("");
+    match head {
+        "git" => match sub {
+            // A push leaves the machine; a clean, a stash drop or a gc deletes
+            // what the repository cannot bring back.
+            "push" | "clean" | "gc" | "filter-branch" | "restore" => true,
+            "rebase" | "reset" => {
+                args[1..].iter().any(|a| {
+                    *a == "--hard"
+                        || *a == "-f"
+                        || *a == "--force"
+                        || *a == "--force-rebase"
+                        || *a == "--no-ff"
+                }) || matches!(args.get(1).copied(), Some("hard") | Some("--hard"))
+            }
+            // Listing looks; deleting and rewiring do not.
+            "branch" | "tag" => args[1..]
+                .iter()
+                .any(|a| matches!(*a, "-d" | "-D" | "--delete")),
+            "worktree" => !matches!(args.get(1).copied(), None | Some("list")),
+            "stash" => matches!(args.get(1).copied(), Some("drop" | "clear")),
+            "remote" => !matches!(
+                args.get(1).copied(),
+                None | Some("show") | Some("get-url") | Some("-v") | Some("--verbose")
+            ),
+            _ => false,
+        },
+        // Installing, removing and publishing change what is on the machine
+        // or put something on it from outside.
+        "cargo" | "npm" | "pnpm" | "yarn" | "bun" | "uv" | "pip" | "pip3" => matches!(
+            sub,
+            "install"
+                | "uninstall"
+                | "remove"
+                | "rm"
+                | "publish"
+                | "unpublish"
+                | "yank"
+                | "add"
+                | "vendor"
+        ),
+        // `kubectl delete`, `docker rm`, `gh issue close`, `terraform destroy`.
+        "kubectl" | "docker" | "podman" | "gh" | "terraform" | "brew" | "apt" | "yum" => {
+            words.iter().skip(1).any(|w| {
+                matches!(
+                    *w,
+                    "delete"
+                        | "destroy"
+                        | "remove"
+                        | "rm"
+                        | "down"
+                        | "purge"
+                        | "uninstall"
+                        | "close"
+                        | "merge"
+                        | "kill"
+                )
+            })
+        }
         _ => false,
     }
 }
@@ -1850,6 +2027,122 @@ mod tests {
         );
     }
 
+    /// "Allow always" is on offer only for the one command whose rule states
+    /// enough to trust: a bundle, a destructive command and a command that
+    /// runs some other program leave no rule behind.
+    #[test]
+    fn always_is_offered_only_for_a_bounded_routine_command() {
+        let (hooks, asked) = hooks(
+            PermissionRules::default(),
+            vec![PermissionAnswer::AllowOnce; 40],
+        );
+        let mut hooks = hooks.with_persist(Box::new(|_, _, _, _| {}));
+        let mut offered = |command: &str| -> bool {
+            hooks.before_tool_call(&bash(command), &ctx());
+            asked.lock().unwrap().last().unwrap().can_persist
+        };
+
+        // Bounded and reversible: on offer.
+        for c in [
+            "npm test",
+            "cargo build --release",
+            "cargo nextest run",
+            "git commit -m x",
+            "git checkout main",
+            "touch newfile",
+            "mkdir -p out",
+            "git stash push -m wip",
+        ] {
+            assert!(offered(c), "{c} should be persistable");
+        }
+        // Destructive: no rule, and no session grant either.
+        for c in [
+            "rm -rf target",
+            "sudo apt install x",
+            "git push",
+            "git push --force",
+            "git clean -fdx",
+            "git reset --hard",
+            "git stash clear",
+            "git branch -D old",
+            "cargo publish",
+            "cargo install ripgrep",
+            "cargo add serde",
+            "dd if=x of=/dev/disk9",
+            "kubectl delete pod x",
+            "docker rm x",
+            "gh issue close 1",
+            "chmod 777 bin",
+        ] {
+            assert!(!offered(c), "{c} must not be persistable");
+        }
+        // Running some other program: the rule would vouch for what it runs.
+        for c in [
+            "env rm x",
+            "xargs rm",
+            "timeout 5 evil",
+            "sh red.sh",
+            "./deploy.sh",
+            "python3 -c \"import os\"",
+            "make install",
+            "nix run github:a/b",
+        ] {
+            assert!(!offered(c), "{c} runs a program the rule cannot name");
+        }
+        // A bundle answered as one is never a blanket rule.
+        assert!(!offered("cargo build && cargo test"));
+        assert!(!offered("make && make install"));
+    }
+
+    /// A destructive call allowed "for the session" stands for this call only:
+    /// nothing is remembered, so the next one asks again.
+    #[test]
+    fn a_session_answer_for_a_destructive_command_remembers_nothing() {
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        let sink = persisted.clone();
+        let (hooks, _) = hooks(
+            PermissionRules::default(),
+            vec![PermissionAnswer::AllowSession],
+        );
+        let mut hooks = hooks.with_persist(Box::new(move |tool, pattern, decision, scope| {
+            sink.lock()
+                .unwrap()
+                .push((tool.to_string(), pattern.to_string(), decision, scope));
+        }));
+        assert_eq!(
+            hooks.before_tool_call(&bash("rm -rf target"), &ctx()),
+            ToolDecision::Allow
+        );
+        assert!(persisted.lock().unwrap().is_empty());
+        assert_eq!(hooks.rules().evaluate("bash", "rm x"), None);
+        assert_eq!(hooks.rules().evaluate_session("bash", "rm x"), None);
+        assert_eq!(hooks.decide(&bash("rm -rf target"), &ctx()), Decision::Ask);
+    }
+
+    /// Denying for the session stays on offer for a destructive command: it
+    /// trusts nothing, so it can be remembered even when allowing cannot.
+    #[test]
+    fn a_destructive_command_can_still_be_denied_for_the_session() {
+        let (hooks, asked) = hooks(
+            PermissionRules::default(),
+            vec![PermissionAnswer::AllowOnce, PermissionAnswer::DenySession],
+        );
+        let mut hooks = hooks.with_persist(Box::new(|_, _, _, _| {}));
+        assert_eq!(
+            hooks.before_tool_call(&bash("rm -rf target"), &ctx()),
+            ToolDecision::Allow
+        );
+        assert!(!asked.lock().unwrap()[0].can_allow_session);
+        assert!(asked.lock().unwrap()[0].can_remember());
+        assert_eq!(
+            hooks.before_tool_call(&bash("rm -rf target"), &ctx()),
+            ToolDecision::Block {
+                reason: "denied by the user for this session".into()
+            }
+        );
+        assert_eq!(hooks.decide(&bash("rm -rf target"), &ctx()), Decision::Deny);
+    }
+
     #[test]
     fn prompt_answers_drive_grants_and_persistence() {
         let persisted = Arc::new(Mutex::new(Vec::new()));
@@ -2176,6 +2469,7 @@ mod prompter_tests {
             },
             suggested_pattern: "git push *".into(),
             can_persist: true,
+            can_allow_session: true,
             parts: Vec::new(),
         }
     }

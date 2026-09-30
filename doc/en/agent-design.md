@@ -287,6 +287,14 @@ or everywhere (a rule in the project `.termide` or the global config), deny,
 deny for the session. This is the Claude Code / OpenCode shape with ACP's
 answer set; it stays small and is data-driven, so the panel and a future ACP
 client render the same prompt.
+An answer that outlasts the call is granted by a rule the user will never see
+applied, so a lasting grant is withheld where the rule states too little:
+"allow always" needs a single part whose pattern is known, and neither lasting
+answer is offered for a command that destroys (`destructive_command`) or that
+runs some other program the pattern would not name (`delegating_command`). A
+denial is always rememberable, tightening nothing but trust. Withheld rows are
+absent rather than disabled, so the offered answer is the recorded one; the
+`all` mode remains the way to let a run through without asking.
 
 Chosen TOML shape (OpenCode-style tables, so "allow always" appends one key):
 
