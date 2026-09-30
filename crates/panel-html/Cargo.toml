@@ -13,6 +13,7 @@ ratatui.workspace = true
 url.workspace = true
 
 # Workspace crates
+termide-config = { path = "../config" }
 termide-core = { path = "../core" }
 termide-html = { path = "../html" }
 termide-html-markdown = { path = "../html-markdown" }

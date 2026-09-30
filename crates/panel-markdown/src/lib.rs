@@ -102,6 +102,9 @@ pub struct MarkdownPanel {
     /// Fragment to scroll to once content is (re)laid out — set when content
     /// loads from a URL carrying a `#fragment`.
     pending_anchor: Option<String>,
+    /// The fetch this viewer waits for, `(request id, URL)`: its title shows a
+    /// spinner and the URL until the app delivers the page or the failure.
+    loading: Option<(u64, String)>,
 }
 
 impl MarkdownPanel {
@@ -140,6 +143,7 @@ impl MarkdownPanel {
             open_links: LinkOpen::default(),
             open_images: LinkOpen::default(),
             pending_anchor: None,
+            loading: None,
         }
     }
 
@@ -165,9 +169,26 @@ impl MarkdownPanel {
         panel
     }
 
+    /// Mark the viewer as waiting for fetch `id` of `url` (a followed link or
+    /// a history step); the page it shows stays until the result arrives.
+    pub fn start_loading(&mut self, id: u64, url: String) {
+        self.loading = Some((id, url));
+    }
+
+    /// The fetch this viewer waits for, if any.
+    pub fn loading_id(&self) -> Option<u64> {
+        self.loading.as_ref().map(|(id, _)| *id)
+    }
+
+    /// Stop waiting: the fetch failed or its result opened elsewhere.
+    pub fn stop_loading(&mut self) {
+        self.loading = None;
+    }
+
     /// Replace the content in place with a navigated document (link/history
     /// step). History is managed by the caller's navigation, not here.
     pub fn apply_fetched(&mut self, title: String, source: String, final_url: String) {
+        self.loading = None;
         self.title = title;
         self.source = source;
         self.pending_anchor = url_fragment(&final_url);
@@ -226,6 +247,9 @@ impl Panel for MarkdownPanel {
     }
 
     fn title(&self) -> String {
+        if let Some((_, url)) = &self.loading {
+            return format!("{} {url}", termide_config::constants::spinner_frame());
+        }
         // A fetched page shows its URL; a file-backed view shows the filename.
         self.source_url
             .clone()
@@ -235,6 +259,15 @@ impl Panel for MarkdownPanel {
     fn icon(&self) -> Option<&'static str> {
         // A globe for a fetched web page (matching the bookmark icon).
         self.source_url.as_ref().map(|_| "🌐")
+    }
+
+    fn tick(&mut self) -> Vec<PanelEvent> {
+        // Animate the title spinner while a fetch is in flight.
+        if self.loading.is_some() {
+            vec![PanelEvent::NeedsRedraw]
+        } else {
+            vec![]
+        }
     }
 
     fn prepare_render(&mut self, theme: &Theme, config: &Arc<Config>) {
@@ -659,6 +692,7 @@ mod tests {
             open_links: LinkOpen::Panel,
             open_images: LinkOpen::Panel,
             pending_anchor: None,
+            loading: None,
         };
         p.doc = render::render_markdown(src, 80, &p.colors, false);
         p.layout_width = 80;
@@ -797,5 +831,17 @@ mod tests {
         );
         assert!(whole.iter().any(|l| l.contains("Top")));
         assert!(whole.iter().any(|l| l.contains("end")));
+    }
+
+    #[test]
+    fn a_followed_link_spins_in_the_title_and_keeps_the_page() {
+        let mut p = panel_from("# page");
+        p.start_loading(5, "https://ex.com/b.md".into());
+        assert!(Panel::title(&p).ends_with(" https://ex.com/b.md"));
+        assert!(matches!(p.tick().as_slice(), [PanelEvent::NeedsRedraw]));
+        assert_eq!(p.source, "# page");
+        p.stop_loading();
+        assert_eq!(Panel::title(&p), "doc.md");
+        assert!(p.tick().is_empty());
     }
 }

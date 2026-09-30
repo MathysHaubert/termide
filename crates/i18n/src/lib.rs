@@ -406,6 +406,7 @@ pub trait Translation: Send + Sync {
 
     // HTML viewer menu
     fn menu_save_page_as_markdown(&self) -> &str;
+    fn viewer_loading(&self) -> &str;
 
     // Bookmarks submenu
     fn bookmarks_add_bookmark(&self) -> &str;

@@ -39,6 +39,14 @@ pub use crate::state_types::{
     PendingEditorDownload, PendingRemoteDelete, ResourceModalKind, ScrollBarDrag, StashState,
 };
 
+/// A viewer URL fetch in flight: the id its viewer waits under and the channel
+/// the worker thread answers on, with the document or a readable error.
+#[derive(Debug)]
+pub struct ViewFetch {
+    pub id: u64,
+    pub receiver: mpsc::Receiver<Result<termide_fetch::Fetched, String>>,
+}
+
 /// Global application state
 #[derive(Debug)]
 pub struct AppState {
@@ -60,14 +68,12 @@ pub struct AppState {
     pub pending_action: Option<PendingAction>,
     /// Receiver channel for background directory size calculation results
     pub dir_size_receiver: Option<mpsc::Receiver<DirSizeResult>>,
-    /// Receiver for a background URL fetch started from a viewer's go-to-path
-    /// (`Ctrl+G` with an `http(s)://` address). Carries the fetched document
-    /// or a human-readable error.
-    pub view_fetch_receiver: Option<mpsc::Receiver<Result<termide_fetch::Fetched, String>>>,
-    /// Whether the in-flight `view_fetch_receiver` result should replace the
-    /// active viewer in place (link/history navigation) rather than open a new
-    /// viewer (`Ctrl+G`).
-    pub view_fetch_in_place: bool,
+    /// Viewer URL fetches in flight (`Ctrl+G` with an `http(s)://` address, a
+    /// followed link, a history step), each delivered to the viewer that
+    /// waits under its id.
+    pub view_fetches: Vec<ViewFetch>,
+    /// Id for the next viewer URL fetch.
+    pub next_view_fetch_id: u64,
     /// Handle for background git operation (allows cancellation)
     pub git_operation_handle: Option<GitOperationHandle>,
     /// SSH key passphrase entered for git network operations, cached in memory
@@ -227,8 +233,8 @@ impl AppState {
             active_modal: None,
             pending_action: None,
             dir_size_receiver: None,
-            view_fetch_receiver: None,
-            view_fetch_in_place: false,
+            view_fetches: Vec::new(),
+            next_view_fetch_id: 0,
             git_operation_handle: None,
             git_ssh_passphrase: None,
             command_operation_handles: Vec::new(),

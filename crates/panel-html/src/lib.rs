@@ -99,6 +99,9 @@ pub struct HtmlPanel {
     /// Fragment to scroll to once content is (re)laid out — set when content
     /// loads from a URL carrying a `#fragment`.
     pending_anchor: Option<String>,
+    /// The fetch this viewer waits for, `(request id, URL)`: its title shows a
+    /// spinner and the URL until the app delivers the page or the failure.
+    loading: Option<(u64, String)>,
 }
 
 impl HtmlPanel {
@@ -137,6 +140,7 @@ impl HtmlPanel {
             open_links: LinkOpen::default(),
             open_images: LinkOpen::default(),
             pending_anchor: None,
+            loading: None,
         }
     }
 
@@ -162,9 +166,50 @@ impl HtmlPanel {
         panel
     }
 
+    /// A viewer opened before its page arrives: it shows a spinner and `url`
+    /// in the title and a loading line until the app hands it the fetch `id`
+    /// result ([`apply_fetched`](Self::apply_fetched) or
+    /// [`fail_loading`](Self::fail_loading)).
+    pub fn loading(id: u64, url: String) -> Self {
+        let mut panel = Self::from_source(String::new(), String::new(), Some(url.clone()));
+        panel.loading = Some((id, url));
+        panel
+    }
+
+    /// Whether this is a [`loading`](Self::loading) viewer still without a page.
+    pub fn is_placeholder(&self) -> bool {
+        self.loading.is_some() && self.source.is_empty()
+    }
+
+    /// The fetch failed: a viewer still without a page shows `message` in
+    /// place of it, one that has a page keeps it.
+    pub fn fail_loading(&mut self, message: String) {
+        if self.is_placeholder() {
+            self.error = Some(message);
+        }
+        self.loading = None;
+    }
+
+    /// Mark the viewer as waiting for fetch `id` of `url` (a followed link or
+    /// a history step); the page it shows stays until the result arrives.
+    pub fn start_loading(&mut self, id: u64, url: String) {
+        self.loading = Some((id, url));
+    }
+
+    /// The fetch this viewer waits for, if any.
+    pub fn loading_id(&self) -> Option<u64> {
+        self.loading.as_ref().map(|(id, _)| *id)
+    }
+
+    /// Stop waiting: the fetch failed or its result opened elsewhere.
+    pub fn stop_loading(&mut self) {
+        self.loading = None;
+    }
+
     /// Replace the content in place with a navigated document (link/history
     /// step). History is managed by the caller's navigation, not here.
     pub fn apply_fetched(&mut self, title: String, source: String, final_url: String) {
+        self.loading = None;
         self.title = title;
         self.source = source;
         self.pending_anchor = url_fragment(&final_url);
@@ -205,7 +250,7 @@ impl HtmlPanel {
     /// against the page URL, or the file for a local page. The default name
     /// follows the file, else the page `<title>`, else the URL host.
     fn save_markdown_event(&self) -> Vec<PanelEvent> {
-        if self.error.is_some() {
+        if self.error.is_some() || self.is_placeholder() {
             return vec![];
         }
         let base = match &self.source_url {
@@ -284,6 +329,9 @@ impl Panel for HtmlPanel {
     }
 
     fn title(&self) -> String {
+        if let Some((_, url)) = &self.loading {
+            return format!("{} {url}", termide_config::constants::spinner_frame());
+        }
         // A fetched page shows its URL; a file-backed view shows the filename.
         self.source_url
             .clone()
@@ -293,6 +341,15 @@ impl Panel for HtmlPanel {
     fn icon(&self) -> Option<&'static str> {
         // A globe for a fetched web page (matching the bookmark icon).
         self.source_url.as_ref().map(|_| "🌐")
+    }
+
+    fn tick(&mut self) -> Vec<PanelEvent> {
+        // Animate the title spinner while a fetch is in flight.
+        if self.loading.is_some() {
+            vec![PanelEvent::NeedsRedraw]
+        } else {
+            vec![]
+        }
     }
 
     fn prepare_render(&mut self, theme: &Theme, config: &Arc<Config>) {
@@ -347,6 +404,14 @@ impl Panel for HtmlPanel {
             let msg = ratatui::text::Line::styled(
                 format!(" Cannot open: {err}"),
                 Style::default().fg(self.colors.error),
+            );
+            buf.set_line(content.x, content.y, &msg, content.width);
+            return;
+        }
+        if self.is_placeholder() {
+            let msg = ratatui::text::Line::styled(
+                format!(" {}", termide_i18n::t().viewer_loading()),
+                Style::default().fg(self.colors.disabled),
             );
             buf.set_line(content.x, content.y, &msg, content.width);
             return;
@@ -652,7 +717,7 @@ impl Panel for HtmlPanel {
     }
 
     fn context_menu_items(&self) -> Vec<(String, &'static str)> {
-        if self.error.is_some() {
+        if self.error.is_some() || self.is_placeholder() {
             return vec![];
         }
         let t = termide_i18n::t();
@@ -731,6 +796,7 @@ mod tests {
             open_links: LinkOpen::Panel,
             open_images: LinkOpen::Panel,
             pending_anchor: None,
+            loading: None,
         };
         p.doc = render_html(src, 80, &p.colors, false);
         p.layout_width = 80;
@@ -1011,5 +1077,36 @@ mod tests {
         );
         assert!(whole.iter().any(|l| l.contains("Top")));
         assert!(whole.iter().any(|l| l.contains("end")));
+    }
+
+    #[test]
+    fn a_loading_viewer_spins_in_its_title_until_the_page_arrives() {
+        let mut p = HtmlPanel::loading(4, "https://ex.com/a".into());
+        let title = Panel::title(&p);
+        assert!(title.ends_with(" https://ex.com/a"), "{title}");
+        assert!(termide_config::constants::SPINNER_FRAMES
+            .iter()
+            .any(|f| title.starts_with(f)));
+        assert!(matches!(p.tick().as_slice(), [PanelEvent::NeedsRedraw]));
+        assert!(p.context_menu_items().is_empty(), "nothing to save yet");
+
+        p.apply_fetched("a".into(), "<p>hi</p>".into(), "https://ex.com/a".into());
+        assert_eq!(Panel::title(&p), "https://ex.com/a");
+        assert!(p.tick().is_empty());
+        assert!(!p.context_menu_items().is_empty());
+    }
+
+    #[test]
+    fn a_failed_load_shows_in_a_placeholder_only() {
+        let mut p = HtmlPanel::loading(1, "https://ex.com/a".into());
+        p.fail_loading("Fetch failed: x".into());
+        assert_eq!(p.error.as_deref(), Some("Fetch failed: x"));
+        assert_eq!(p.loading_id(), None);
+
+        let mut p = panel_from("<p>page</p>");
+        p.start_loading(2, "https://ex.com/b".into());
+        p.fail_loading("Fetch failed: x".into());
+        assert_eq!(p.error, None);
+        assert_eq!(p.loading_id(), None);
     }
 }

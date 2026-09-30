@@ -90,9 +90,11 @@ file's name for a local page, else the page `<title>`, else the site's host.
 The **Windows ▸ Open…** menu item opens a universal prompt (a discoverable
 entry point) that accepts a file path, a directory, a database URL, or an
 `http(s)://` address; `Ctrl+G` from any panel does the same. `Ctrl+G` with an
-`http(s)://` address fetches the document in the background
-and opens it routed by `Content-Type` (HTML → this viewer, Markdown → the
-Markdown viewer, other text → shown verbatim). The fetch is deliberately
+`http(s)://` address opens a viewer at once, with a spinner and the URL in its
+title while the document is fetched in the background, and shows it routed by
+`Content-Type` (HTML → this viewer, Markdown → the Markdown viewer, an image →
+the image preview, other text → shown verbatim). A failed fetch shows its error
+in that viewer; closing the viewer drops the fetch. The fetch is deliberately
 bounded — this is a reader, not a browser engine:
 
 - `http` and `https` only; TLS is verified (no opt-out).
@@ -104,7 +106,8 @@ bounded — this is a reader, not a browser engine:
 
 Links inside a fetched page are followed **in place** (`Enter`/click), with
 relative links resolved against the page URL and `[`/`]` (or `Backspace`) for
-history; `O` opens a link in the real browser instead. URL-loaded views are not
+history; the page stays, its title spinning with the new URL, until the next
+one arrives; `O` opens a link in the real browser instead. URL-loaded views are not
 restored with the project layout.
 
 A file-backed panel is saved with the project layout and reopens at the same file.
