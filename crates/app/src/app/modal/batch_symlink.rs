@@ -46,7 +46,7 @@ fn symlink_target_path(
     link_path: &Path,
     use_relative: bool,
 ) -> std::io::Result<PathBuf> {
-    let canonical = std::fs::canonicalize(source)?;
+    let canonical = dunce::canonicalize(source)?;
     if !use_relative {
         return Ok(canonical);
     }
@@ -54,7 +54,7 @@ fn symlink_target_path(
     let Some(parent) = link_path.parent() else {
         return Ok(canonical);
     };
-    let canonical_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let canonical_parent = dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
     Ok(relative_path_from(&canonical_parent, &canonical).unwrap_or(canonical))
 }
 

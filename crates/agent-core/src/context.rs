@@ -84,7 +84,7 @@ fn context_file_in(dir: &Path) -> Option<PathBuf> {
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
+    match (dunce::canonicalize(a), dunce::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }

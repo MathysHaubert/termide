@@ -140,7 +140,7 @@ impl GitDiffCache {
     pub fn new(file_path: PathBuf) -> Self {
         // Canonicalize to resolve symlinks — git rev-parse returns canonical paths,
         // so file_path must match for strip_prefix to work.
-        let file_path = std::fs::canonicalize(&file_path).unwrap_or(file_path);
+        let file_path = dunce::canonicalize(&file_path).unwrap_or(file_path);
         Self {
             file_path,
             line_statuses: HashMap::new(),

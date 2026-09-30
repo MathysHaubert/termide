@@ -4929,6 +4929,7 @@ dependencies = [
 name = "termide-agent-core"
 version = "0.37.0"
 dependencies = [
+ "dunce",
  "log",
  "serde",
  "serde_json",
@@ -5000,6 +5001,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "dirs",
+ "dunce",
  "libc",
  "log",
  "lsp-types",
@@ -5170,6 +5172,7 @@ name = "termide-git"
 version = "0.37.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "log",
  "similar",
  "tempfile",
@@ -5422,6 +5425,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "dirs",
+ "dunce",
  "glob",
  "libc",
  "log",
@@ -5488,6 +5492,7 @@ name = "termide-panel-git-status"
 version = "0.37.0"
 dependencies = [
  "crossterm",
+ "dunce",
  "ratatui",
  "tempfile",
  "termide-config",
@@ -5635,6 +5640,7 @@ version = "0.37.0"
 dependencies = [
  "anyhow",
  "crossterm",
+ "dunce",
  "libc",
  "log",
  "nix 0.29.0",
@@ -5660,6 +5666,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "dunce",
  "log",
  "serde",
  "tempfile",
@@ -5693,6 +5700,7 @@ dependencies = [
 name = "termide-system-monitor"
 version = "0.37.0"
 dependencies = [
+ "dunce",
  "libc",
  "starship-battery",
  "sysinfo",
@@ -5787,6 +5795,7 @@ name = "termide-watcher"
 version = "0.37.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "ignore",
  "notify",
  "notify-debouncer-mini",

@@ -98,7 +98,7 @@ pub(crate) fn git_command_stdout(dir: &Path, args: &[&str]) -> Option<String> {
 /// The path is canonicalized first so `strip_prefix` matches git's canonical
 /// repository root even when the caller holds a symlinked path.
 pub(crate) fn head_file_content(file_path: &Path) -> Option<String> {
-    let file_path = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    let file_path = dunce::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
     let dir = file_path.parent().unwrap_or_else(|| Path::new("/"));
 
     let root = git_command_stdout(dir, &["rev-parse", "--show-toplevel"])?;

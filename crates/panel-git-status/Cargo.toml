@@ -24,4 +24,5 @@ termide-ui = { path = "../ui" }
 termide-ui-render = { path = "../ui-render" }
 
 [dev-dependencies]
+dunce.workspace = true
 tempfile.workspace = true

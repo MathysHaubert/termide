@@ -466,7 +466,7 @@ impl FileManager {
             } else if is_symlink {
                 // Symlink without git actions — show "Follow symlink" button
                 let target_path =
-                    fs::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
+                    dunce::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
                 let buttons = vec![
                     ActionButton::new(t.file_info_follow_symlink(), "follow"),
                     ActionButton::new(t.git_action_close(), "close"),

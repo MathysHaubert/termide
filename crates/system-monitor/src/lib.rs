@@ -404,7 +404,7 @@ impl SystemMonitor {
     /// changed and the cache is fresh.
     #[cfg(unix)]
     pub fn get_disk_space_info_cached(&self, path: &Path) -> Option<DiskSpaceInfo> {
-        let canonical = path.canonicalize().ok()?;
+        let canonical = dunce::canonicalize(path).ok()?;
 
         let (device, fs_type) = {
             let mut guard = match self.mount_cache.lock() {

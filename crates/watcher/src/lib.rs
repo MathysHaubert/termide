@@ -239,7 +239,7 @@ impl UnifiedWatcher {
             if parent.file_name().and_then(|n| n.to_str()) == Some(".git") {
                 let repo_root = parent.parent()?;
                 return Some(
-                    std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf()),
+                    dunce::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf()),
                 );
             }
             current = parent;
@@ -754,7 +754,7 @@ mod tests {
     fn temp_repo(gitignore: Option<&str>) -> (tempfile::TempDir, PathBuf) {
         use std::fs;
         let tmp = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(tmp.path()).unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
         fs::create_dir(root.join(".git")).unwrap();
         fs::write(root.join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
         fs::create_dir(root.join("src")).unwrap();
@@ -814,7 +814,7 @@ mod tests {
         use std::fs;
 
         let tmp = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(tmp.path()).unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
         fs::create_dir(root.join(".git")).unwrap();
         fs::write(root.join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
         fs::create_dir(root.join("src")).unwrap();

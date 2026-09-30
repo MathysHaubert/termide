@@ -9,6 +9,7 @@ description = "Git integration for termide"
 
 [dependencies]
 anyhow.workspace = true
+dunce.workspace = true
 log.workspace = true
 similar.workspace = true
 

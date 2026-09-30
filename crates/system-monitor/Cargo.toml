@@ -13,6 +13,7 @@ starship-battery.workspace = true
 termide-i18n = { path = "../i18n" }
 
 [target.'cfg(unix)'.dependencies]
+dunce.workspace = true
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]

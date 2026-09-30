@@ -168,8 +168,8 @@ mod tests {
 
         // `/tmp` and friends are symlinked on macOS, so compare canonical form.
         assert_eq!(
-            actual.canonicalize().ok(),
-            expected.canonicalize().ok(),
+            dunce::canonicalize(&actual).ok(),
+            dunce::canonicalize(&expected).ok(),
             "shell_cwd disagreed with std::env::current_dir"
         );
     }

@@ -54,8 +54,8 @@ pub fn get_git_status(dir: &Path) -> Option<GitStatusCache> {
     // Canonicalize both paths to resolve symlinks before strip_prefix
     // This fixes the issue where FileManager uses symlink paths (e.g., /home/nvn/...)
     // but git rev-parse returns real paths (e.g., /Data/...)
-    let dir_canonical = dir.canonicalize().ok();
-    let repo_root_canonical = repo_root.canonicalize().ok();
+    let dir_canonical = dunce::canonicalize(dir).ok();
+    let repo_root_canonical = dunce::canonicalize(&repo_root).ok();
 
     let relative_path = match (&dir_canonical, &repo_root_canonical) {
         (Some(d), Some(r)) => d
@@ -515,7 +515,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Canonical, as `git rev-parse --show-toplevel` reports it: the macOS
         // temp directory sits behind the `/var` -> `/private/var` symlink.
-        let root = &dir.path().canonicalize().unwrap();
+        let root = &dunce::canonicalize(dir.path()).unwrap();
         git(root, &["init", "-q"]);
         std::fs::write(root.join(".gitignore"), "target/\n*.log\n").unwrap();
         git(root, &["add", ".gitignore"]);

@@ -105,7 +105,7 @@ impl FileManager {
             }),
             SelectedSearchResult::OpenDir(path) => {
                 // Enter (cd into) the directory.
-                self.current_path = std::fs::canonicalize(&path).unwrap_or(path);
+                self.current_path = dunce::canonicalize(&path).unwrap_or(path);
                 self.selected = 0;
                 self.scroll_offset = 0;
                 let _ = self.load_directory();

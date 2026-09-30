@@ -573,7 +573,7 @@ impl App {
     /// Open a local SQLite file in the database viewer, deriving a
     /// `sqlite:///<abs-path>` URL from the file path.
     pub(in crate::app) fn event_view_database(&mut self, path: PathBuf) -> Result<()> {
-        let abs = std::fs::canonicalize(&path).unwrap_or(path);
+        let abs = dunce::canonicalize(&path).unwrap_or(path);
         self.open_database(format!("sqlite://{}", abs.display()));
         Ok(())
     }
