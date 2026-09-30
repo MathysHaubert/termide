@@ -30,6 +30,7 @@ Terminal editors cover the code; everything around it — files on remote hosts,
 | Multi-panel Layout | ✓ | ✓ | plugin | ✗ | ✗ |
 | Bookmarks | ✓ | ✓ | plugin | ✗ | ✗ |
 | Hex / Binary Viewer | ✓ | ✗ | plugin | ✗ | plugin |
+| Archive Browsing (zip/tar) | ✓ | ✗ | ✓ | ✗ | ✗ |
 | File Manager | ✓ | tree only | plugin | ✗ | ✗ |
 | Detachable Instances | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Built-in Coding Agent (local or hosted models) | ✓ | ✗ | plugin | ✗ | ✗ |
@@ -46,8 +47,8 @@ Terminal editors cover the code; everything around it — files on remote hosts,
 
 - **Terminal-based IDE** - Syntax highlighting for 22 languages, word navigation (Ctrl+Left/Right), paragraph/symbol navigation (Ctrl+Up/Down), toggle comment (Ctrl+/), auto-indentation, auto-close brackets
 - **LSP Support** - Code completion, Find References (Shift+F12), Rename Symbol (F4), Go to Definition (Ctrl+Click), diagnostics
-- **Coding Agent** - A panel (`Alt+A`) where a language model reads, edits and runs commands in your project through any OpenAI-compatible endpoint (local llama.cpp / Ollama / vLLM / omlx or hosted), asking permission per tool call; skills, prompt templates, MCP servers, command hooks, and external agents over ACP (Claude Code, Codex, Gemini CLI) in the same panel
-- **Smart File Manager** - Tree view with expandable directories, nested git status, batch operations, file/content search (glob/regex), in-tree incremental search
+- **Coding Agent** - A panel (`Alt+A`) where a language model reads, edits and runs commands in your project through any OpenAI- or Anthropic-compatible endpoint (local llama.cpp / Ollama / vLLM / omlx or hosted), asking permission per tool call, with `/undo` and checkpoints to take its edits back; skills, prompt templates, MCP servers, command hooks, and external agents over ACP (Claude Code, Codex, Gemini CLI) in the same panel
+- **Smart File Manager** - Tree view with expandable directories, nested git status, batch operations, file/content search (glob/regex), in-tree incremental search; zip, tar and ISO archives open like read-only directories (also on a server or inside another archive), and `P` packs the selection into zip or tar
 - **Remote Filesystems** - Browse and edit files on remote servers from the file manager over SFTP / FTP / FTPS, copying between local and remote panels — pure Rust (russh + rustls), no native libraries, works on static musl (`smb://` / `nfs://` via the OS mount)
 - **Background File Operations** - Copy, move, upload, download, delete and batch transfers run in the background with a per-operation progress bar, byte/elapsed readout, and pause / resume / cancel (Operations panel)
 - **Integrated Terminal** - Full PTY support, VT100 escape sequences, mouse tracking
