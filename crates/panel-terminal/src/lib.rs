@@ -1570,7 +1570,7 @@ mod title_tests {
     fn title_shows_the_shell_start_directory() {
         let dir = std::env::temp_dir().join(format!("termide-title-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
         let spawned = Terminal::new_with_cwd(24, 80, Some(dir.clone()));
         let title = spawned.as_ref().ok().map(|t| t.title());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1593,7 +1593,7 @@ mod title_tests {
     fn layout_saves_the_directory_the_shell_ended_in() {
         let dir = std::env::temp_dir().join(format!("termide-layout-cd-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("subdir")).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
         let Ok(mut term) = Terminal::new_with_cwd(24, 80, Some(dir.clone())) else {
             let _ = std::fs::remove_dir_all(&dir);
             return; // No PTY available.
@@ -1629,7 +1629,7 @@ mod title_tests {
     fn working_directory_follows_a_cd_inside_the_shell() {
         let dir = std::env::temp_dir().join(format!("termide-cwd-cd-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("subdir")).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
         let Ok(mut term) = Terminal::new_with_cwd(24, 80, Some(dir.clone())) else {
             let _ = std::fs::remove_dir_all(&dir);
             return; // No PTY available.
@@ -1673,7 +1673,7 @@ mod title_tests {
     fn title_follows_a_cd_inside_the_shell() {
         let dir = std::env::temp_dir().join(format!("termide-title-cd-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("subdir")).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
         let Ok(mut term) = Terminal::new_with_cwd(24, 80, Some(dir.clone())) else {
             let _ = std::fs::remove_dir_all(&dir);
             return; // No PTY available.

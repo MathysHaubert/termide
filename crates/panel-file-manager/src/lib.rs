@@ -319,7 +319,7 @@ impl FileManager {
     /// Create a new smart file manager with the specified path
     pub fn new_with_path(current_path: PathBuf) -> Self {
         // Canonicalize to resolve symlinks — ensures paths match notify events
-        let current_path = std::fs::canonicalize(&current_path).unwrap_or(current_path);
+        let current_path = dunce::canonicalize(&current_path).unwrap_or(current_path);
         let vfs = VfsState::with_path(termide_vfs::VfsPath::local(&current_path), None);
         let mut fm = Self::new_common(current_path, vfs);
         let _ = fm.load_directory();
@@ -394,7 +394,7 @@ impl FileManager {
     /// Navigate to a specific directory
     pub fn navigate_to(&mut self, path: PathBuf) -> Result<()> {
         // Canonicalize to resolve symlinks — ensures paths match notify events
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = dunce::canonicalize(&path).unwrap_or(path);
         if path.is_dir() {
             self.current_path = path.clone();
             self.vfs.set_path(termide_vfs::VfsPath::local(path));
@@ -506,7 +506,7 @@ impl FileManager {
     pub fn navigate_to_file(&mut self, path: &std::path::Path) {
         if let Some(parent) = path.parent() {
             self.current_path =
-                std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+                dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
             let _ = self.load_directory();
 
             // Find and select the file in the list
@@ -1064,7 +1064,7 @@ mod tests {
     /// against the raw `TempDir::path()` and the assertion fails there while
     /// passing on Linux, where `/tmp` is a real directory.
     fn canonical_temp_path(temp_dir: &TempDir) -> std::path::PathBuf {
-        temp_dir.path().canonicalize().unwrap()
+        dunce::canonicalize(temp_dir.path()).unwrap()
     }
 
     /// The row shown while a directory is still being listed stands for no

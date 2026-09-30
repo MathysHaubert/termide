@@ -1,0 +1,7 @@
+disallowed-methods = [
+    # On Windows these return verbatim paths (`\\?\D:\...`), which then leak
+    # into titles, prompts, saved state and child processes. `dunce` drops the
+    # prefix where that is lossless and is a plain passthrough elsewhere.
+    { path = "std::fs::canonicalize", reason = "use dunce::canonicalize: std returns `\\\\?\\` paths on Windows" },
+    { path = "std::path::Path::canonicalize", reason = "use dunce::canonicalize: std returns `\\\\?\\` paths on Windows" },
+]

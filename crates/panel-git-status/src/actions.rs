@@ -560,7 +560,7 @@ mod tests {
     /// holds an untracked file.
     fn repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
         let root = tempfile::tempdir().unwrap();
-        let root_path = std::fs::canonicalize(root.path()).unwrap();
+        let root_path = dunce::canonicalize(root.path()).unwrap();
         let repo = root_path.join("repo");
         std::fs::create_dir(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
@@ -659,7 +659,7 @@ mod tests {
         let events = panel.view_branch(index_of(&panel, "wt"));
         assert!(matches!(&events[..], [PanelEvent::WorkingDirectoryChanged]));
         settle(&mut panel);
-        let work_dir = panel.work_dir().map(|d| std::fs::canonicalize(d).unwrap());
+        let work_dir = panel.work_dir().map(|d| dunce::canonicalize(d).unwrap());
         assert_eq!(work_dir, Some(worktree.clone()));
         let files: Vec<_> = panel.unstaged_files.iter().map(|f| &f.path).collect();
         assert_eq!(files, vec![Path::new("new.txt")]);

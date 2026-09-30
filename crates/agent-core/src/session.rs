@@ -178,7 +178,7 @@ fn open_registry() -> &'static Mutex<HashSet<PathBuf>> {
 /// The registry key for `path`: canonical when it exists, else the path as
 /// given, so different spellings of one file still collide.
 fn lock_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Bumped whenever a claim is taken or released, so a session list that

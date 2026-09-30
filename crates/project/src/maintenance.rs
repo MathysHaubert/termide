@@ -150,9 +150,8 @@ pub fn cleanup_old_projects(current_project: &Path, retention_days: u32) -> Resu
     }
 
     // Canonicalize current project path for comparison
-    let current_canonical = current_project
-        .canonicalize()
-        .unwrap_or_else(|_| current_project.to_path_buf());
+    let current_canonical =
+        dunce::canonicalize(current_project).unwrap_or_else(|_| current_project.to_path_buf());
 
     let retention_duration = Duration::from_secs(retention_days as u64 * 24 * 60 * 60);
     let cutoff_time = SystemTime::now()
@@ -281,10 +280,9 @@ fn is_same_project(project_dir: &Path, project_path: &Path) -> bool {
     let reconstructed = PathBuf::from("/").join(rel_path);
 
     // Canonicalize both paths for comparison
-    let reconstructed_canonical = reconstructed.canonicalize().unwrap_or(reconstructed);
-    let project_canonical = project_path
-        .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
+    let reconstructed_canonical = dunce::canonicalize(&reconstructed).unwrap_or(reconstructed);
+    let project_canonical =
+        dunce::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
 
     reconstructed_canonical == project_canonical
 }

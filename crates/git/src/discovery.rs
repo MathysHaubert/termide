@@ -10,7 +10,7 @@ pub fn find_repo_root(path: &Path) -> Option<PathBuf> {
         if current.join(".git").exists() {
             // Canonicalize to resolve symlinks/bind-mounts so that all
             // consumers (panels, watcher, diff) use consistent paths.
-            return Some(std::fs::canonicalize(current).unwrap_or_else(|_| current.to_path_buf()));
+            return Some(dunce::canonicalize(current).unwrap_or_else(|_| current.to_path_buf()));
         }
         current = current.parent()?;
     }
@@ -92,7 +92,7 @@ pub fn find_toplevel_repos(paths: &[PathBuf]) -> Vec<PathBuf> {
     // don't create duplicate entries for the same physical directory.
     let unique_paths: HashSet<PathBuf> = paths
         .iter()
-        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+        .map(|p| dunce::canonicalize(p).unwrap_or_else(|_| p.clone()))
         .collect();
 
     // Every input path gets its own upward search. A path nested inside
@@ -215,8 +215,8 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let deep = tmp.join("container/lvl1/lvl2/deeprepo");
         fs::create_dir_all(deep.join(".git")).unwrap();
-        let container = fs::canonicalize(tmp.join("container")).unwrap();
-        let deep = fs::canonicalize(&deep).unwrap();
+        let container = dunce::canonicalize(tmp.join("container")).unwrap();
+        let deep = dunce::canonicalize(&deep).unwrap();
 
         let roots = find_toplevel_repos(&[container, deep.clone()]);
         let _ = fs::remove_dir_all(&tmp);
@@ -238,7 +238,7 @@ mod tests {
         let repo = tmp.join("repo");
         fs::create_dir_all(repo.join(".git")).unwrap();
         fs::create_dir_all(repo.join("src/inner")).unwrap();
-        let repo = fs::canonicalize(&repo).unwrap();
+        let repo = dunce::canonicalize(&repo).unwrap();
 
         let roots = find_toplevel_repos(&[repo.clone(), repo.join("src"), repo.join("src/inner")]);
         let _ = fs::remove_dir_all(&tmp);

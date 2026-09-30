@@ -117,7 +117,7 @@ impl FileManager {
             }
             FmCommand::GoHomeDir => {
                 if let Some(home) = dirs::home_dir() {
-                    self.current_path = std::fs::canonicalize(&home).unwrap_or(home);
+                    self.current_path = dunce::canonicalize(&home).unwrap_or(home);
                     let _ = self.load_directory();
                 }
             }

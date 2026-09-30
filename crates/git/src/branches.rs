@@ -50,7 +50,7 @@ pub fn get_branch_list(repo: &Path) -> Vec<BranchInfo> {
 /// The branches of `repo` checked out in a working copy other than `repo`
 /// itself, by name, with that copy's directory.
 pub fn linked_worktrees(repo: &Path, branches: &[BranchInfo]) -> HashMap<String, PathBuf> {
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let main = canonical(repo);
     branches
         .iter()
@@ -238,7 +238,7 @@ mod tests {
                 .clone()
         };
         let same = |a: Option<PathBuf>, b: &Path| {
-            a.and_then(|a| std::fs::canonicalize(a).ok()) == std::fs::canonicalize(b).ok()
+            a.and_then(|a| dunce::canonicalize(a).ok()) == dunce::canonicalize(b).ok()
         };
         assert!(same(of("main"), &repo));
         assert!(same(of("wt"), &worktree));

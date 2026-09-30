@@ -162,8 +162,7 @@ fn space_pool(device: &str, fs_type: &str) -> String {
 /// to their physical partition.
 #[cfg(unix)]
 fn resolve_device_path(device: &str) -> String {
-    let resolved = Path::new(device)
-        .canonicalize()
+    let resolved = dunce::canonicalize(device)
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| device.to_string());
@@ -198,14 +197,14 @@ pub(crate) struct MountInfo {
 pub(crate) fn resolve_mount_for_path(path: &Path) -> Option<MountInfo> {
     // Canonicalized once: it does not change across mount entries, and the
     // syscall used to run per entry.
-    let canonical_path = path.canonicalize().ok()?;
+    let canonical_path = dunce::canonicalize(path).ok()?;
     let mounts = read_mounts();
 
     let mut best_match: Option<(usize, usize)> = None; // (mount index, mount path len)
 
     for (idx, entry) in mounts.iter().enumerate() {
         // Check if this mount point is a prefix of our path
-        if let Ok(canonical_mount) = Path::new(&entry.mount_point).canonicalize() {
+        if let Ok(canonical_mount) = dunce::canonicalize(&entry.mount_point) {
             if canonical_path.starts_with(&canonical_mount) {
                 let mount_len = canonical_mount.as_os_str().len();
                 // Keep track of the longest matching mount point

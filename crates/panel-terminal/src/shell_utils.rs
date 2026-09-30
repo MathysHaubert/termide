@@ -126,7 +126,7 @@ pub fn discover_shells() -> Vec<ShellInfo> {
             if !p.exists() {
                 return;
             }
-            let canon = std::fs::canonicalize(p)
+            let canon = dunce::canonicalize(p)
                 .unwrap_or_else(|_| p.to_path_buf())
                 .to_string_lossy()
                 .to_string();

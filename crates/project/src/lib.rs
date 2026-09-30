@@ -173,9 +173,8 @@ pub enum PanelState {
 /// `Component::RootDir` covers `/` and `\`.
 #[must_use]
 pub fn project_key(project_root: &Path) -> PathBuf {
-    let canonical = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
+    let canonical =
+        dunce::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     canonical
         .components()
         .filter(|c| {
