@@ -720,3 +720,40 @@ fn horizontal_scroll_counts_tab_columns() {
     // Columns 8..18: the last two tabs, then "ab" with the cursor on "b".
     assert_eq!(rows[0], "        ab");
 }
+
+/// Up and down keep the cursor in its screen column across lines indented
+/// differently, with and without word wrap: from column 8 on a line indented
+/// with spaces the cursor lands on the grapheme drawn there on a tab line.
+#[test]
+fn vertical_movement_keeps_the_screen_column_across_tabs() {
+    for word_wrap in [false, true] {
+        let (mut editor, _file) = create_editor_with_content("        xy\n\t\txy\n        xy\n");
+        editor.config.word_wrap = word_wrap;
+        editor.config.tab_size = 4;
+        let gutter = crate::rendering::line_number_width(editor.buffer.line_count()) as u16;
+        rendered_text_rows(&mut editor, gutter + 30, 5);
+        editor.cursor = termide_buffer::Cursor::at(0, 9); // on "y", column 9
+
+        if word_wrap {
+            editor.move_cursor_down_visual();
+        } else {
+            editor.move_cursor_down();
+        }
+        assert_eq!(
+            (editor.cursor.line, editor.cursor.column),
+            (1, 3),
+            "word_wrap={word_wrap}: \"y\" after two tabs"
+        );
+
+        if word_wrap {
+            editor.move_cursor_down_visual();
+        } else {
+            editor.move_cursor_down();
+        }
+        assert_eq!(
+            (editor.cursor.line, editor.cursor.column),
+            (2, 9),
+            "word_wrap={word_wrap}: back on the spaces line"
+        );
+    }
+}

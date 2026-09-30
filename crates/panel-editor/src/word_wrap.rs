@@ -463,6 +463,56 @@ pub(crate) fn calculate_total_visual_rows_cached(
     cache.get_total_visual_rows().unwrap_or(buffer.line_count())
 }
 
+/// Text of buffer line `line` without its line break (empty past the end).
+fn line_text_at(buffer: &TextBuffer, line: usize) -> String {
+    buffer
+        .line(line)
+        .map(|s| s.trim_end_matches('\n').to_string())
+        .unwrap_or_default()
+}
+
+/// Screen columns between grapheme `row_start` and grapheme `col` of `line`,
+/// with tab stops restarting at `row_start` as on a drawn row: how far right
+/// the cursor sits on its visual row.
+pub(crate) fn row_offset_columns(
+    line: &str,
+    row_start: usize,
+    col: usize,
+    tab_size: usize,
+) -> usize {
+    line.graphemes(true)
+        .take(col)
+        .skip(row_start)
+        .fold(0, |width, g| {
+            width + termide_buffer::grapheme_columns(g, width, tab_size)
+        })
+}
+
+/// The grapheme of `line` drawn `offset` screen columns right of grapheme
+/// `row_start` (tab stops restarting there), no further than `max_col`:
+/// where vertical movement lands to keep the cursor in the same screen
+/// column. An offset inside a tab lands on the tab.
+pub(crate) fn column_at_row_offset(
+    line: &str,
+    row_start: usize,
+    max_col: usize,
+    offset: usize,
+    tab_size: usize,
+) -> usize {
+    let mut width = 0;
+    for (idx, g) in line.graphemes(true).enumerate().skip(row_start) {
+        if idx >= max_col {
+            return max_col;
+        }
+        let cols = termide_buffer::grapheme_columns(g, width, tab_size);
+        if width + cols > offset {
+            return idx;
+        }
+        width += cols;
+    }
+    max_col.min(line.graphemes(true).count()).max(row_start)
+}
+
 /// Move cursor up by one visual line, using cached wrap data.
 ///
 /// Returns Some((line, col)) if movement was possible, None if at top.
@@ -484,12 +534,13 @@ pub(crate) fn move_up_cached(
         if cursor_line == 0 {
             return None;
         }
-        let target_col = preferred_column.unwrap_or(cursor_col);
-        let line_len = buffer
-            .line(cursor_line - 1)
-            .map(|s| s.trim_end_matches('\n').graphemes(true).count())
-            .unwrap_or(0);
-        return Some((cursor_line - 1, target_col.min(line_len)));
+        let offset = preferred_column.unwrap_or_else(|| {
+            row_offset_columns(&line_text_at(buffer, cursor_line), 0, cursor_col, tab_size)
+        });
+        let target = line_text_at(buffer, cursor_line - 1);
+        let line_len = target.graphemes(true).count();
+        let col = column_at_row_offset(&target, 0, line_len, offset, tab_size);
+        return Some((cursor_line - 1, col));
     }
 
     // Get wrap data for current line
@@ -518,14 +569,17 @@ pub(crate) fn move_up_cached(
     // Get bounds for current visual row
     let (visual_row_start, _) = get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
 
-    // Calculate visual offset within current visual row
-    let visual_offset = preferred_column.unwrap_or(cursor_col.saturating_sub(visual_row_start));
+    // Calculate visual offset (screen columns) within current visual row
+    let cur_text = line_text_at(buffer, cursor_line);
+    let visual_offset = preferred_column
+        .unwrap_or_else(|| row_offset_columns(&cur_text, visual_row_start, cursor_col, tab_size));
 
     if current_visual_row > 0 {
         // Move up within same physical line
         let (prev_start, prev_end) =
             get_visual_row_bounds(current_visual_row - 1, &wrap_points, line_len);
-        let new_col = (prev_start + visual_offset).min(prev_end.saturating_sub(1).max(prev_start));
+        let max_col = prev_end.saturating_sub(1).max(prev_start);
+        let new_col = column_at_row_offset(&cur_text, prev_start, max_col, visual_offset, tab_size);
         Some((cursor_line, new_col))
     } else if cursor_line > 0 {
         // Move to previous physical line
@@ -558,7 +612,13 @@ pub(crate) fn move_up_cached(
         } else {
             prev_end.saturating_sub(1)
         };
-        let new_col = (prev_start + visual_offset).min(max_col.max(prev_start));
+        let new_col = column_at_row_offset(
+            &line_text_at(buffer, prev_line),
+            prev_start,
+            max_col.max(prev_start),
+            visual_offset,
+            tab_size,
+        );
         Some((prev_line, new_col))
     } else {
         None // At top of buffer
@@ -587,12 +647,13 @@ pub(crate) fn move_down_cached(
         if cursor_line + 1 >= line_count {
             return None;
         }
-        let target_col = preferred_column.unwrap_or(cursor_col);
-        let line_len = buffer
-            .line(cursor_line + 1)
-            .map(|s| s.trim_end_matches('\n').graphemes(true).count())
-            .unwrap_or(0);
-        return Some((cursor_line + 1, target_col.min(line_len)));
+        let offset = preferred_column.unwrap_or_else(|| {
+            row_offset_columns(&line_text_at(buffer, cursor_line), 0, cursor_col, tab_size)
+        });
+        let target = line_text_at(buffer, cursor_line + 1);
+        let line_len = target.graphemes(true).count();
+        let col = column_at_row_offset(&target, 0, line_len, offset, tab_size);
+        return Some((cursor_line + 1, col));
     }
 
     // Get wrap data for current line
@@ -621,8 +682,10 @@ pub(crate) fn move_down_cached(
     // Get bounds for current visual row
     let (visual_row_start, _) = get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
 
-    // Calculate visual offset within current visual row
-    let visual_offset = preferred_column.unwrap_or(cursor_col.saturating_sub(visual_row_start));
+    // Calculate visual offset (screen columns) within current visual row
+    let cur_text = line_text_at(buffer, cursor_line);
+    let visual_offset = preferred_column
+        .unwrap_or_else(|| row_offset_columns(&cur_text, visual_row_start, cursor_col, tab_size));
 
     if current_visual_row + 1 < total_visual_rows {
         // Move down within same physical line
@@ -635,7 +698,13 @@ pub(crate) fn move_down_cached(
         } else {
             next_end.saturating_sub(1)
         };
-        let new_col = (next_start + visual_offset).min(max_col.max(next_start));
+        let new_col = column_at_row_offset(
+            &cur_text,
+            next_start,
+            max_col.max(next_start),
+            visual_offset,
+            tab_size,
+        );
         Some((cursor_line, new_col))
     } else if cursor_line + 1 < line_count {
         // Move to next physical line
@@ -666,7 +735,13 @@ pub(crate) fn move_down_cached(
         } else {
             next_end.saturating_sub(1)
         };
-        let new_col = (next_start + visual_offset).min(max_col.max(next_start));
+        let new_col = column_at_row_offset(
+            &line_text_at(buffer, next_line),
+            next_start,
+            max_col.max(next_start),
+            visual_offset,
+            tab_size,
+        );
         Some((next_line, new_col))
     } else {
         None // At bottom of buffer
@@ -884,4 +959,27 @@ pub(crate) fn visual_row_to_buffer_position_cached(
         tab_size,
     );
     (last_line, 0, last_line_len, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{column_at_row_offset, row_offset_columns};
+
+    #[test]
+    fn row_offsets_count_screen_columns_from_the_row_start() {
+        assert_eq!(row_offset_columns("\t\txy", 0, 3, 4), 9);
+        // Tab stops restart at the row start: grapheme 1 is the second tab.
+        assert_eq!(row_offset_columns("\t\txy", 1, 3, 4), 5);
+        assert_eq!(row_offset_columns("abc", 0, 9, 4), 3);
+    }
+
+    #[test]
+    fn a_row_offset_lands_on_the_grapheme_drawn_there() {
+        assert_eq!(column_at_row_offset("\t\txy", 0, 4, 9, 4), 3);
+        // Inside a tab: the tab itself.
+        assert_eq!(column_at_row_offset("\t\txy", 0, 4, 6, 4), 1);
+        // Past the end: the end, or the row's last column.
+        assert_eq!(column_at_row_offset("ab", 0, 2, 7, 4), 2);
+        assert_eq!(column_at_row_offset("abcdef", 2, 4, 9, 4), 4);
+    }
 }

@@ -18,21 +18,40 @@ impl Editor {
     // Physical Cursor Movement
     // =========================================================================
 
+    /// Put the cursor, just moved to another line, in the screen column it
+    /// had (`display_col`) instead of at the same grapheme index: a tab
+    /// before it on either line would otherwise shift it sideways.
+    fn land_in_display_column(&mut self, display_col: usize) {
+        use unicode_segmentation::UnicodeSegmentation;
+        let line = self
+            .buffer
+            .line_cow(self.cursor.line)
+            .map(|l| l.trim_end_matches('\n').to_string())
+            .unwrap_or_default();
+        let len = line.graphemes(true).count();
+        self.cursor.column =
+            word_wrap::column_at_row_offset(&line, 0, len, display_col, self.config.tab_size);
+    }
+
     /// Move cursor up
     pub(crate) fn move_cursor_up(&mut self) {
+        let display_col = self.cursor_in_display_columns().column;
         let maintain_preferred = cursor::physical::move_up(&mut self.cursor);
         if !maintain_preferred {
             self.input.preferred_column = None;
         }
+        self.land_in_display_column(display_col);
         self.clamp_cursor();
     }
 
     /// Move cursor down
     pub(crate) fn move_cursor_down(&mut self) {
+        let display_col = self.cursor_in_display_columns().column;
         let maintain_preferred = cursor::physical::move_down(&mut self.cursor, &self.buffer);
         if !maintain_preferred {
             self.input.preferred_column = None;
         }
+        self.land_in_display_column(display_col);
         self.clamp_cursor();
     }
 
@@ -275,7 +294,14 @@ impl Editor {
     /// Move cursor page up
     pub(crate) fn page_up(&mut self) {
         let page_size = self.viewport.height;
+        // A full page keeps the screen column; the jump to the document
+        // start sets its own.
+        let keeps_column = self.cursor.line >= page_size;
+        let display_col = self.cursor_in_display_columns().column;
         let (should_scroll, scroll_amount) = cursor::jump::page_up(&mut self.cursor, page_size);
+        if keeps_column {
+            self.land_in_display_column(display_col);
+        }
         self.clamp_cursor();
         if should_scroll {
             self.viewport.scroll_up(scroll_amount);
@@ -285,8 +311,16 @@ impl Editor {
     /// Move cursor page down
     pub(crate) fn page_down(&mut self) {
         let page_size = self.viewport.height;
+        // A full page keeps the screen column; the jump to the document end
+        // sets its own.
+        let max_line = self.buffer.line_count().saturating_sub(1);
+        let keeps_column = max_line.saturating_sub(self.cursor.line) >= page_size;
+        let display_col = self.cursor_in_display_columns().column;
         let (should_scroll, scroll_amount) =
             cursor::jump::page_down(&mut self.cursor, &self.buffer, page_size);
+        if keeps_column {
+            self.land_in_display_column(display_col);
+        }
         self.clamp_cursor();
         if should_scroll {
             // Use cached virtual line count for viewport scroll (accounts for deletion markers)

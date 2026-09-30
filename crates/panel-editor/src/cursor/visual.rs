@@ -32,23 +32,32 @@ fn get_visual_row_bounds(
 
 /// Calculate column position within visual row bounds.
 ///
-/// `preferred_col` is the visual offset (position within a visual row, 0-based).
-/// `line_len` is the total grapheme count of the physical line.
-/// Returns absolute column = visual_row_start + preferred_col, clamped to row bounds.
+/// `preferred_col` is the visual offset in screen columns from the start of
+/// a visual row. `line_len` is the total grapheme count of the physical line.
+/// Returns the grapheme drawn at that offset on the row of `line_text`,
+/// clamped to row bounds.
 /// On the last visual row (where visual_row_end == line_len), cursor can be at line_len.
 /// On intermediate rows, cursor stops before the wrap point.
 fn column_in_visual_row(
+    line_text: &str,
     preferred_col: usize,
     visual_row_start: usize,
     visual_row_end: usize,
     line_len: usize,
+    tab_size: usize,
 ) -> usize {
     let max_col = if visual_row_end == line_len {
         visual_row_end
     } else {
         visual_row_end.saturating_sub(1)
     };
-    (visual_row_start + preferred_col).min(max_col.max(visual_row_start))
+    word_wrap::column_at_row_offset(
+        line_text,
+        visual_row_start,
+        max_col.max(visual_row_start),
+        preferred_col,
+        tab_size,
+    )
 }
 
 /// Move cursor up by one visual line.
@@ -74,7 +83,7 @@ pub fn move_up(
             let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
             let (visual_row_start, _) =
                 get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
-            cursor_col.saturating_sub(visual_row_start)
+            word_wrap::row_offset_columns(line_text, visual_row_start, cursor_col, tab_size)
         } else {
             cursor.column
         }
@@ -96,8 +105,14 @@ pub fn move_up(
             let target_visual_row = current_visual_row - 1;
             let (visual_row_start, visual_row_end) =
                 get_visual_row_bounds(target_visual_row, &wrap_points, line_len);
-            let new_col =
-                column_in_visual_row(visual_offset, visual_row_start, visual_row_end, line_len);
+            let new_col = column_in_visual_row(
+                line_text,
+                visual_offset,
+                visual_row_start,
+                visual_row_end,
+                line_len,
+                tab_size,
+            );
             return Some(Cursor::at(cursor.line, new_col));
         }
     }
@@ -120,8 +135,14 @@ pub fn move_up(
 
             let (visual_row_start, visual_row_end) =
                 get_visual_row_bounds(last_visual_row, &wrap_points, line_len);
-            let new_col =
-                column_in_visual_row(visual_offset, visual_row_start, visual_row_end, line_len);
+            let new_col = column_in_visual_row(
+                line_text,
+                visual_offset,
+                visual_row_start,
+                visual_row_end,
+                line_len,
+                tab_size,
+            );
             return Some(Cursor::at(new_line, new_col));
         }
     }
@@ -152,7 +173,7 @@ pub fn move_down(
             let current_visual_row = wrap_points.iter().filter(|&&wp| wp <= cursor_col).count();
             let (visual_row_start, _) =
                 get_visual_row_bounds(current_visual_row, &wrap_points, line_len);
-            cursor_col.saturating_sub(visual_row_start)
+            word_wrap::row_offset_columns(line_text, visual_row_start, cursor_col, tab_size)
         } else {
             cursor.column
         }
@@ -174,8 +195,14 @@ pub fn move_down(
             let target_visual_row = current_visual_row + 1;
             let (visual_row_start, visual_row_end) =
                 get_visual_row_bounds(target_visual_row, &wrap_points, line_len);
-            let new_col =
-                column_in_visual_row(visual_offset, visual_row_start, visual_row_end, line_len);
+            let new_col = column_in_visual_row(
+                line_text,
+                visual_offset,
+                visual_row_start,
+                visual_row_end,
+                line_len,
+                tab_size,
+            );
             return Some(Cursor::at(cursor.line, new_col));
         }
     }
@@ -203,7 +230,14 @@ pub fn move_down(
                 line_len
             };
 
-            let new_col = column_in_visual_row(visual_offset, 0, visual_row_end, line_len);
+            let new_col = column_in_visual_row(
+                line_text,
+                visual_offset,
+                0,
+                visual_row_end,
+                line_len,
+                tab_size,
+            );
             return Some(Cursor::at(new_line, new_col));
         }
     }

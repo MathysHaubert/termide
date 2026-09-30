@@ -88,7 +88,8 @@ impl Editor {
 
     /// Ensure preferred column is set for vertical navigation.
     ///
-    /// Sets preferred_column to visual offset within current visual row if not already set.
+    /// Sets preferred_column to the visual offset, in screen columns, within
+    /// the current visual row if not already set.
     /// Used by visual movement methods to maintain column across wrapped lines.
     pub(crate) fn ensure_preferred_column(&mut self) {
         if self.input.preferred_column.is_none() {
@@ -120,12 +121,17 @@ impl Editor {
                     } else {
                         0
                     };
-                    cursor_col.saturating_sub(visual_row_start)
+                    word_wrap::row_offset_columns(
+                        line_text,
+                        visual_row_start,
+                        cursor_col,
+                        self.config.tab_size,
+                    )
                 } else {
                     self.cursor.column
                 }
             } else {
-                self.cursor.column
+                self.cursor_in_display_columns().column
             };
             self.input.preferred_column = Some(visual_offset);
         }
