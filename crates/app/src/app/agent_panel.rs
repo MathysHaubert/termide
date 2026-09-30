@@ -902,23 +902,18 @@ fn build_provider(connection: &Connection, api_key: Option<String>) -> Arc<dyn P
 }
 
 /// The field an OpenAI-compatible connection takes the reasoning level in.
-/// Left to `auto`, the hosted APIs known to take `reasoning_effort` get it
-/// and any other server nothing: an unknown field may fail its requests.
+/// Left to `auto`, the hosted APIs known to take `reasoning_effort` get it, a
+/// server on this machine or the local network the chat template's
+/// `enable_thinking` switch (llama.cpp, vLLM, omlx and LM Studio take it or
+/// leave it be), and any other server nothing: an unknown field may fail its
+/// requests.
 fn reasoning_param(connection: &Connection) -> ReasoningParam {
     match connection.reasoning_param {
         termide_config::ReasoningParam::ReasoningEffort => ReasoningParam::Effort,
         termide_config::ReasoningParam::EnableThinking => ReasoningParam::EnableThinking,
         termide_config::ReasoningParam::None => ReasoningParam::None,
         termide_config::ReasoningParam::Auto => {
-            let rest = connection
-                .base_url
-                .split_once("://")
-                .map_or(connection.base_url.as_str(), |(_, rest)| rest);
-            let host = rest
-                .split(['/', ':'])
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let host = url_host(&connection.base_url);
             let hosted = [
                 "api.openai.com",
                 "openrouter.ai",
@@ -928,10 +923,45 @@ fn reasoning_param(connection: &Connection) -> ReasoningParam {
             .any(|known| host == *known || host.ends_with(&format!(".{known}")));
             if hosted {
                 ReasoningParam::Effort
+            } else if is_local_host(&host) {
+                ReasoningParam::EnableThinking
             } else {
                 ReasoningParam::None
             }
         }
+    }
+}
+
+/// The lowercased host of `url`, without its port or an IPv6 address's
+/// brackets.
+fn url_host(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or("");
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    };
+    host.to_ascii_lowercase()
+}
+
+/// Whether `host` is this machine or an address of a private network.
+fn is_local_host(host: &str) -> bool {
+    use std::net::IpAddr;
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        // Loopback, unique local (fc00::/7) and link-local (fe80::/10).
+        Ok(IpAddr::V6(ip)) => {
+            ip.is_loopback()
+                || ip.segments()[0] & 0xfe00 == 0xfc00
+                || ip.segments()[0] & 0xffc0 == 0xfe80
+        }
+        Err(_) => false,
     }
 }
 
@@ -1049,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn hosted_apis_take_reasoning_effort_and_local_servers_nothing_unless_told() {
+    fn hosted_apis_take_reasoning_effort_local_servers_the_switch_and_others_nothing() {
         let at = |base_url: &str, param| {
             reasoning_param(&Connection {
                 base_url: base_url.into(),
@@ -1073,7 +1103,19 @@ mod tests {
             ),
             ReasoningParam::Effort
         );
-        assert_eq!(at("http://127.0.0.1:10000/v1", auto), ReasoningParam::None);
+        for local in [
+            "http://127.0.0.1:10000/v1",
+            "http://localhost:8080/v1",
+            "http://studio.local:1234/v1",
+            "http://192.168.1.20:8000/v1",
+            "http://10.0.0.5/v1",
+            "http://[::1]:8080/v1",
+            "http://[fd00::5]:8080/v1",
+        ] {
+            assert_eq!(at(local, auto), ReasoningParam::EnableThinking, "{local}");
+        }
+        assert_eq!(at("https://api.mistral.ai/v1", auto), ReasoningParam::None);
+        assert_eq!(at("http://8.8.8.8:8080/v1", auto), ReasoningParam::None);
         assert_eq!(
             at("https://api.openai.com.evil.example/v1", auto),
             ReasoningParam::None

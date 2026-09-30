@@ -189,7 +189,8 @@ pub struct Connection {
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningParam {
     /// `reasoning_effort` for the hosted APIs known to take it (OpenAI,
-    /// OpenRouter, Gemini), nothing elsewhere.
+    /// OpenRouter, Gemini), `enable_thinking` for a server on this machine
+    /// or the local network, nothing elsewhere.
     #[default]
     Auto,
     /// `reasoning_effort`, the OpenAI field.

@@ -66,8 +66,10 @@ their own set of values, other models `low`, `medium` and `high`),
 `enable_thinking` — `chat_template_kwargs.enable_thinking`, the on/off switch
 of the Qwen3, GLM and DeepSeek chat templates on vLLM or llama.cpp — or
 `none`. The default, `auto`, sends `reasoning_effort` to OpenAI, OpenRouter and
-the Gemini API and nothing to other servers, which may reject a field they do
-not know; a model that is sent nothing reasons as its server has it and shows
+the Gemini API, `enable_thinking` to a server on this machine or the local
+network (`localhost`, a `.local` name, a loopback or private address) — which
+is how a local model gets its **Reasoning** chip — and nothing to other
+servers, which may reject a field they do not know; a model that is sent nothing reasons as its server has it and shows
 no **Reasoning** chip. The older `prefer_reasoning = true | false` still
 reads, as `high` or `off`.
 
