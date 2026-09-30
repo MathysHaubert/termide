@@ -905,9 +905,12 @@ The prompt the model receives is assembled from files: the template
 `ai/AGENTS.md` with placeholders the agent fills in. No prompt text is
 built into TermIDE; the template below ships as a data file
 (`crates/agent-core/assets/AGENTS.md`) and is written to the
-configuration level on first use, and from then on the file is what counts. A
-project or the panel's directory may carry its own `.termide/ai/AGENTS.md`,
-which then replaces it:
+configuration level on first use, and from then on the file is what counts.
+Only the configuration level's `ai/AGENTS.md` is read: it is the fallback of
+every agent, so a project's `.termide/ai/AGENTS.md` is ignored, and the
+template changes only when you pick an agent with a `SOUL.md` of its own. A
+project's own conventions go into its `AGENTS.md`, which the template takes in
+as project instructions (see below):
 
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.

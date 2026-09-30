@@ -922,9 +922,11 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 с подстановками, которые агент заполняет. В TermIDE нет вшитого
 текста промпта: шаблон ниже поставляется файлом данных
 (`crates/agent-core/assets/AGENTS.md`), при первом использовании
-записывается на уровень настроек, и дальше действует именно файл. Проект или
-каталог панели может держать свой `.termide/ai/AGENTS.md`, и тогда он
-заменяет глобальный:
+записывается на уровень настроек, и дальше действует именно файл. Читается
+только `ai/AGENTS.md` уровня настроек: это запасной шаблон любого агента, поэтому
+`.termide/ai/AGENTS.md` проекта игнорируется, а шаблон меняется, только когда вы
+выбираете агента со своим `SOUL.md`. Соглашения проекта пишутся в его
+`AGENTS.md`, который шаблон подключает как инструкции проекта (см. ниже):
 
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.

@@ -330,7 +330,7 @@ env = { ANTHROPIC_API_KEY = "$ANTHROPIC_API_KEY" }
 
 ### 系统提示词
 
-模型收到的提示词由文件组装而成：模板 `ai/AGENTS.md` 加上由代理填充的占位符。TermIDE 中没有内置任何提示词文本；下面的模板作为数据文件（`crates/agent-core/assets/AGENTS.md`）提供，首次使用时写入配置层级，此后以该文件为准。项目或面板目录可以带有自己的 `.termide/ai/AGENTS.md`，它会取而代之：
+模型收到的提示词由文件组装而成：模板 `ai/AGENTS.md` 加上由代理填充的占位符。TermIDE 中没有内置任何提示词文本；下面的模板作为数据文件（`crates/agent-core/assets/AGENTS.md`）提供，首次使用时写入配置层级，此后以该文件为准。只读取配置层级的 `ai/AGENTS.md`：它是所有代理的后备模板，因此项目中的 `.termide/ai/AGENTS.md` 会被忽略，只有当你选择一个带有自己 `SOUL.md` 的代理时模板才会改变。项目自身的约定写在其 `AGENTS.md` 中，模板会将其作为项目说明纳入（见下文）：
 
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.

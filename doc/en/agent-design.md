@@ -522,7 +522,10 @@ The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 directory's root `AGENTS.md` for the default agent (the user's decision — the
 root file of the directory is the default prompt, and a global instruction
 file would only duplicate what one can write into it), `agents/<name>/SOUL.md`
-for a custom agent, which falls back to the root file when it has none. No
+for a custom agent, which falls back to the root file when it has none. The
+root file is read from the configuration level only: as every agent's
+fallback it must not be replaceable by a checked-out project, only by an agent
+the user picks; a custom agent's `SOUL.md` may live at any level. No
 prompt text is code: the seed is the data file
 `crates/agent-core/assets/AGENTS.md` (the former fixed prompt, base
 guidelines included), copied to the configuration on first use; code only
