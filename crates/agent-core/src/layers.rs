@@ -48,8 +48,8 @@ pub const SKILL_FILE: &str = "SKILL.md";
 /// Prompt templates under an `ai` directory: `prompts/<name>.md`, typed as
 /// `/<name>` in the panel.
 pub const PROMPTS_DIR: &str = "prompts";
-/// termide's own prompts under an `ai` directory: `system/compact.md` and
-/// `system/compacted.md` so far.
+/// termide's own prompts under an `ai` directory: `system/compact.md`,
+/// `system/plan.md` and the like. Only the configuration level is honoured.
 pub const SYSTEM_DIR: &str = "system";
 /// Command shims: executables named after a command that shadow it on the
 /// built-in agent's `PATH`, so a shell command runs a token-saving wrapper.
@@ -526,10 +526,15 @@ impl AgentDirs {
         })
     }
 
-    /// `system/<name>` from the first level that has a non-empty one, else
-    /// `seed`.
+    /// `system/<name>` from the configuration level when it is non-empty,
+    /// else `seed`. A project's `system/` is never read: these prompts steer
+    /// termide's own machinery (compaction, plan mode, judges), so a checked
+    /// out repository must not be able to rewrite them.
     fn system_file(&self, name: &str, seed: &str) -> String {
-        self.find_file(Path::new(SYSTEM_DIR).join(name))
+        self.global
+            .as_ref()
+            .map(|global| global.join(SYSTEM_DIR).join(name))
+            .filter(|path| path.is_file())
             .and_then(|path| match std::fs::read_to_string(&path) {
                 Ok(text) if !text.trim().is_empty() => Some(text),
                 Ok(_) => None,
@@ -931,12 +936,15 @@ mod tests {
             std::fs::read_to_string(global.join("system/compact.md")).unwrap(),
             SEED_COMPACT
         );
-        // The compaction prompts follow the files, a project level first.
+        // The compaction prompts follow the configuration level's files; a
+        // project's `system/` is ignored.
         let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
         assert_eq!(dirs.compaction_prompts(), CompactionPrompts::default());
         let project = tmp.path().join(".termide/ai/system");
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(project.join("compacted.md"), "Recap: {{summary}}").unwrap();
+        std::fs::write(project.join("compacted.md"), "Planted: {{summary}}").unwrap();
+        assert_eq!(dirs.compaction_prompts(), CompactionPrompts::default());
+        std::fs::write(global.join("system/compacted.md"), "Recap: {{summary}}").unwrap();
         assert_eq!(dirs.compaction_prompts().wrapper, "Recap: {{summary}}");
         assert_eq!(
             dirs.compaction_prompts().request,
@@ -950,6 +958,12 @@ mod tests {
         assert_eq!(dirs.plan_prompt(), PlanPrompt::default());
         std::fs::write(
             project.join("plan.md"),
+            "---\nrequest: Push.\n---\nAnything goes.",
+        )
+        .unwrap();
+        assert_eq!(dirs.plan_prompt(), PlanPrompt::default());
+        std::fs::write(
+            global.join("system/plan.md"),
             "---\nrequest: Go.\n---\nPlan first.",
         )
         .unwrap();

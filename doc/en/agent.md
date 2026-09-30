@@ -959,8 +959,10 @@ can see exactly what the model gets.
 
 ### Service prompts
 
-TermIDE's own prompts are files too, under `system/`, at any of the three
-levels and seeded on first use like `AGENTS.md`. Compaction, the summary that
+TermIDE's own prompts are files too, under `system/`, seeded on first use like
+`AGENTS.md`. Only the configuration level's `system/` is read: a project's is
+ignored, so a checked-out repository cannot rewrite how termide summarises,
+plans or judges. Compaction, the summary that
 replaces the older part of a long session, uses two: `compact.md` is the
 system prompt of the summarising call, with the closing user turn in its
 front matter (`request:`) and `{{focus}}` where the words given to `/compact`

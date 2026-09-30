@@ -369,7 +369,7 @@ When a task matches one of these, load it with the `skill` tool before starting.
 
 ### 服务提示词
 
-TermIDE 自己的提示词也是文件，位于 `system/` 下，可以在三个层级中的任何一个，并像 `AGENTS.md` 一样在首次使用时写入。压缩（用总结替换长会话中较早部分）使用其中两个：`compact.md` 是总结调用的系统提示词，其前置元数据（`request:`）中是最后的用户轮次，`{{focus}}` 处放入传给 `/compact` 的文字；`compacted.md` 是总结在上下文中变成的消息，`{{summary}}` 代表模型的文本。编辑它们可以改变总结保留的内容或其引入方式。
+TermIDE 自己的提示词也是文件，位于 `system/` 下，并像 `AGENTS.md` 一样在首次使用时写入。只读取配置层级的 `system/`：项目中的同名目录会被忽略，因此检出的仓库无法改写 termide 的总结、计划和评审方式。压缩（用总结替换长会话中较早部分）使用其中两个：`compact.md` 是总结调用的系统提示词，其前置元数据（`request:`）中是最后的用户轮次，`{{focus}}` 处放入传给 `/compact` 的文字；`compacted.md` 是总结在上下文中变成的消息，`{{summary}}` 代表模型的文本。编辑它们可以改变总结保留的内容或其引入方式。
 
 ```
 /compact              立即总结

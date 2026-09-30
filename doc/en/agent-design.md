@@ -610,9 +610,10 @@ OpenCode compiles a `summarize.txt` in, pi lets an extension replace the whole
 step. Decision: the same rule as for the system prompt — `ai/system/compact.md`
 (instructions plus the closing `request:` in front matter, `{{focus}}` for
 `/compact`'s words) and `ai/system/compacted.md` (the wrapper with
-`{{summary}}`), seeded from `assets/system/` on first use and read through the
-three levels; `CompactionPrompts` carries them, and a reopened session words
-its old summaries with the current file. `system/` rather than `prompts/`
+`{{summary}}`), seeded from `assets/system/` on first use and read from the
+configuration level only — a project cannot rewrite termide's own machinery,
+the same rule as for `shims/`; `CompactionPrompts` carries them, and a
+reopened session words its old summaries with the current file. `system/` rather than `prompts/`
 because a slash template is something the user sends and a service prompt is
 not, and rather than `tools/` because compaction is the panel's operation, not
 a tool the model calls; `tools/` stays free for overriding built-in tool
