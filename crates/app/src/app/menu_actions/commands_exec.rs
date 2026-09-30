@@ -298,7 +298,7 @@ fn build_command_command(
 fn get_direnv_json(
     cwd: &std::path::Path,
 ) -> Option<std::collections::HashMap<String, Option<String>>> {
-    use std::sync::Mutex;
+    use std::sync::{Mutex, PoisonError};
 
     // Check if direnv is available
     static DIRENV_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -325,7 +325,7 @@ fn get_direnv_json(
     static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
     const TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
-    let mut cache = CACHE.lock().unwrap();
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
     let cache = cache.get_or_insert_with(std::collections::HashMap::new);
 
     if let Some((env, ts)) = cache.get(cwd) {

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -281,7 +281,7 @@ impl Browser {
         match page.go(url, cancel) {
             // The user closed the watched tab: open the page in a new one.
             Err(_) if !cancel.is_cancelled() && !self.target_exists(&page.target_id, cancel) => {
-                *self.watched.lock().unwrap() = None;
+                *self.watched.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 let page = self.watched_tab(cancel)?;
                 page.go(url, cancel)?;
                 Ok(page)
@@ -338,7 +338,7 @@ impl Browser {
     /// The tab of a visible window that every page opens in and that stays:
     /// the one the browser started with, or a new one once that is gone.
     fn watched_tab(&self, cancel: &CancelToken) -> Result<Page<'_>, String> {
-        let mut watched = self.watched.lock().unwrap();
+        let mut watched = self.watched.lock().unwrap_or_else(PoisonError::into_inner);
         if watched.is_none() {
             let targets =
                 self.cdp

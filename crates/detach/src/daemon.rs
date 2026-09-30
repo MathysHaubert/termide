@@ -14,7 +14,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 
 use crate::paths;
@@ -178,7 +178,7 @@ struct Instance {
 impl Instance {
     /// Send a frame to the attached client, dropping it if the socket is gone.
     fn send(&self, frame: &ServerFrame) {
-        let mut guard = self.client.lock().unwrap();
+        let mut guard = self.client.lock().unwrap_or_else(PoisonError::into_inner);
         let failed = match guard.as_mut() {
             Some(client) => frame.write_to(&mut client.stream).is_err(),
             None => false,
@@ -196,7 +196,7 @@ impl Instance {
         let Some(client) = guard.take() else {
             return;
         };
-        *self.kick.lock().unwrap() = None;
+        *self.kick.lock().unwrap_or_else(PoisonError::into_inner) = None;
         close_client(Some(client.stream));
         let _ = registry::set_attached(&self.id, false);
     }
@@ -208,7 +208,7 @@ impl Instance {
         let mut guard = if takeover {
             self.lock_client_for_takeover()
         } else {
-            self.client.lock().unwrap()
+            self.client.lock().unwrap_or_else(PoisonError::into_inner)
         };
         if guard.is_some() {
             if !takeover {
@@ -224,7 +224,7 @@ impl Instance {
             conn,
             stream: stream.try_clone()?,
         });
-        *self.kick.lock().unwrap() = Some(stream.try_clone()?);
+        *self.kick.lock().unwrap_or_else(PoisonError::into_inner) = Some(stream.try_clone()?);
         Ok(true)
     }
 
@@ -245,10 +245,15 @@ impl Instance {
         // Shutting the socket down wakes the parked write with an error; the
         // pump then releases the client itself and lets go of the lock. The
         // displaced client sees a plain end of stream, with no notice.
-        if let Some(stream) = self.kick.lock().unwrap().as_ref() {
+        if let Some(stream) = self
+            .kick
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
-        self.client.lock().unwrap()
+        self.client.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn resize(&self, cols: u16, rows: u16) {
@@ -258,7 +263,12 @@ impl Instance {
             pixel_width: 0,
             pixel_height: 0,
         };
-        if let Err(e) = self.master.lock().unwrap().resize(size) {
+        if let Err(e) = self
+            .master
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .resize(size)
+        {
             log::warn!("Failed to resize the instance PTY: {e}");
         }
     }
@@ -270,7 +280,11 @@ impl Instance {
     /// started, and its screen is blank. SIGUSR1 is the wake-up; the app side
     /// turns it into a full re-initialisation.
     fn signal_reattach(&self) {
-        let Some(pid) = *self.hosted_pid.lock().unwrap() else {
+        let Some(pid) = *self
+            .hosted_pid
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        else {
             return;
         };
         use nix::sys::signal::{kill, Signal};
@@ -281,7 +295,7 @@ impl Instance {
 
     /// Drop the attached client — only if it is `conn`, when one is given.
     fn detach_client(&self, conn: Option<u64>) {
-        let mut guard = self.client.lock().unwrap();
+        let mut guard = self.client.lock().unwrap_or_else(PoisonError::into_inner);
         self.release(&mut guard, conn);
     }
 
@@ -292,7 +306,11 @@ impl Instance {
     /// hosted process go, which also sends `Exited` to an attached client and
     /// removes the instance from the registry — the same path as a quit.
     fn kill_hosted(&self) {
-        let Some(pid) = *self.hosted_pid.lock().unwrap() else {
+        let Some(pid) = *self
+            .hosted_pid
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        else {
             return;
         };
         use nix::sys::signal::{kill, Signal};
@@ -490,7 +508,10 @@ fn client_loop(instance: &Arc<Instance>, reader: &mut UnixStream) -> Result<()> 
     while let Some(frame) = ClientFrame::read_from(reader)? {
         match frame {
             ClientFrame::Input(bytes) => {
-                let mut writer = instance.pty_writer.lock().unwrap();
+                let mut writer = instance
+                    .pty_writer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
                 if writer.write_all(&bytes).is_err() || writer.flush().is_err() {
                     break;
                 }
@@ -573,7 +594,12 @@ mod tests {
     }
 
     fn attached_conn(instance: &Instance) -> Option<u64> {
-        instance.client.lock().unwrap().as_ref().map(|c| c.conn)
+        instance
+            .client
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|c| c.conn)
     }
 
     #[test]
@@ -666,5 +692,32 @@ mod tests {
         // end the loop.
         instance.detach_client(None);
         pump.join().unwrap();
+    }
+
+    /// A panic on one connection thread poisons the locks it held. The daemon
+    /// outlives that thread and serves every other instance from it, so
+    /// locking must hand back the guarded value instead of panic-chaining the
+    /// whole daemon down.
+    #[test]
+    fn a_poisoned_client_lock_still_serves_the_instance() {
+        let instance = test_instance();
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        assert!(instance.claim(7, &stream, false).unwrap());
+
+        let poison = Arc::clone(&instance);
+        let handle = std::thread::spawn(move || {
+            // Hold the lock while panicking, the way a real panic would.
+            let _guard = poison.client.lock().unwrap_or_else(PoisonError::into_inner);
+            panic!("poison the client slot");
+        });
+        assert!(handle.join().is_err(), "the poisoner must panic");
+        assert!(instance.client.is_poisoned());
+
+        // Reading, detaching and resizing all go through poisoned locks now.
+        assert_eq!(attached_conn(&instance), Some(7));
+        instance.resize(120, 40);
+        instance.signal_reattach();
+        instance.detach_client(None);
+        assert_eq!(attached_conn(&instance), None);
     }
 }

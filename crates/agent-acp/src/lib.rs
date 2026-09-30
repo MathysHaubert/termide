@@ -745,7 +745,7 @@ impl Shared {
             model: self
                 .current_model
                 .lock()
-                .unwrap()
+                .unwrap_or_else(PoisonError::into_inner)
                 .clone()
                 .unwrap_or_else(|| self.name.clone()),
             error_message: error,

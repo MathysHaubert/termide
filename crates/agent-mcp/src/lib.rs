@@ -123,7 +123,7 @@ impl Connections {
             );
         self.subscribers
             .lock()
-            .unwrap()
+            .unwrap_or_else(PoisonError::into_inner)
             .retain(|tx| tx.send(event.clone()).is_ok());
     }
 }

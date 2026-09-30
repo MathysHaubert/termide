@@ -3,7 +3,7 @@
 //! filesystem policy.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use anyhow::Result;
 use termide_agent_acp::AcpRuntime;
@@ -302,7 +302,7 @@ static SHARED: std::sync::Mutex<Option<(WebConfig, Arc<Web>)>> = std::sync::Mute
 fn current_web() -> Option<Arc<Web>> {
     SHARED
         .lock()
-        .unwrap()
+        .unwrap_or_else(PoisonError::into_inner)
         .as_ref()
         .map(|(_, web)| Arc::clone(web))
 }
@@ -329,7 +329,7 @@ pub(crate) fn toggle_web_browser() -> Option<bool> {
 /// panel still holding the old one keeps it until it closes.
 fn shared_web(settings: &WebSettings, dirs: &AgentDirs) -> Arc<Web> {
     let config = web_config(settings, dirs);
-    let mut shared = SHARED.lock().unwrap();
+    let mut shared = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
     match shared.as_ref() {
         Some((current, web)) if *current == config => Arc::clone(web),
         _ => {

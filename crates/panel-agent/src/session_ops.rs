@@ -2,7 +2,7 @@
 //! one, its summary, undo and rollback, and the `/handoff` brief.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use termide_agent_core::{civil_date, EntryKind, PromptError, Session, SessionSummary};
 use termide_core::{ConfirmAction, PanelEvent, SelectAction};
@@ -369,7 +369,12 @@ impl AgentPanel {
         let files = self
             .checkpoints
             .as_ref()
-            .map(|store| store.lock().unwrap().last_files())
+            .map(|store| {
+                store
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .last_files()
+            })
             .unwrap_or_default();
         if files.is_empty() {
             self.notice(
@@ -596,7 +601,10 @@ impl AgentPanel {
             );
             return vec![PanelEvent::NeedsRedraw];
         };
-        let checkpoints = store.lock().unwrap().checkpoints();
+        let checkpoints = store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .checkpoints();
         if checkpoints.is_empty() {
             self.notice(
                 termide_i18n::t().agent_notice_nothing_to_rollback(),
@@ -648,7 +656,7 @@ impl AgentPanel {
         let mut restored = 0usize;
         let mut leaf = None;
         {
-            let mut store = store.lock().unwrap();
+            let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
             for _ in 0..=steps_from_newest {
                 match store.undo_last() {
                     Ok(undone) => {
@@ -684,7 +692,10 @@ impl AgentPanel {
         let Some(store) = self.checkpoints.clone() else {
             return vec![];
         };
-        let undone = store.lock().unwrap().undo_last();
+        let undone = store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .undo_last();
         let undone = match undone {
             Ok(undone) => undone,
             Err(error) => {

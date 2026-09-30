@@ -308,7 +308,7 @@ fn call_tool(shared: &Shared, id: &Value, params: &Value) -> Value {
     shared
         .running
         .lock()
-        .unwrap()
+        .unwrap_or_else(PoisonError::into_inner)
         .insert(key.clone(), cancel.clone());
     let result = {
         let mut hooks = shared.hooks.lock().unwrap_or_else(PoisonError::into_inner);

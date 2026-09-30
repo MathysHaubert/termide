@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -72,15 +72,21 @@ impl Cdp {
             message["sessionId"] = json!(session);
         }
         let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, tx);
         let mut bytes = message.to_string().into_bytes();
         bytes.push(0);
         let written = {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
             writer.write_all(&bytes).and_then(|()| writer.flush())
         };
         if let Err(error) = written {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&id);
             return Err(format!("cannot write to the browser: {error}"));
         }
 
@@ -88,14 +94,20 @@ impl Cdp {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id);
                 return Err(format!("{method} timed out"));
             }
             match rx.recv_timeout(left.min(CANCEL_POLL)) {
                 Ok(result) => return result,
                 Err(RecvTimeoutError::Timeout) => {
                     if cancel.is_some_and(CancelToken::is_cancelled) {
-                        self.pending.lock().unwrap().remove(&id);
+                        self.pending
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .remove(&id);
                         return Err("cancelled".into());
                     }
                 }
@@ -126,7 +138,11 @@ fn read_loop(replies: File, pending: Pending, closed: Arc<AtomicBool>) {
         let Some(id) = message.get("id").and_then(Value::as_u64) else {
             continue;
         };
-        let Some(tx) = pending.lock().unwrap().remove(&id) else {
+        let Some(tx) = pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id)
+        else {
             continue;
         };
         let result = match message.get("error") {
@@ -140,7 +156,10 @@ fn read_loop(replies: File, pending: Pending, closed: Arc<AtomicBool>) {
     }
     closed.store(true, Ordering::Relaxed);
     // Wake every waiter: dropping the senders disconnects their receivers.
-    pending.lock().unwrap().clear();
+    pending
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
 }
 
 #[cfg(test)]
@@ -227,5 +246,32 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, "cancelled");
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// A panic while the reply reader holds the pending map poisons it. The
+    /// channel outlives that panic and still has to answer the agents that use
+    /// it, so locking hands back the guarded map instead of panic-chaining.
+    #[cfg(unix)]
+    #[test]
+    fn a_poisoned_pending_map_still_answers() {
+        let cdp = fake_browser();
+        let pending = Arc::clone(&cdp.pending);
+        let handle = std::thread::spawn(move || {
+            let _guard = pending.lock().unwrap_or_else(PoisonError::into_inner);
+            panic!("poison the pending map");
+        });
+        assert!(handle.join().is_err(), "the poisoner must panic");
+        assert!(cdp.pending.is_poisoned());
+
+        let result = cdp
+            .call(
+                "Browser.getVersion",
+                json!({}),
+                None,
+                Duration::from_secs(1),
+                None,
+            )
+            .expect("a poisoned pending map must not break the channel");
+        assert_eq!(result["method"], "Browser.getVersion");
     }
 }

@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use termide_agent_core::CancelToken;
@@ -178,7 +178,7 @@ impl Web {
                 }
                 return;
             }
-            let mut slot = web.slot.lock().unwrap();
+            let mut slot = web.slot.lock().unwrap_or_else(PoisonError::into_inner);
             let shown = slot
                 .browser
                 .as_ref()
@@ -273,7 +273,7 @@ impl Web {
         work: impl FnOnce(&Browser, Display) -> Result<T, String>,
     ) -> Result<T, String> {
         let chrome = self.chrome.as_ref().ok_or("no browser")?;
-        let mut slot = self.slot.lock().unwrap();
+        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
         if cancel.is_cancelled() {
             return Err("cancelled".into());
         }
@@ -303,7 +303,7 @@ impl Web {
     /// that browser closes; what the user solves there stays in the profile
     /// for the headless browser after it.
     fn switch_to_window(&self) {
-        let mut slot = self.slot.lock().unwrap();
+        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
         slot.display = Display::Minimized;
         if let Some(browser) = slot.browser.take() {
             browser.close();
@@ -311,7 +311,7 @@ impl Web {
     }
 
     fn cached(&self, url: &str) -> Option<FetchedPage> {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
         cache.retain(|entry| entry.at.elapsed() < CACHE_TTL);
         cache
             .iter()
@@ -320,7 +320,7 @@ impl Web {
     }
 
     pub(crate) fn remember(&self, url: &str, page: &FetchedPage) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
         cache.retain(|entry| entry.requested != url);
         cache.push_back(CachedPage {
             requested: url.to_string(),

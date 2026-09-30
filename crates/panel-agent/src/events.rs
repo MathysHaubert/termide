@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::PoisonError;
 use std::time::{Duration, Instant};
 
 use termide_agent_core::{
@@ -100,7 +101,10 @@ impl AgentPanel {
                 self.stop_requested = false;
                 self.set_queued(self.runtime.queue_lens());
                 if let Some(store) = &self.checkpoints {
-                    store.lock().unwrap().end_run();
+                    store
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .end_run();
                 }
                 if self.prompt_stale {
                     self.sync_system_prompt();

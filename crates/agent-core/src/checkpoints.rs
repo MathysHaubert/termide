@@ -9,7 +9,7 @@
 //! it works in any directory and for files git ignores.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -243,7 +243,12 @@ impl Hooks for CheckpointHooks {
                 } else {
                     ctx.cwd.join(path)
                 };
-                if let Err(error) = self.store.lock().unwrap().save(&absolute) {
+                if let Err(error) = self
+                    .store
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .save(&absolute)
+                {
                     log::warn!("cannot checkpoint {}: {error}", absolute.display());
                 }
             }

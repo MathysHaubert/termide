@@ -3,6 +3,7 @@
 //! command scripts.
 
 use std::sync::mpsc::{self, Receiver};
+use std::sync::PoisonError;
 use std::time::Duration;
 
 use termide_agent_core::{CommandScript, Decision, PromptError, Session, SkillInfo, UserMessage};
@@ -369,7 +370,10 @@ impl AgentPanel {
                     .as_ref()
                     .and_then(Session::leaf_id)
                     .map(str::to_string);
-                store.lock().unwrap().begin_run(leaf);
+                store
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .begin_run(leaf);
             }
             match self.runtime.prompt(message) {
                 Ok(()) => self.busy = true,
