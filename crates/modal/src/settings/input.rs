@@ -5,7 +5,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use termide_config::{Config, KeyBinding, LspServerSettings};
 
-use crate::base::screen_x_to_char_pos;
+use crate::base::field_char_at;
 use crate::ModalResult;
 
 use super::fields::{
@@ -534,7 +534,7 @@ impl SettingsModal {
                     self.field_drag = false;
                     return true;
                 }
-                let pos = screen_x_to_char_pos(input.text(), (mouse.column - area.x) as usize);
+                let pos = field_char_at(input, area, mouse.column);
                 input.set_cursor_with_selection_start(pos);
                 self.field_drag = true;
                 true
@@ -546,9 +546,8 @@ impl SettingsModal {
                     self.edit_area
                 };
                 if let Some(area) = area {
-                    let x = mouse.column.saturating_sub(area.x) as usize;
                     let input = self.mouse_input();
-                    let pos = screen_x_to_char_pos(input.text(), x);
+                    let pos = field_char_at(input, area, mouse.column);
                     input.extend_selection_to(pos);
                 }
                 true

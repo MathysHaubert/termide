@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::base::{button_style, render_input_field, render_modal_block, screen_x_to_char_pos};
+use crate::base::{button_style, field_char_at, render_input_field_scrolled, render_modal_block};
 use crate::input_keys::{handle_input_key, InputKeyResult};
 
 use termide_config::constants::MODAL_BUTTON_SPACING;
@@ -590,6 +590,7 @@ impl Modal for InputModal {
         self.last_input_area = Some(input_inner);
 
         // Render input content with cursor and selection
+        let scroll = self.input_handler.follow_scroll(input_inner.width);
         // In password mode, display asterisks instead of actual characters
         let display_text;
         let text = if self.is_password {
@@ -599,7 +600,7 @@ impl Modal for InputModal {
             self.input_handler.text()
         };
 
-        render_input_field(
+        render_input_field_scrolled(
             buf,
             input_inner.x,
             input_inner.y,
@@ -609,6 +610,7 @@ impl Modal for InputModal {
             self.input_handler.selection_range(),
             self.focus == FocusArea::Input,
             theme,
+            scroll,
         );
         chunk_idx += 1;
 
@@ -724,8 +726,7 @@ impl Modal for InputModal {
                         && mouse.row == input_area.y
                     {
                         self.focus = FocusArea::Input;
-                        let click_x = (mouse.column - input_area.x) as usize;
-                        let char_pos = screen_x_to_char_pos(self.input_handler.text(), click_x);
+                        let char_pos = field_char_at(&self.input_handler, input_area, mouse.column);
                         self.input_handler.set_cursor_with_selection_start(char_pos);
                         return Ok(None);
                     }
@@ -791,15 +792,11 @@ impl Modal for InputModal {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                // Extend selection during drag on input field
+                // Extend selection during drag on input field, scrolling it
+                // along past either edge.
                 if let Some(input_area) = self.last_input_area {
                     if mouse.row == input_area.y {
-                        let drag_x = if mouse.column < input_area.x {
-                            0
-                        } else {
-                            (mouse.column - input_area.x) as usize
-                        };
-                        let char_pos = screen_x_to_char_pos(self.input_handler.text(), drag_x);
+                        let char_pos = field_char_at(&self.input_handler, input_area, mouse.column);
                         self.input_handler.extend_selection_to(char_pos);
                     }
                 }
@@ -820,6 +817,32 @@ impl Modal for InputModal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_click_in_a_scrolled_field_lands_where_it_points() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let text = "d".repeat(150);
+        let mut modal = InputModal::with_default("Title", "Prompt", &text);
+        let screen = Rect::new(0, 0, 80, 24);
+        modal.render(screen, &mut Buffer::empty(screen), &Theme::default());
+        let area = modal.last_input_area.unwrap();
+        let scroll = modal.input_handler.scroll();
+        assert!(scroll > 0);
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 4,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        modal.handle_mouse(press, screen).unwrap();
+        assert_eq!(modal.input_handler.cursor_pos(), scroll + 4);
+        modal.render(screen, &mut Buffer::empty(screen), &Theme::default());
+        assert_eq!(
+            modal.input_handler.scroll(),
+            scroll,
+            "the field does not jump"
+        );
+    }
 
     #[test]
     fn conditional_checkbox_is_hidden_until_primary_is_checked() {

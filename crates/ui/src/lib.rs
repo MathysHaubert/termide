@@ -231,6 +231,9 @@ pub struct TextInput {
     selection_anchor: Option<usize>,  // None = no selection, Some = anchor position
     undo_stack: Vec<(String, usize)>, // (text, cursor_pos) history for undo
     redo_stack: Vec<(String, usize)>, // (text, cursor_pos) history for redo
+    /// Characters scrolled out of a single-line field's left edge, kept
+    /// between frames (see [`follow_scroll`](Self::follow_scroll)).
+    scroll: usize,
 }
 
 impl TextInput {
@@ -242,6 +245,7 @@ impl TextInput {
             selection_anchor: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            scroll: 0,
         }
     }
 
@@ -255,6 +259,7 @@ impl TextInput {
             selection_anchor: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            scroll: 0,
         }
     }
 
@@ -271,6 +276,39 @@ impl TextInput {
     /// Get the cursor position (in characters)
     pub fn cursor_pos(&self) -> usize {
         self.cursor_pos
+    }
+
+    /// Bring the scroll of a single-line field `width` cells wide in step with
+    /// the cursor and return it: kept while the cursor stays in view, so a
+    /// click that places the cursor does not make the field jump. Call once
+    /// per frame, before drawing the field.
+    pub fn follow_scroll(&mut self, width: u16) -> usize {
+        self.scroll = text_utils::follow_input_scroll(
+            &self.input,
+            self.cursor_pos,
+            usize::from(width),
+            self.scroll,
+        );
+        self.scroll
+    }
+
+    /// Characters scrolled out of the field's left edge at the last
+    /// [`follow_scroll`](Self::follow_scroll).
+    pub fn scroll(&self) -> usize {
+        self.scroll
+    }
+
+    /// The character under display column `x` of the field as last drawn;
+    /// `None` left of it stands for the character just scrolled out, so a drag
+    /// past the edge keeps scrolling.
+    pub fn char_at_column(&self, x: Option<usize>) -> usize {
+        match x {
+            Some(x) => {
+                let visible: String = self.input.chars().skip(self.scroll).collect();
+                self.scroll + text_utils::char_at_x(&visible, x)
+            }
+            None => self.scroll.saturating_sub(1),
+        }
     }
 
     /// Set the input text and move cursor to end

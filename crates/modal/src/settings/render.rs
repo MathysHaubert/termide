@@ -335,18 +335,15 @@ impl SettingsModal {
                     // its cursor and selection.
                     if self.editing && is_focused {
                         let width = max_value_width.saturating_sub(1) as u16;
-                        crate::base::render_input_field(
+                        let field = Rect::new(value_x as u16, y, width, 1);
+                        crate::base::render_text_input(
                             buf,
-                            value_x as u16,
-                            y,
-                            width,
-                            self.edit_input.text(),
-                            self.edit_input.cursor_pos(),
-                            self.edit_input.selection_range(),
+                            field,
+                            &mut self.edit_input,
                             true,
                             theme,
                         );
-                        self.edit_area = Some(Rect::new(value_x as u16, y, width, 1));
+                        self.edit_area = Some(field);
                         continue;
                     }
                     let value = self.format_field_value(desc, field_idx);
@@ -565,20 +562,15 @@ impl SettingsModal {
             };
             buf.set_string(x as u16, y, label, label_style);
 
-            let field = &self.lsp_edit_fields[i];
-            crate::base::render_input_field(
+            let area = Rect::new(val_x as u16, y, max_val as u16, 1);
+            crate::base::render_text_input(
                 buf,
-                val_x as u16,
-                y,
-                max_val as u16,
-                field.text(),
-                field.cursor_pos(),
-                field.selection_range(),
+                area,
+                &mut self.lsp_edit_fields[i],
                 is_focused,
                 theme,
             );
-            self.lsp_field_areas
-                .push(Rect::new(val_x as u16, y, max_val as u16, 1));
+            self.lsp_field_areas.push(area);
         }
 
         // Hint line

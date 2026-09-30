@@ -492,19 +492,19 @@ impl InputBar {
                 self.drag_field = Some(i);
             }
             self.pressed = true;
-            // Match the rendered prefix: "› " for an empty (prompt) label.
-            let prefix = if self.labels[i].is_empty() {
-                "› "
-            } else {
-                &self.labels[i]
-            };
-            let label_w = str_display_width(prefix) as u16;
+            let label_w = str_display_width(field_prefix(&self.labels[i])) as u16;
             let start_x = area.x + label_w;
             let text_x = usize::from(col.saturating_sub(start_x));
             match &mut self.fields[i] {
                 FieldInput::Line(input) => {
-                    // A press on the label lands at the start of the text.
-                    let pos = screen_x_to_char_pos(input.text(), text_x);
+                    // A press on the label lands at the first character shown;
+                    // a drag onto it keeps scrolling the text back.
+                    let x = if col < start_x && !pressed {
+                        None
+                    } else {
+                        Some(text_x)
+                    };
+                    let pos = input.char_at_column(x);
                     if pressed {
                         self.focus = i;
                         input.set_cursor_with_selection_start(pos);
@@ -678,6 +678,10 @@ impl InputBar {
                         height: 1,
                         ..field_area
                     };
+                    let text_width = row
+                        .width
+                        .saturating_sub(str_display_width(field_prefix(&label)) as u16);
+                    let scroll = input.follow_scroll(text_width);
                     render_labeled_input(
                         buf,
                         row,
@@ -687,6 +691,7 @@ impl InputBar {
                             cursor: input.cursor_pos(),
                             selection: input.selection_range(),
                             focused,
+                            scroll,
                         },
                         colors,
                     );
@@ -861,10 +866,22 @@ struct LabeledInput<'a> {
     cursor: usize,
     selection: Option<(usize, usize)>,
     focused: bool,
+    /// Characters scrolled out of the left edge (see [`TextInput::follow_scroll`]).
+    scroll: usize,
 }
 
-/// Render `label` then `text` as a single-line input, scrolled to keep the
-/// cursor visible, with a selection highlight and (when focused) the cursor.
+/// What a single-line field draws before its text: the label, or the bar's
+/// prompt marker when it has none.
+fn field_prefix(label: &str) -> &str {
+    if label.is_empty() {
+        "› "
+    } else {
+        label
+    }
+}
+
+/// Render `label` then `text` as a single-line input, scrolled by the field's
+/// scroll, with a selection highlight and (when focused) the cursor.
 fn render_labeled_input(buf: &mut Buffer, area: Rect, field: &LabeledInput, colors: &ThemeColors) {
     let LabeledInput {
         label,
@@ -872,10 +889,11 @@ fn render_labeled_input(buf: &mut Buffer, area: Rect, field: &LabeledInput, colo
         cursor,
         selection,
         focused,
+        scroll,
     } = *field;
     // An empty label renders the bar's prompt marker instead, so a
     // single-field bar reads like the agent input (its name is in the border).
-    let prompt = if label.is_empty() { "› " } else { label };
+    let prompt = field_prefix(label);
     let label_w = str_display_width(prompt) as u16;
     buf.set_string(area.x, area.y, prompt, Style::default().fg(colors.fg));
     let x0 = area.x + label_w;
@@ -886,25 +904,7 @@ fn render_labeled_input(buf: &mut Buffer, area: Rect, field: &LabeledInput, colo
 
     let chars: Vec<char> = text.chars().collect();
     let widths: Vec<usize> = chars.iter().map(|c| char_width(*c)).collect();
-    // Scroll so the cursor's column stays within `width`.
-    let cursor_col: usize = widths.iter().take(cursor).sum();
-    let mut start = 0usize;
-    let mut lead: usize = 0;
-    if cursor_col >= width as usize {
-        // Drop leading chars until the cursor fits.
-        let mut used = 0usize;
-        start = chars.len();
-        for i in (0..chars.len()).rev() {
-            let w = widths[i];
-            if used + w > width as usize - 1 {
-                break;
-            }
-            used += w;
-            start = i;
-        }
-        lead = widths[..start].iter().sum();
-    }
-    let _ = lead;
+    let start = scroll.min(chars.len());
 
     let base = if focused {
         Style::default().fg(colors.fg).bg(colors.bg)
@@ -1092,20 +1092,6 @@ pub fn wrapped_row_count(text: &str, width: usize) -> usize {
 
 fn char_width(c: char) -> usize {
     str_display_width(&c.to_string()).max(1)
-}
-
-/// The char position in `text` under a screen x-offset inside the input,
-/// accounting for wide characters; past the end returns the length.
-fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
-    let mut width = 0;
-    for (i, c) in text.chars().enumerate() {
-        let cw = char_width(c);
-        if width + cw > screen_x {
-            return i;
-        }
-        width += cw;
-    }
-    text.chars().count()
 }
 
 fn hit(area: Rect, col: u16, row: u16) -> bool {
@@ -1315,6 +1301,43 @@ mod tests {
         let cursor = b.multiline(0).unwrap().cursor();
         assert_eq!(cursor.row, 1);
         assert_eq!(cursor.col, 2);
+    }
+
+    #[test]
+    fn a_click_in_a_scrolled_field_lands_where_it_points_and_the_field_stays() {
+        let mut b = InputBar::new(vec!["Find: ".into()]);
+        b.set_field_text(0, "a".repeat(50) + &"b".repeat(50));
+        let area = Rect::new(0, 0, 40, b.height());
+        let draw = |b: &mut InputBar| {
+            let mut buf = Buffer::filled(area, ratatui::buffer::Cell::default());
+            b.render(area, &mut buf, &ThemeColors::default(), true);
+        };
+        let line = |b: &InputBar| match &b.fields[0] {
+            FieldInput::Line(input) => input.clone(),
+            FieldInput::Multi(_) => unreachable!(),
+        };
+        draw(&mut b);
+        let scroll = line(&b).scroll();
+        assert!(
+            scroll > 0,
+            "the long text scrolls to show the cursor at its end"
+        );
+        let at = |kind, column| MouseEvent {
+            kind,
+            column,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        // Three columns into the text, after the "Find: " label.
+        b.handle_mouse(at(MouseEventKind::Down(MouseButton::Left), 6 + 3));
+        assert_eq!(line(&b).cursor_pos(), scroll + 3);
+        draw(&mut b);
+        assert_eq!(line(&b).scroll(), scroll, "the field does not jump");
+        // A drag onto the label scrolls the text back one character.
+        b.handle_mouse(at(MouseEventKind::Drag(MouseButton::Left), 2));
+        draw(&mut b);
+        assert_eq!(line(&b).selection_range(), Some((scroll - 1, scroll + 3)));
+        assert_eq!(line(&b).scroll(), scroll - 1);
     }
 
     #[test]

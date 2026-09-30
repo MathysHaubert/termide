@@ -549,3 +549,91 @@ fn control_characters_never_reach_the_frame() {
         );
     }
 }
+
+#[test]
+fn a_click_in_the_find_bar_places_its_cursor_and_a_drag_selects() {
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::{buffer::Buffer, layout::Rect};
+    use termide_core::RenderContext;
+
+    let (mut editor, _file) = create_editor_with_content("hello\n");
+    editor.open_find_bar(false);
+    let typed = |editor: &mut Editor, c| {
+        editor.handle_find_bar_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    };
+    for c in "needle".chars() {
+        typed(&mut editor, c);
+    }
+    let colors = termide_core::ThemeColors::default();
+    let ctx = RenderContext {
+        theme: &colors,
+        config: &termide_core::PanelConfig {
+            tab_size: 4,
+            word_wrap: false,
+            show_line_numbers: false,
+            show_hidden_files: false,
+        },
+        is_focused: true,
+        panel_index: 0,
+        terminal_width: 60,
+        terminal_height: 12,
+        border_right_x: Some(59),
+        border_bottom_y: Some(11),
+    };
+    let area = Rect::new(0, 0, 60, 12);
+    let mut buf = Buffer::empty(area);
+    Panel::render(&mut editor, area, &mut buf, &ctx);
+    let (row, start) = (0..area.height)
+        .find_map(|y| {
+            // Cells, not bytes: the row holds multi-byte glyphs such as `›`.
+            let cells: Vec<String> = (0..area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            (0..cells.len().saturating_sub(6))
+                .find(|&x| cells[x..x + 6].concat() == "needle")
+                .map(|x| (y, x as u16))
+        })
+        .expect("the find field is drawn");
+    let at = |kind, column| MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    let panel_area = Rect::new(0, 0, 62, 14);
+
+    // A click after the "n" places the cursor there.
+    Panel::handle_mouse(
+        &mut editor,
+        at(MouseEventKind::Down(MouseButton::Left), start + 1),
+        panel_area,
+    );
+    Panel::handle_mouse(
+        &mut editor,
+        at(MouseEventKind::Up(MouseButton::Left), start + 1),
+        panel_area,
+    );
+    typed(&mut editor, 'X');
+    assert_eq!(editor.find_bar.as_ref().unwrap().find_text(), "nXeedle");
+
+    // A drag over "Xee" selects it, and typing replaces the selection.
+    Panel::handle_mouse(
+        &mut editor,
+        at(MouseEventKind::Down(MouseButton::Left), start + 1),
+        panel_area,
+    );
+    Panel::handle_mouse(
+        &mut editor,
+        at(MouseEventKind::Drag(MouseButton::Left), start + 4),
+        panel_area,
+    );
+    Panel::handle_mouse(
+        &mut editor,
+        at(MouseEventKind::Up(MouseButton::Left), start + 4),
+        panel_area,
+    );
+    typed(&mut editor, 'Y');
+    assert_eq!(editor.find_bar.as_ref().unwrap().find_text(), "nYdle");
+}

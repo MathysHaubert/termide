@@ -21,13 +21,11 @@ impl FileManager {
         // A click on the inline content bar is owned by the bar. Areas were
         // recorded in absolute screen coordinates during render, so the click
         // coordinates compare directly.
-        if self.search_bar.is_some()
-            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-        {
+        if self.search_bar.is_some() {
             let on_bar = self
                 .search_bar
                 .as_ref()
-                .is_some_and(|b| b.click_hits_bar(mouse.column, mouse.row));
+                .is_some_and(|b| b.mouse_hits(mouse));
             if on_bar {
                 let mut bar = self.search_bar.take().unwrap();
                 let action = bar.handle_mouse(mouse);

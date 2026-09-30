@@ -1,5 +1,6 @@
 //! Pure text helpers for the document preview panels: character slicing,
-//! display-column geometry, substring search, and URL inspection.
+//! display-column geometry, substring search, and URL inspection; and the
+//! horizontal scroll of single-line input fields.
 //!
 //! The HTML and Markdown previews were carrying byte-identical copies of
 //! these. They hold no state, so they live here beside the other shared
@@ -76,8 +77,84 @@ pub fn find_in_line(line: &str, needle: &str, ci: bool) -> Vec<usize> {
     out
 }
 
+/// Display width of `c` in an input field: a character with no width of its
+/// own still takes a cell.
+fn field_char_width(c: char) -> usize {
+    UnicodeWidthChar::width(c).unwrap_or(1)
+}
+
+/// The character of `text` under display column `x`, counting wide
+/// characters as two; past the end it is the text length.
+pub fn char_at_x(text: &str, x: usize) -> usize {
+    let mut width = 0;
+    for (i, c) in text.chars().enumerate() {
+        let cw = field_char_width(c);
+        if width + cw > x {
+            return i;
+        }
+        width += cw;
+    }
+    text.chars().count()
+}
+
+/// How many characters of `text` a field `width` cells wide scrolls past to
+/// keep the cursor at `cursor_pos` in view: none while it fits, else just
+/// enough to put it at the right edge.
+pub fn input_scroll_offset(text: &str, cursor_pos: usize, width: usize) -> usize {
+    let widths: Vec<usize> = text.chars().map(field_char_width).collect();
+    if widths.iter().sum::<usize>() < width {
+        return 0;
+    }
+    let cursor_x: usize = widths.iter().take(cursor_pos).sum();
+    if cursor_x < width {
+        return 0;
+    }
+    let mut skipped = 0;
+    for (index, cw) in widths.iter().enumerate() {
+        if cursor_x - skipped < width {
+            return index;
+        }
+        skipped += cw;
+    }
+    0
+}
+
+/// The scroll of a field `width` cells wide after its cursor moved to
+/// `cursor_pos`, from the `scroll` it had: kept while the cursor stays in view,
+/// else moved just enough to bring it back, and never past what shows the end
+/// of the text. A field that keeps its scroll this way does not jump when a
+/// click places the cursor.
+pub fn follow_input_scroll(text: &str, cursor_pos: usize, width: usize, scroll: usize) -> usize {
+    let to_cursor = input_scroll_offset(text, cursor_pos, width);
+    let to_end = input_scroll_offset(text, text.chars().count(), width);
+    let scroll = if cursor_pos < scroll {
+        cursor_pos
+    } else {
+        scroll.max(to_cursor)
+    };
+    scroll.min(to_end)
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_field_scroll_holds_while_the_cursor_stays_in_view() {
+        let text = "x".repeat(30);
+        // The cursor at the end of 30 characters in a 10-cell field: 21
+        // scrolled out, the cursor cell last.
+        assert_eq!(input_scroll_offset(&text, 30, 10), 21);
+        assert_eq!(follow_input_scroll(&text, 30, 10, 0), 21);
+        // Moved within view, the scroll stays.
+        assert_eq!(follow_input_scroll(&text, 25, 10, 21), 21);
+        // Left of view, the cursor becomes the first character shown.
+        assert_eq!(follow_input_scroll(&text, 5, 10, 21), 5);
+        // Never past what shows the end of the text.
+        assert_eq!(follow_input_scroll(&text[..15], 15, 10, 21), 6);
+        // Wide characters count two cells.
+        assert_eq!(char_at_x("ab世c", 3), 2);
+        assert_eq!(char_at_x("ab世c", 4), 3);
+    }
     use super::*;
 
     #[test]

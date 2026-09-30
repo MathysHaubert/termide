@@ -429,7 +429,32 @@ impl Editor {
         let action = bar.handle_key(key);
         let field = bar.focused_field();
         self.find_bar = Some(bar);
+        self.apply_find_bar_action(action, field)
+    }
 
+    /// Route a mouse event the open bar owns (see [`FindBar::mouse_hits`]) to
+    /// it: a click in a field places its cursor and a drag selects, a click on
+    /// a control acts. The bar takes the keyboard focus back.
+    pub(crate) fn handle_find_bar_mouse(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+    ) -> Vec<PanelEvent> {
+        let Some(mut bar) = self.find_bar.take() else {
+            return vec![];
+        };
+        let action = bar.handle_mouse(mouse);
+        let field = bar.focused_field();
+        self.find_bar = Some(bar);
+        self.find_bar_focus_buffer = false;
+        self.apply_find_bar_action(action, field)
+    }
+
+    /// Carry out what the bar asked for, `field` being the one it has focused.
+    fn apply_find_bar_action(
+        &mut self,
+        action: Option<FindBarAction>,
+        field: Option<FindField>,
+    ) -> Vec<PanelEvent> {
         match action {
             Some(FindBarAction::QueryChanged) => {
                 // Editing Replace only updates the replacement; editing Find or

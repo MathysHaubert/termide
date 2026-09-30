@@ -391,6 +391,13 @@ impl Panel for Editor {
             }
             return vec![PanelEvent::NeedsRedraw];
         }
+        if self
+            .find_bar
+            .as_ref()
+            .is_some_and(|bar| bar.mouse_hits(mouse))
+        {
+            return self.handle_find_bar_mouse(mouse);
+        }
         self.handle_mouse_event(mouse, panel_area)
     }
 

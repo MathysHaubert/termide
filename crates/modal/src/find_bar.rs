@@ -217,6 +217,13 @@ impl FindBar {
         self.inner.click_hits(col, row)
     }
 
+    /// Whether [`FindBar::handle_mouse`] would act on `mouse`: a press on the
+    /// bar, a drag it owns (also past its edges, extending a selection in its
+    /// field) or the release that ends one.
+    pub fn mouse_hits(&self, mouse: MouseEvent) -> bool {
+        self.inner.mouse_hits(mouse)
+    }
+
     /// Whether the bar exposes `field`.
     pub fn has_field(&self, field: FindField) -> bool {
         self.fields.contains(&field)

@@ -84,7 +84,7 @@ pub fn render_input_field(
     is_focused: bool,
     theme: &Theme,
 ) {
-    let scroll = input_scroll_offset(text, cursor_pos, width as usize);
+    let scroll = termide_ui::text_utils::input_scroll_offset(text, cursor_pos, width as usize);
     render_input_field_scrolled(
         buf,
         x,
@@ -101,7 +101,7 @@ pub fn render_input_field(
 
 /// [`render_input_field`] with the first `scroll` characters of `text` scrolled
 /// out of view, for a field that keeps its scroll between frames (see
-/// [`follow_input_scroll`]).
+/// [`TextInput::follow_scroll`](termide_ui::TextInput::follow_scroll)).
 #[allow(clippy::too_many_arguments)]
 pub fn render_input_field_scrolled(
     buf: &mut Buffer,
@@ -181,54 +181,37 @@ pub fn render_input_field_scrolled(
     }
 }
 
-/// How many characters of `text` [`render_input_field`] scrolls past so the
-/// cursor stays visible in a field `width` cells wide: none while the cursor
-/// fits, else just enough to put it at the right edge.
-fn input_scroll_offset(text: &str, cursor_pos: usize, width: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-
-    let widths: Vec<usize> = text
-        .chars()
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
-        .collect();
-    if widths.iter().sum::<usize>() < width {
-        return 0;
-    }
-    let cursor_display_x: usize = widths.iter().take(cursor_pos).sum();
-    if cursor_display_x < width {
-        return 0;
-    }
-    let mut skipped_width = 0;
-    for (char_idx, cw) in widths.iter().enumerate() {
-        if cursor_display_x - skipped_width < width {
-            return char_idx;
-        }
-        skipped_width += cw;
-    }
-    0
+/// Draw `input` as a single-line field in the one-row `area`, keeping the
+/// scroll it had while its cursor stays in view (see
+/// [`TextInput::follow_scroll`](termide_ui::TextInput::follow_scroll)), so a
+/// click mapped through [`field_char_at`] lands where it points.
+pub fn render_text_input(
+    buf: &mut Buffer,
+    area: Rect,
+    input: &mut crate::TextInputHandler,
+    is_focused: bool,
+    theme: &Theme,
+) {
+    let scroll = input.follow_scroll(area.width);
+    render_input_field_scrolled(
+        buf,
+        area.x,
+        area.y,
+        area.width,
+        input.text(),
+        input.cursor_pos(),
+        input.selection_range(),
+        is_focused,
+        theme,
+        scroll,
+    );
 }
 
-/// The scroll of a field `width` cells wide after its cursor moved to
-/// `cursor_pos`, from the `scroll` it had: kept while the cursor stays in view,
-/// else moved just enough to bring it back, and never past what shows the end
-/// of the text. A field that keeps its scroll this way does not jump when a
-/// click places the cursor.
-pub fn follow_input_scroll(text: &str, cursor_pos: usize, width: u16, scroll: usize) -> usize {
-    let width = width as usize;
-    let to_cursor = input_scroll_offset(text, cursor_pos, width);
-    let to_end = input_scroll_offset(text, text.chars().count(), width);
-    if cursor_pos < scroll {
-        cursor_pos
-    } else {
-        scroll.max(to_cursor).min(to_end)
-    }
-}
-
-/// The character of `text` under column `x` of a field scrolled by `scroll`
-/// characters (see [`render_input_field_scrolled`]).
-pub fn input_field_char_at(text: &str, scroll: usize, x: usize) -> usize {
-    let visible: String = text.chars().skip(scroll).collect();
-    scroll + screen_x_to_char_pos(&visible, x)
+/// The character of `input` under screen column `column` of the field
+/// [`render_text_input`] drew in `area`. Left of the field it is the character
+/// just scrolled out, so a drag past the edge keeps scrolling.
+pub fn field_char_at(input: &crate::TextInputHandler, area: Rect, column: u16) -> usize {
+    input.char_at_column(column.checked_sub(area.x).map(usize::from))
 }
 
 /// Result of checking mouse click position in a modal.
@@ -396,23 +379,6 @@ pub trait CursorNavigation {
             self.cursor_down();
         }
     }
-}
-
-/// Convert a screen X-offset inside a rendered single-line input field to
-/// the corresponding character (grapheme-agnostic, char-wise) position in
-/// `text`, accounting for double-width characters. Click past the end of
-/// the text returns the text length.
-pub fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut width = 0;
-    for (i, c) in text.chars().enumerate() {
-        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
-        if width + cw > screen_x {
-            return i;
-        }
-        width += cw;
-    }
-    text.chars().count()
 }
 
 #[cfg(test)]

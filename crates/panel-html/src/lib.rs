@@ -612,9 +612,10 @@ impl Panel for HtmlPanel {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, _panel_area: Rect) -> Vec<PanelEvent> {
-        // Route clicks on the find bar to it.
+        // Route what the find bar owns to it: a press on it, and a drag
+        // started there, which keeps selecting past its edges.
         if let Some(bar) = self.find_bar.as_mut() {
-            if bar.click_hits_bar(event.column, event.row) {
+            if bar.mouse_hits(event) {
                 if let Some(action) = bar.handle_mouse(event) {
                     return self.handle_find_action(action);
                 }
