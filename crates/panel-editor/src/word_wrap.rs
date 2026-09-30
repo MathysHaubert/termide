@@ -153,7 +153,8 @@ pub fn visual_row_to_buffer_position_with_diagnostics(
     diagnostics: &[Diagnostic],
 ) -> (usize, usize, usize, bool) {
     // Group diagnostics by line with total row count (accounting for multi-row diagnostics)
-    let diagnostics_by_line = count_diagnostic_rows_by_line(diagnostics, buffer, content_width);
+    let diagnostics_by_line =
+        count_diagnostic_rows_by_line(diagnostics, buffer, content_width, tab_size);
 
     if content_width == 0 {
         // No wrap, but still need to account for diagnostic lines
@@ -282,8 +283,9 @@ pub fn visual_row_to_buffer_position_with_diagnostics(
 /// This accounts for multi-row diagnostic messages that wrap based on content_width.
 pub(crate) fn count_diagnostic_rows_by_line(
     diagnostics: &[Diagnostic],
-    _buffer: &TextBuffer,
+    buffer: &TextBuffer,
     content_width: usize,
+    tab_size: usize,
 ) -> HashMap<usize, usize> {
     use crate::git;
     use std::collections::HashSet;
@@ -301,12 +303,8 @@ pub(crate) fn count_diagnostic_rows_by_line(
             continue;
         }
 
-        // Calculate diagnostic info similar to git::group_diagnostics_by_line
-        let start_col = diag.range.start.character as usize;
-        let end_col = diag.range.end.character as usize;
-
-        // Get underline length (simplified - use end_col - start_col)
-        let underline_len = end_col.saturating_sub(start_col).max(1);
+        // The same span git::group_diagnostics_by_line draws.
+        let (start_col, underline_len) = git::diagnostic_span(diag, buffer, tab_size);
 
         // Extract code
         let code = diag.code.as_ref().map(|c| match c {
@@ -888,7 +886,7 @@ pub(crate) fn visual_row_to_buffer_position_cached(
 
     // Ensure diagnostic rows cache is populated
     if !cache.is_diagnostic_cache_valid(content_width) {
-        let map = count_diagnostic_rows_by_line(diagnostics, buffer, content_width);
+        let map = count_diagnostic_rows_by_line(diagnostics, buffer, content_width, tab_size);
         cache.set_diagnostic_rows_cache(map, content_width);
     }
 

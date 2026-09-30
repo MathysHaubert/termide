@@ -66,9 +66,8 @@ impl Editor {
             // Diagnostic rows.
             for diag in &self.lsp.diagnostics {
                 if diag.range.start.line as usize == line {
-                    let start_col = diag.range.start.character as usize;
-                    let end_col = diag.range.end.character as usize;
-                    let underline_len = end_col.saturating_sub(start_col).max(1);
+                    let (start_col, underline_len) =
+                        git::diagnostic_span(diag, &self.buffer, self.config.tab_size);
                     let code = diag.code.as_ref().map(|c| match c {
                         lsp_types::NumberOrString::Number(n) => n.to_string(),
                         lsp_types::NumberOrString::String(s) => s.clone(),
@@ -316,9 +315,8 @@ impl Editor {
             for diag in &self.lsp.diagnostics {
                 let diag_line = diag.range.start.line as usize;
                 if diag_line == self.viewport.top_line {
-                    let start_col = diag.range.start.character as usize;
-                    let end_col = diag.range.end.character as usize;
-                    let underline_len = end_col.saturating_sub(start_col).max(1);
+                    let (start_col, underline_len) =
+                        git::diagnostic_span(diag, &self.buffer, self.config.tab_size);
                     let code = diag.code.as_ref().map(|c| match c {
                         lsp_types::NumberOrString::Number(n) => n.to_string(),
                         lsp_types::NumberOrString::String(s) => s.clone(),

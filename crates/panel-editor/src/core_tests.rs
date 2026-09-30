@@ -757,3 +757,29 @@ fn vertical_movement_keeps_the_screen_column_across_tabs() {
         );
     }
 }
+
+/// A diagnostic's underline sits under the text as drawn: its LSP range
+/// counts UTF-16 units (an emoji is two), and the tab before it is expanded.
+#[test]
+fn a_diagnostic_underline_follows_tabs_and_wide_text() {
+    use lsp_types::{Diagnostic, Position, Range};
+
+    for word_wrap in [false, true] {
+        // "😀" is two columns and two UTF-16 units; the tab then reaches
+        // column 4, so "foo" (UTF-16 3..6) is drawn in columns 4..7.
+        let (mut editor, _file) = create_editor_with_content("😀\tfoo bar\n");
+        editor.config.word_wrap = word_wrap;
+        editor.config.tab_size = 4;
+        editor.lsp.diagnostics = vec![Diagnostic {
+            range: Range::new(Position::new(0, 3), Position::new(0, 6)),
+            message: "boom".to_string(),
+            ..Default::default()
+        }];
+        let rows = rendered_text_rows(&mut editor, 40, 4);
+        assert!(rows[0].starts_with("😀"), "word_wrap={word_wrap}: {rows:?}");
+        assert!(
+            rows[1].starts_with("    ~~~ boom"),
+            "word_wrap={word_wrap}: {rows:?}"
+        );
+    }
+}

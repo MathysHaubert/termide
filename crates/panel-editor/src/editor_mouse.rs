@@ -231,6 +231,7 @@ impl Editor {
                 self.viewport.top_line,
                 rel_y,
                 content_width as usize,
+                self.config.tab_size,
             ) {
                 match vline {
                     git::VirtualLine::Real(line_idx) => {

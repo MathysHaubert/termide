@@ -193,6 +193,9 @@ impl RenderingCache {
     ) {
         if !self.wrap_settings_match(content_width, use_smart_wrap, tab_size) {
             self.invalidate_wrap_cache();
+            // Diagnostic spans are measured in display columns, so a tab
+            // size change moves them too.
+            self.invalidate_diagnostic_cache();
             self.content_width = content_width;
             self.use_smart_wrap = use_smart_wrap;
             self.tab_size = tab_size;

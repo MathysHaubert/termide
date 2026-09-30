@@ -388,6 +388,7 @@ pub struct DiagnosticInfo {
 pub fn group_diagnostics_by_line(
     diagnostics: &[lsp_types::Diagnostic],
     buffer: &TextBuffer,
+    tab_size: usize,
 ) -> std::collections::HashMap<usize, Vec<DiagnosticInfo>> {
     use std::collections::{HashMap, HashSet};
 
@@ -403,20 +404,7 @@ pub fn group_diagnostics_by_line(
             continue;
         }
 
-        let start_col = diag.range.start.character as usize;
-        let end_col = diag.range.end.character as usize;
-
-        // Expand to word boundaries
-        let (word_start, word_end) = if let Some(line_text) = buffer.line(line) {
-            (
-                find_word_start(&line_text, start_col),
-                find_word_end(&line_text, start_col).max(end_col),
-            )
-        } else {
-            (start_col, end_col.max(start_col + 1))
-        };
-
-        let underline_len = word_end.saturating_sub(word_start).max(1);
+        let (start_col, underline_len) = diagnostic_span(diag, buffer, tab_size);
         let severity = diag
             .severity
             .unwrap_or(lsp_types::DiagnosticSeverity::ERROR);
@@ -428,7 +416,7 @@ pub fn group_diagnostics_by_line(
         });
 
         result.entry(line).or_default().push(DiagnosticInfo {
-            start_col: word_start,
+            start_col,
             underline_len,
             severity,
             code,
@@ -439,46 +427,64 @@ pub fn group_diagnostics_by_line(
     result
 }
 
-/// Find the start of the word containing the given column.
-fn find_word_start(line: &str, col: usize) -> usize {
-    let chars: Vec<char> = line.chars().collect();
-    if col >= chars.len() {
-        return col;
-    }
+/// Where a diagnostic's underline sits on screen: its first display column
+/// and its width, the range widened to the word under its start.
+///
+/// LSP positions count UTF-16 code units; they are turned into graphemes
+/// first, then into display columns with tabs expanded, so the underline
+/// sits under the text as drawn. Drawing a diagnostic row and counting how
+/// many rows it wraps to both measure through this, so the two agree.
+pub(crate) fn diagnostic_span(
+    diag: &lsp_types::Diagnostic,
+    buffer: &TextBuffer,
+    tab_size: usize,
+) -> (usize, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
 
-    let mut start = col;
-    while start > 0 {
-        let ch = chars[start - 1];
-        if !ch.is_alphanumeric() && ch != '_' {
-            break;
+    let line = diag.range.start.line as usize;
+    let Some(text) = buffer.line(line) else {
+        let start = diag.range.start.character as usize;
+        let end = diag.range.end.character as usize;
+        return (start, end.saturating_sub(start).max(1));
+    };
+    let text = text.trim_end_matches('\n');
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    let len = graphemes.len();
+
+    let start = buffer.grapheme_column(line, diag.range.start.character as usize);
+    let end = if diag.range.end.line as usize == line {
+        buffer.grapheme_column(line, diag.range.end.character as usize)
+    } else {
+        len
+    };
+
+    let is_word = |g: &str| {
+        g.chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    };
+    let (mut word_start, mut word_end) = (start, len);
+    if start < len {
+        while word_start > 0 && is_word(graphemes[word_start - 1]) {
+            word_start -= 1;
         }
-        start -= 1;
-    }
-    start
-}
-
-/// Find the end of the word containing the given column.
-fn find_word_end(line: &str, col: usize) -> usize {
-    let chars: Vec<char> = line.chars().collect();
-    if col >= chars.len() {
-        return chars.len();
-    }
-
-    let mut end = col;
-    while end < chars.len() {
-        let ch = chars[end];
-        if !ch.is_alphanumeric() && ch != '_' {
-            break;
+        word_end = start;
+        while word_end < len && is_word(graphemes[word_end]) {
+            word_end += 1;
         }
-        end += 1;
     }
-    end
+    let word_end = word_end.max(end);
+
+    let start_col = termide_buffer::display_column(text, word_start, tab_size);
+    let end_col = termide_buffer::display_column(text, word_end, tab_size);
+    (start_col, end_col.saturating_sub(start_col).max(1))
 }
 
 /// Get the virtual line at a given visual row position.
 ///
 /// Returns the virtual line at the specified visual row offset from viewport.top_line.
 /// Returns None if the row is out of bounds.
+#[allow(clippy::too_many_arguments)]
 pub fn get_virtual_line_at_row(
     buffer: &TextBuffer,
     git_diff_cache: &Option<GitDiffCache>,
@@ -487,9 +493,10 @@ pub fn get_virtual_line_at_row(
     viewport_top_line: usize,
     visual_row: usize,
     content_width: usize,
+    tab_size: usize,
 ) -> Option<VirtualLine> {
     // Rare path (mouse click), so building the HashMap here is fine.
-    let diagnostics_by_line = group_diagnostics_by_line(diagnostics, buffer);
+    let diagnostics_by_line = group_diagnostics_by_line(diagnostics, buffer, tab_size);
     let virtual_lines = build_virtual_lines_for_viewport(
         buffer,
         git_diff_cache,

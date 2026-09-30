@@ -174,7 +174,7 @@ pub fn render_editor_content<H: LineHighlighter>(
 
     // Group diagnostics by line once per render — hot paths read this
     // instead of rebuilding the HashMap for every visible row.
-    let diagnostics_by_line = crate::git::group_diagnostics_by_line(diagnostics, buffer);
+    let diagnostics_by_line = crate::git::group_diagnostics_by_line(diagnostics, buffer, tab_size);
 
     // Rebuild the whole-document highlight when it is stale (after an edit or a
     // syntax change) and the buffer is small enough to re-parse per edit. This
