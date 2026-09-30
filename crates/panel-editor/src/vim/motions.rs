@@ -540,4 +540,24 @@ mod tests {
         );
         assert_eq!(new_cursor.line, 1);
     }
+
+    /// `j` keeps the screen column across a tab-indented line, through the
+    /// same walk the arrow keys use.
+    #[test]
+    fn test_motion_down_keeps_the_screen_column_across_tabs() {
+        let buffer = create_buffer("        xy\n\t\txy");
+        let cursor = Cursor::at(0, 9);
+
+        let new_cursor = execute_motion(
+            VimMotion::Down,
+            &cursor,
+            &buffer,
+            1,
+            24,
+            TEST_CONTENT_WIDTH,
+            TEST_SMART_WRAP,
+            4,
+        );
+        assert_eq!((new_cursor.line, new_cursor.column), (1, 3));
+    }
 }

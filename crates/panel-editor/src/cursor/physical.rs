@@ -7,21 +7,17 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::word_boundary;
 
-/// Move cursor up by one line.
-///
-/// Returns true if preferred column should be maintained.
-pub(crate) fn move_up(cursor: &mut Cursor) -> bool {
+/// Move cursor up by one line. The column is the caller's to settle (see
+/// `Editor::begin_vertical_move`).
+pub(crate) fn move_up(cursor: &mut Cursor) {
     cursor.move_up(1);
-    true // Maintain preferred column
 }
 
-/// Move cursor down by one line.
-///
-/// Returns true if preferred column should be maintained.
-pub(crate) fn move_down(cursor: &mut Cursor, buffer: &TextBuffer) -> bool {
+/// Move cursor down by one line. The column is the caller's to settle (see
+/// `Editor::begin_vertical_move`).
+pub(crate) fn move_down(cursor: &mut Cursor, buffer: &TextBuffer) {
     let max_line = buffer.line_count().saturating_sub(1);
     cursor.move_down(1, max_line);
-    true // Maintain preferred column
 }
 
 /// Move cursor left by one character.
