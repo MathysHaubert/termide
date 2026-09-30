@@ -11,7 +11,13 @@ use crate::cancel::CancelToken;
 use crate::message::{AssistantMessage, Message};
 
 /// How much reasoning effort to request from a model that supports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+///
+/// A provider-neutral scale: each provider maps it onto its own parameter
+/// (an effort name, a token budget, an on/off switch), and a model offers
+/// only the levels its API accepts ([`Provider::thinking_levels`]).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
     #[default]
@@ -20,6 +26,59 @@ pub enum ThinkingLevel {
     Low,
     Medium,
     High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+}
+
+impl ThinkingLevel {
+    pub const ALL: [Self; 7] = [
+        Self::Off,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
+
+    /// The name used in the config, the session log and the status bar.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|level| level.label().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// The level of `offered` that best stands for `self`: itself when
+    /// offered, else the highest one below it, else the lowest one above.
+    /// Reasoning asked for never falls to `Off` (an on/off model answers
+    /// any level with on), and a model that cannot stop thinking answers
+    /// `Off` with its least. `Off` when nothing is offered.
+    #[must_use]
+    pub fn nearest(self, offered: &[Self]) -> Self {
+        if self == Self::Off {
+            return offered.iter().copied().min().unwrap_or(Self::Off);
+        }
+        let on = || offered.iter().copied().filter(|level| *level != Self::Off);
+        on().filter(|level| *level <= self)
+            .max()
+            .or_else(|| on().min())
+            .unwrap_or(Self::Off)
+    }
 }
 
 /// A model as configured by the user, independent of the provider wire format.
@@ -35,9 +94,10 @@ pub struct ModelSpec {
     /// to the model (a provider whose API requires a bound sends its own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
-    /// Whether the model exposes a thinking/reasoning channel.
+    /// The reasoning level asked for; the provider falls back to the nearest
+    /// one the model accepts.
     #[serde(default)]
-    pub reasoning: bool,
+    pub thinking: ThinkingLevel,
 }
 
 /// One entry of a provider's model list.
@@ -136,5 +196,42 @@ pub trait Provider: Send + Sync {
     /// and callers fall back to a typed id.
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
         Err("this provider cannot list its models".to_string())
+    }
+
+    /// The reasoning levels `model` accepts, lowest first; empty when the
+    /// provider has no way to ask for reasoning (the model decides alone).
+    fn thinking_levels(&self, _model: &str) -> Vec<ThinkingLevel> {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ThinkingLevel::{self, High, Low, Max, Medium, Minimal, Off, XHigh};
+
+    #[test]
+    fn a_level_falls_to_the_nearest_one_offered() {
+        let effort = [Low, Medium, High, XHigh, Max];
+        assert_eq!(Medium.nearest(&effort), Medium);
+        assert_eq!(Off.nearest(&effort), Low, "no off: the least");
+        assert_eq!(Minimal.nearest(&effort), Low);
+        let budget = [Off, Minimal, Low, Medium, High];
+        assert_eq!(Max.nearest(&budget), High);
+        assert_eq!(Off.nearest(&budget), Off);
+        let switch = [Off, High];
+        assert_eq!(Low.nearest(&switch), High, "any reasoning is on");
+        assert_eq!(Off.nearest(&switch), Off);
+        assert_eq!(High.nearest(&[]), Off);
+    }
+
+    #[test]
+    fn levels_parse_from_their_labels() {
+        for level in ThinkingLevel::ALL {
+            assert_eq!(ThinkingLevel::parse(level.label()), Some(level));
+            let json = serde_json::to_string(&level).unwrap();
+            assert_eq!(json, format!("\"{}\"", level.label()));
+        }
+        assert_eq!(ThinkingLevel::parse(" XHigh "), Some(XHigh));
+        assert_eq!(ThinkingLevel::parse("extreme"), None);
     }
 }

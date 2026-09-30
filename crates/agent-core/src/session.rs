@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::compaction::CompactionPrompts;
 use crate::context::file_timestamp;
 use crate::message::{now_millis, Message};
+use crate::provider::ThinkingLevel;
 
 /// Bumped when a line shape changes incompatibly.
 pub const SESSION_FORMAT_VERSION: u32 = 1;
@@ -93,9 +94,13 @@ pub enum EntryKind {
     /// The agent definition the branch runs as from here, so a reopened
     /// session comes back with the same prompt and tools.
     AgentChange { agent: String },
-    /// Whether the branch prefers reasoning from here, so a reopened session
-    /// comes back with the same choice (toggled live from the status bar).
+    /// Whether the branch prefers reasoning from here: the on/off switch
+    /// that [`EntryKind::ThinkingChange`] replaced, still read from older
+    /// logs.
     ReasoningChange { reasoning: bool },
+    /// The reasoning level the branch asks for from here, so a reopened
+    /// session comes back with the same choice (picked from the status bar).
+    ThinkingChange { level: ThinkingLevel },
     /// What the session switched off from here: tools, skills (`skill:<name>`)
     /// and MCP servers (`mcp:<name>`), kept out of the model's context or
     /// refused, so a reopened session comes back with the same set.
@@ -475,6 +480,7 @@ impl Session {
                 | EntryKind::AgentChange { .. }
                 | EntryKind::Rewind
                 | EntryKind::ReasoningChange { .. }
+                | EntryKind::ThinkingChange { .. }
                 | EntryKind::Toolset { .. }
                 | EntryKind::ConnectionChange { .. } => {}
                 EntryKind::Compaction {
@@ -509,6 +515,7 @@ impl Session {
                 | EntryKind::AgentChange { .. }
                 | EntryKind::Rewind
                 | EntryKind::ReasoningChange { .. }
+                | EntryKind::ThinkingChange { .. }
                 | EntryKind::Toolset { .. }
                 | EntryKind::ConnectionChange { .. } => {}
                 EntryKind::Compaction {
@@ -584,6 +591,7 @@ impl Session {
                 | EntryKind::AgentChange { .. }
                 | EntryKind::Rewind
                 | EntryKind::ReasoningChange { .. }
+                | EntryKind::ThinkingChange { .. }
                 | EntryKind::Toolset { .. }
                 | EntryKind::ConnectionChange { .. } => None,
             })
@@ -616,8 +624,8 @@ impl Session {
             })
     }
 
-    pub fn append_reasoning_change(&mut self, reasoning: bool) -> std::io::Result<String> {
-        self.append(EntryKind::ReasoningChange { reasoning })
+    pub fn append_thinking_change(&mut self, level: ThinkingLevel) -> std::io::Result<String> {
+        self.append(EntryKind::ThinkingChange { level })
     }
 
     pub fn append_connection_change(&mut self, connection: &str) -> std::io::Result<String> {
@@ -657,14 +665,17 @@ impl Session {
             })
     }
 
-    /// Reasoning preference recorded last on the current branch, if any.
+    /// Reasoning level recorded last on the current branch, if any. The old
+    /// on/off switch reads as `high` or `off`.
     #[must_use]
-    pub fn current_reasoning(&self) -> Option<bool> {
+    pub fn current_thinking(&self) -> Option<ThinkingLevel> {
         self.branch()
             .into_iter()
             .rev()
             .find_map(|entry| match &entry.kind {
-                EntryKind::ReasoningChange { reasoning } => Some(*reasoning),
+                EntryKind::ThinkingChange { level } => Some(*level),
+                EntryKind::ReasoningChange { reasoning: true } => Some(ThinkingLevel::High),
+                EntryKind::ReasoningChange { reasoning: false } => Some(ThinkingLevel::Off),
                 _ => None,
             })
     }
@@ -731,6 +742,7 @@ impl From<&Session> for SessionSummary {
             | EntryKind::AgentChange { .. }
             | EntryKind::Rewind
             | EntryKind::ReasoningChange { .. }
+            | EntryKind::ThinkingChange { .. }
             | EntryKind::Toolset { .. }
             | EntryKind::ConnectionChange { .. } => None,
         });
@@ -982,6 +994,30 @@ mod tests {
         session.append_connection_change("cloud").unwrap();
         let reopened = Session::open(session.path()).unwrap();
         assert_eq!(reopened.current_connection(), Some("cloud".to_string()));
+    }
+
+    #[test]
+    fn the_reasoning_level_survives_reopen_and_reads_the_old_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::create(dir.path(), Path::new("/work")).unwrap();
+        assert_eq!(session.current_thinking(), None);
+        // A log written before levels holds the on/off switch.
+        session
+            .append(EntryKind::ReasoningChange { reasoning: false })
+            .unwrap();
+        let reopened = Session::open(session.path()).unwrap();
+        assert_eq!(reopened.current_thinking(), Some(ThinkingLevel::Off));
+        session
+            .append(EntryKind::ReasoningChange { reasoning: true })
+            .unwrap();
+        let reopened = Session::open(session.path()).unwrap();
+        assert_eq!(reopened.current_thinking(), Some(ThinkingLevel::High));
+
+        session
+            .append_thinking_change(ThinkingLevel::XHigh)
+            .unwrap();
+        let reopened = Session::open(session.path()).unwrap();
+        assert_eq!(reopened.current_thinking(), Some(ThinkingLevel::XHigh));
     }
 
     #[test]

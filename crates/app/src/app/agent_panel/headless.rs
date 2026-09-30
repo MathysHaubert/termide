@@ -53,11 +53,7 @@ pub fn run_agent_headless(
         eprintln!("termide: AI is not configured (add an [ai.connections] entry)");
         return 1;
     };
-    let provider = build_provider(
-        connection,
-        settings.prefer_reasoning,
-        api_key_of(connection),
-    );
+    let provider = build_provider(connection, api_key_of(connection));
 
     let global = termide_config::get_config_dir()
         .ok()
@@ -104,7 +100,7 @@ pub fn run_agent_headless(
         id,
         context_window: connection.effective_context_window(),
         max_tokens: settings.output_limit(),
-        reasoning: settings.prefer_reasoning,
+        thinking: settings.reasoning,
     };
     let mut rules = settings.permissions.clone();
     if let Some(mode) = definition.spec.mode {

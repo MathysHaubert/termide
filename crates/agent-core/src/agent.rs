@@ -363,7 +363,6 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     tools: ToolRegistry,
     model: ModelSpec,
-    thinking: ThinkingLevel,
     system_prompt: String,
     cwd: PathBuf,
     messages: Vec<Message>,
@@ -389,7 +388,6 @@ impl Agent {
             provider,
             tools,
             model,
-            thinking: ThinkingLevel::default(),
             system_prompt: String::new(),
             cwd,
             messages: Vec::new(),
@@ -479,10 +477,6 @@ impl Agent {
         self.model = model;
     }
 
-    pub fn set_thinking(&mut self, level: ThinkingLevel) {
-        self.thinking = level;
-    }
-
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
     }
@@ -494,11 +488,6 @@ impl Agent {
     #[must_use]
     pub fn model(&self) -> &ModelSpec {
         &self.model
-    }
-
-    #[must_use]
-    pub fn thinking(&self) -> ThinkingLevel {
-        self.thinking
     }
 
     #[must_use]
@@ -794,7 +783,7 @@ impl Agent {
             system_prompt: &self.system_prompt,
             messages: &self.messages,
             tools: &self.tools.specs(),
-            thinking: self.thinking,
+            thinking: self.model.thinking,
         };
         self.provider.stream(
             &request,
@@ -1057,7 +1046,7 @@ pub(crate) mod test_support {
                     AssistantContent::Text { text } => {
                         on_event(StreamEvent::TextDelta(text.clone()))
                     }
-                    AssistantContent::Thinking { text } => {
+                    AssistantContent::Thinking { text, .. } => {
                         on_event(StreamEvent::ThinkingDelta(text.clone()))
                     }
                     AssistantContent::ToolCall(call) => {
@@ -1118,7 +1107,7 @@ pub(crate) mod test_support {
             id: "test".into(),
             context_window: 8192,
             max_tokens: Some(1024),
-            reasoning: false,
+            thinking: ThinkingLevel::Off,
         }
     }
 

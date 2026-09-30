@@ -132,7 +132,7 @@ fn message_chars(message: &Message) -> usize {
             .content
             .iter()
             .map(|block| match block {
-                AssistantContent::Text { text } | AssistantContent::Thinking { text } => {
+                AssistantContent::Text { text } | AssistantContent::Thinking { text, .. } => {
                     text.chars().count()
                 }
                 AssistantContent::ToolCall(call) => {

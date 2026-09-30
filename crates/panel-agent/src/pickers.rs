@@ -3,13 +3,13 @@
 
 use std::sync::Arc;
 
-use termide_agent_core::{Mode, ModelInfo, ModelSpec};
+use termide_agent_core::{Mode, ModelInfo, ModelSpec, ThinkingLevel};
 use termide_core::{InputAction, PanelEvent, SelectAction};
 
 use crate::runtime::spawn_model_list;
 use crate::{
     AgentPanel, NoticeKind, AGENT_ACTION, MODEL_ACTION, MODEL_INPUT_ACTION, MODE_ACTION,
-    PROMPTS_ACTION,
+    PROMPTS_ACTION, REASONING_ACTION,
 };
 
 /// Picker prefix: `●` on the current entry, blank otherwise.
@@ -491,10 +491,67 @@ impl AgentPanel {
         self.switch_model(&id, Some(window))
     }
 
-    /// Toggle whether the model is asked to reason (extended thinking /
-    /// `reasoning_effort`). Applies to the next request and is remembered in
-    /// the session log so a resume comes back with the same choice.
-    pub(crate) fn toggle_reasoning(&mut self) -> bool {
+    /// The reasoning levels the model offers, lowest first; empty when it
+    /// cannot be asked (an external agent, a server that decides alone).
+    pub(crate) fn thinking_levels(&self) -> Vec<ThinkingLevel> {
+        if self.external {
+            return Vec::new();
+        }
+        self.provider.thinking_levels(&self.model.id)
+    }
+
+    /// The level the model actually gets: the one asked for, or the
+    /// nearest it has.
+    pub(crate) fn effective_thinking(&self, levels: &[ThinkingLevel]) -> ThinkingLevel {
+        self.model.thinking.nearest(levels)
+    }
+
+    /// How a level reads in the status bar and the picker: an on/off model
+    /// shows the switch, a graded one the level's name.
+    pub(crate) fn thinking_label(level: ThinkingLevel, levels: &[ThinkingLevel]) -> String {
+        let t = termide_i18n::t();
+        if is_switch(levels) {
+            if level == ThinkingLevel::Off {
+                t.agent_chip_off()
+            } else {
+                t.agent_chip_on()
+            }
+            .to_string()
+        } else {
+            level.label().to_string()
+        }
+    }
+
+    /// The chip's action: an on/off model flips, a graded one opens the
+    /// level picker.
+    pub(crate) fn reasoning_action(&mut self) -> Vec<PanelEvent> {
+        let levels = self.thinking_levels();
+        if levels.is_empty() {
+            return Vec::new();
+        }
+        let current = self.effective_thinking(&levels);
+        if is_switch(&levels) {
+            let next = levels.into_iter().find(|level| *level != current);
+            if let Some(level) = next {
+                self.set_thinking(level);
+            }
+            return vec![PanelEvent::NeedsRedraw];
+        }
+        let options = levels
+            .iter()
+            .map(|level| format!("{}{}", current_mark(*level == current), level.label()))
+            .collect();
+        vec![PanelEvent::ShowSelect {
+            title: termide_i18n::t().agent_change_reasoning().to_string(),
+            options,
+            on_select: SelectAction::Custom(REASONING_ACTION.to_string()),
+        }]
+    }
+
+    /// Ask the model for `level` of reasoning. Applies to the next request
+    /// and is remembered in the session log so a resume comes back with the
+    /// same choice.
+    pub(crate) fn set_thinking(&mut self, level: ThinkingLevel) -> bool {
         if self.external {
             return false;
         }
@@ -502,9 +559,8 @@ impl AgentPanel {
             self.notice(termide_i18n::t().agent_notice_busy(), NoticeKind::Warn);
             return false;
         }
-        let reasoning = !self.model.reasoning;
         let mut model = self.model.clone();
-        model.reasoning = reasoning;
+        model.thinking = level;
         let worker_model = model.clone();
         if let Err(error) = self
             .runtime
@@ -518,19 +574,21 @@ impl AgentPanel {
         }
         self.model = model;
         if let Some(session) = &mut self.session {
-            if let Err(error) = session.append_reasoning_change(reasoning) {
+            if let Err(error) = session.append_thinking_change(level) {
                 log::warn!("agent session write failed: {error}");
             }
         }
-        let t = termide_i18n::t();
+        let levels = self.thinking_levels();
+        let label = Self::thinking_label(self.effective_thinking(&levels), &levels);
         self.notice(
-            if reasoning {
-                t.agent_notice_reasoning_on()
-            } else {
-                t.agent_notice_reasoning_off()
-            },
+            termide_i18n::t().agent_notice_reasoning_fmt(&label),
             NoticeKind::Info,
         );
         true
     }
+}
+
+/// Whether `levels` is an on/off switch rather than a scale.
+fn is_switch(levels: &[ThinkingLevel]) -> bool {
+    levels.len() == 2 && levels[0] == ThinkingLevel::Off
 }

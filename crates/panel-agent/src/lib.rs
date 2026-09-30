@@ -89,7 +89,7 @@ const CONNECTION_ACTION: &str = "agent_connection";
 const MODEL_INPUT_ACTION: &str = "agent_model_input";
 /// Status chip and context-menu action that opens the permission-mode picker.
 const MODE_ACTION: &str = "agent_mode";
-/// Status chip that toggles whether the model is asked to reason.
+/// Status chip and picker that set how much the model is asked to reason.
 const REASONING_ACTION: &str = "agent_reasoning";
 /// Context-menu action that opens the assembled system prompt in a viewer.
 const SHOW_PROMPT_ACTION: &str = "agent_show_prompt";
@@ -1235,10 +1235,7 @@ impl Panel for AgentPanel {
             }
             MODEL_ACTION => self.request_model_list(),
             MODE_ACTION => vec![self.mode_picker()],
-            REASONING_ACTION => {
-                self.toggle_reasoning();
-                vec![PanelEvent::NeedsRedraw]
-            }
+            REASONING_ACTION => self.reasoning_action(),
             SHOW_PROMPT_ACTION => match self.write_system_prompt() {
                 Ok(path) => vec![PanelEvent::ViewFile(path)],
                 Err(error) => {
@@ -1361,6 +1358,10 @@ impl Panel for AgentPanel {
                 let choice = self.agent_choices.get(index).cloned();
                 self.agent_choices.clear();
                 CommandResult::Handled(choice.is_some_and(|name| self.switch_agent(&name)))
+            }
+            PanelCommand::SelectionMade { action, index } if action == REASONING_ACTION => {
+                let level = self.thinking_levels().get(index).copied();
+                CommandResult::Handled(level.is_some_and(|level| self.set_thinking(level)))
             }
             PanelCommand::SelectionMade { action, index } if action == MODE_ACTION => {
                 if let Some(mode) = Mode::ALL.get(index).copied() {

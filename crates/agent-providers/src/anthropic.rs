@@ -86,6 +86,12 @@ impl AnthropicProvider {
     /// The JSON body for `request`, exposed for tests and debugging.
     #[must_use]
     pub fn build_body(&self, request: &Request<'_>) -> Value {
+        self.body(request, true)
+    }
+
+    /// The body, replaying the current turn's signed reasoning when
+    /// `replay_thinking` (the retry after a rejected signature goes without).
+    fn body(&self, request: &Request<'_>, replay_thinking: bool) -> Value {
         let mut body = Map::new();
         body.insert("model".into(), json!(request.model.id));
         // The Messages API requires a bound, so an unlimited turn sends a
@@ -96,7 +102,15 @@ impl AnthropicProvider {
         if !request.system_prompt.is_empty() {
             body.insert("system".into(), json!(request.system_prompt));
         }
-        body.insert("messages".into(), json!(convert_messages(request.messages)));
+        let style = thinking_style(&request.model.id);
+        let level = request.thinking.nearest(&style_levels(style));
+        let thinking = thinking_param(style, level, max_tokens);
+        let replay = replay_thinking && thinking.as_ref().is_some_and(|(on, _)| *on);
+        let replay_model = replay.then_some(request.model.id.as_str());
+        body.insert(
+            "messages".into(),
+            json!(convert_messages(request.messages, replay_model)),
+        );
         if !request.tools.is_empty() {
             let tools: Vec<Value> = request
                 .tools
@@ -111,12 +125,9 @@ impl AnthropicProvider {
                 .collect();
             body.insert("tools".into(), Value::Array(tools));
         }
-        if request.model.reasoning {
-            if let Some(budget) = thinking_budget(request.thinking, max_tokens) {
-                body.insert(
-                    "thinking".into(),
-                    json!({ "type": "enabled", "budget_tokens": budget }),
-                );
+        if let Some((_, param)) = thinking {
+            for (key, value) in param {
+                body.insert(key, value);
             }
         }
         Value::Object(body)
@@ -253,21 +264,39 @@ impl Provider for AnthropicProvider {
         parse_model_list(&body)
     }
 
+    fn thinking_levels(&self, model: &str) -> Vec<ThinkingLevel> {
+        style_levels(thinking_style(model))
+    }
+
     fn stream(
         &self,
         request: &Request<'_>,
         on_event: &mut dyn FnMut(StreamEvent),
         cancel: &CancelToken,
     ) -> AssistantMessage {
-        let body = self.build_body(request).to_string();
+        let body = self.body(request, true).to_string();
+        let stripped = self.body(request, false).to_string();
         let model = request.model.id.as_str();
+        // A replayed block is refused when the conversation before it changed
+        // (a compaction, a rebuilt system prompt): the documented recovery is
+        // to send the history once more without its reasoning.
+        let mut current = &body;
         with_retries(
             &self.name,
             model,
             self.retry,
             cancel,
             on_event,
-            |on_event| self.attempt(&body, model, on_event, cancel),
+            |on_event| match self.attempt(current, model, on_event, cancel) {
+                Err(failure)
+                    if current != &stripped && is_signature_rejection(&failure.message) =>
+                {
+                    log::warn!("{model} refused the replayed reasoning; retrying without it");
+                    current = &stripped;
+                    self.attempt(current, model, on_event, cancel)
+                }
+                other => other,
+            },
         )
     }
 }
@@ -276,7 +305,16 @@ impl Provider for AnthropicProvider {
 /// and tool results gathered into the user turn that must carry them, with
 /// consecutive results merged so each assistant tool-use turn is answered by
 /// exactly one following user turn.
-fn convert_messages(messages: &[Message]) -> Vec<Value> {
+///
+/// Reasoning goes back only for `replay_model`'s own blocks in the turn still
+/// in progress (after the last user message), where a tool round needs it:
+/// dropping the earlier ones is a leading run, which the API allows, and
+/// keeps a compacted or re-prompted history valid.
+fn convert_messages(messages: &[Message], replay_model: Option<&str>) -> Vec<Value> {
+    let turn_start = messages
+        .iter()
+        .rposition(|message| matches!(message, Message::User(_)))
+        .map_or(0, |index| index + 1);
     let mut out: Vec<Value> = Vec::new();
     let mut pending_results: Vec<Value> = Vec::new();
     let flush = |out: &mut Vec<Value>, results: &mut Vec<Value>| {
@@ -284,7 +322,7 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
             out.push(json!({ "role": "user", "content": std::mem::take(results) }));
         }
     };
-    for message in messages {
+    for (index, message) in messages.iter().enumerate() {
         match message {
             Message::ToolResult(result) => {
                 pending_results.push(json!({
@@ -303,9 +341,21 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
             }
             Message::Assistant(assistant) => {
                 flush(&mut out, &mut pending_results);
+                let replay = index >= turn_start && replay_model == Some(assistant.model.as_str());
                 let mut blocks: Vec<Value> = Vec::new();
                 for block in &assistant.content {
                     match block {
+                        AssistantContent::Thinking {
+                            text,
+                            signature: Some(signature),
+                            redacted,
+                        } if replay => {
+                            blocks.push(if *redacted {
+                                json!({ "type": "redacted_thinking", "data": signature })
+                            } else {
+                                json!({ "type": "thinking", "thinking": text, "signature": signature })
+                            });
+                        }
                         AssistantContent::Text { text } if !text.is_empty() => {
                             blocks.push(json!({ "type": "text", "text": text }));
                         }
@@ -317,8 +367,7 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
                                 "input": call.arguments,
                             }));
                         }
-                        // Prior thinking is dropped: replaying it needs the
-                        // original signature, which the transcript does not keep.
+                        // Unsigned or earlier reasoning is not the API's to read.
                         _ => {}
                     }
                 }
@@ -337,6 +386,127 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
 /// model with a lower ceiling needs an explicit limit.
 const UNLIMITED_MAX_TOKENS: u64 = 32_000;
 
+/// How a model asks for reasoning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThinkingStyle {
+    /// `thinking: {type: "adaptive"}` with `output_config.effort` (Claude 4.6
+    /// and later). `off` is the thinking type that stops it, when the model
+    /// has one; `xhigh` whether it knows that effort; `summarized` whether
+    /// its reasoning is omitted unless asked for.
+    Adaptive {
+        off: Option<&'static str>,
+        xhigh: bool,
+        summarized: bool,
+    },
+    /// `thinking: {type: "enabled", budget_tokens}`: Claude 4.5 and older,
+    /// and what gateways serving other models accept.
+    Budget,
+}
+
+/// The style of `model`, from its id. Unknown Claude ids are taken for newer
+/// ones, which think adaptively; ids that are not Claude's for a gateway's.
+fn thinking_style(model: &str) -> ThinkingStyle {
+    let id = model.to_ascii_lowercase();
+    let Some(start) = id.find("claude-") else {
+        return ThinkingStyle::Budget;
+    };
+    let name = &id[start + "claude-".len()..];
+    let is = |family: &str| {
+        name.strip_prefix(family)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['-', '@', ':']))
+    };
+    let adaptive = |off, xhigh, summarized| ThinkingStyle::Adaptive {
+        off,
+        xhigh,
+        summarized,
+    };
+    if is("opus-5-5") || is("fable-5") || is("mythos-5") {
+        adaptive(None, true, true)
+    } else if is("sonnet-5-5") {
+        adaptive(Some("between_tools"), true, true)
+    } else if is("opus-5") || is("sonnet-5") || is("opus-4-8") || is("opus-4-7") {
+        adaptive(Some("disabled"), true, true)
+    } else if is("opus-4-6") || is("sonnet-4-6") {
+        adaptive(Some("disabled"), false, false)
+    } else if ["opus-4", "sonnet-4", "haiku", "3", "2", "instant"]
+        .iter()
+        .any(|old| name.starts_with(old))
+    {
+        ThinkingStyle::Budget
+    } else {
+        adaptive(None, true, true)
+    }
+}
+
+/// The levels a style offers, lowest first.
+fn style_levels(style: ThinkingStyle) -> Vec<ThinkingLevel> {
+    use ThinkingLevel::{High, Low, Max, Medium, Minimal, Off, XHigh};
+    match style {
+        ThinkingStyle::Budget => vec![Off, Minimal, Low, Medium, High],
+        ThinkingStyle::Adaptive { off, xhigh, .. } => {
+            let mut levels = Vec::new();
+            if off.is_some() {
+                levels.push(Off);
+            }
+            levels.extend([Low, Medium, High]);
+            if xhigh {
+                levels.push(XHigh);
+            }
+            levels.push(Max);
+            levels
+        }
+    }
+}
+
+/// The body fields asking for `level` (already one the style offers), and
+/// whether the model reasons with them; `None` when nothing is sent.
+fn thinking_param(
+    style: ThinkingStyle,
+    level: ThinkingLevel,
+    max_tokens: u64,
+) -> Option<(bool, Vec<(String, Value)>)> {
+    match style {
+        ThinkingStyle::Budget => {
+            let budget = thinking_budget(level, max_tokens)?;
+            Some((
+                true,
+                vec![(
+                    "thinking".into(),
+                    json!({ "type": "enabled", "budget_tokens": budget }),
+                )],
+            ))
+        }
+        ThinkingStyle::Adaptive {
+            off, summarized, ..
+        } => {
+            if level == ThinkingLevel::Off {
+                // The effort is left at its default: the off types are
+                // refused above `high`.
+                let off = off?;
+                return Some((false, vec![("thinking".into(), json!({ "type": off }))]));
+            }
+            // These models omit the reasoning text unless asked for its summary.
+            let thinking = if summarized {
+                json!({ "type": "adaptive", "display": "summarized" })
+            } else {
+                json!({ "type": "adaptive" })
+            };
+            Some((
+                true,
+                vec![
+                    ("thinking".into(), thinking),
+                    ("output_config".into(), json!({ "effort": level.label() })),
+                ],
+            ))
+        }
+    }
+}
+
+/// Whether an error is the API refusing a replayed reasoning block.
+fn is_signature_rejection(message: &str) -> bool {
+    message.starts_with("HTTP 400") && message.contains("signature")
+}
+
 /// The thinking budget for a level, always leaving room for the answer.
 fn thinking_budget(level: ThinkingLevel, max_tokens: u64) -> Option<u64> {
     let budget = match level {
@@ -344,7 +514,7 @@ fn thinking_budget(level: ThinkingLevel, max_tokens: u64) -> Option<u64> {
         ThinkingLevel::Minimal => 1024,
         ThinkingLevel::Low => 4096,
         ThinkingLevel::Medium => 8192,
-        ThinkingLevel::High => 16384,
+        ThinkingLevel::High | ThinkingLevel::XHigh | ThinkingLevel::Max => 16384,
     };
     // The API requires max_tokens to exceed the budget; keep a quarter for
     // the reply at least, and never go below the 1024 floor.
@@ -365,6 +535,8 @@ struct PartialBlock {
     name: String,
     text: String,
     input: String,
+    /// A thinking block's signature, or a redacted one's data.
+    signature: String,
 }
 
 /// Builds the assistant message from the Messages API event stream, keyed by
@@ -400,6 +572,13 @@ impl Accumulator {
                     kind: kind.clone(),
                     ..PartialBlock::default()
                 };
+                if kind == "redacted_thinking" {
+                    partial.signature = block
+                        .and_then(|b| b.get("data"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                }
                 if kind == "tool_use" {
                     partial.id = block
                         .and_then(|b| b.get("id"))
@@ -439,6 +618,11 @@ impl Accumulator {
                             self.received_content = true;
                             partial.text.push_str(text);
                             on_event(StreamEvent::ThinkingDelta(text.to_string()));
+                        }
+                    }
+                    Some("signature_delta") => {
+                        if let Some(signature) = delta.get("signature").and_then(Value::as_str) {
+                            partial.signature.push_str(signature);
                         }
                     }
                     Some("input_json_delta") => {
@@ -496,10 +680,22 @@ impl Accumulator {
                 continue;
             };
             match partial.kind.as_str() {
-                "thinking" if !partial.text.is_empty() => {
+                // Signed reasoning is kept even without text (its display
+                // omitted): the next request of the turn hands it back.
+                "thinking" if !partial.text.is_empty() || !partial.signature.is_empty() => {
                     content.push(AssistantContent::Thinking {
                         text: partial.text.clone(),
-                    })
+                        signature: (!partial.signature.is_empty())
+                            .then(|| partial.signature.clone()),
+                        redacted: false,
+                    });
+                }
+                "redacted_thinking" if !partial.signature.is_empty() => {
+                    content.push(AssistantContent::Thinking {
+                        text: String::new(),
+                        signature: Some(partial.signature.clone()),
+                        redacted: true,
+                    });
                 }
                 "text" if !partial.text.is_empty() => content.push(AssistantContent::Text {
                     text: partial.text.clone(),
@@ -601,13 +797,33 @@ mod tests {
         AssistantMessage, ModelSpec, ToolCall, ToolResultMessage, ToolSpec, UserMessage,
     };
 
-    fn model(reasoning: bool) -> ModelSpec {
+    fn model(id: &str) -> ModelSpec {
         ModelSpec {
             provider: "anthropic".into(),
-            id: "claude-x".into(),
+            id: id.into(),
             context_window: 200_000,
             max_tokens: Some(4096),
-            reasoning,
+            thinking: ThinkingLevel::Off,
+        }
+    }
+
+    fn assistant(model: &str, content: Vec<AssistantContent>) -> Message {
+        Message::Assistant(AssistantMessage {
+            content,
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            provider: "anthropic".into(),
+            model: model.into(),
+            error_message: None,
+            timestamp: 0,
+        })
+    }
+
+    fn signed(text: &str, signature: &str) -> AssistantContent {
+        AssistantContent::Thinking {
+            text: text.into(),
+            signature: Some(signature.into()),
+            redacted: false,
         }
     }
 
@@ -628,7 +844,7 @@ mod tests {
         let provider = AnthropicProvider::new("anthropic").with_api_key(Some("k".into()));
         let model = ModelSpec {
             max_tokens: None,
-            ..model(false)
+            ..model("claude-sonnet-4-5")
         };
         let messages = vec![Message::User(UserMessage::text("hi"))];
         let request = Request {
@@ -655,7 +871,7 @@ mod tests {
             Message::User(UserMessage::text("hi")),
             Message::Assistant(AssistantMessage {
                 content: vec![
-                    AssistantContent::Thinking { text: "hmm".into() },
+                    AssistantContent::thinking("hmm"),
                     AssistantContent::Text {
                         text: "reading".into(),
                     },
@@ -664,7 +880,7 @@ mod tests {
                 stop_reason: StopReason::ToolUse,
                 usage: Usage::default(),
                 provider: "anthropic".into(),
-                model: "claude-x".into(),
+                model: "claude-sonnet-4-5".into(),
                 error_message: None,
                 timestamp: 0,
             }),
@@ -676,7 +892,7 @@ mod tests {
             parameters: json!({ "type": "object" }),
         }];
         let request = Request {
-            model: &model(true),
+            model: &model("claude-sonnet-4-5"),
             system_prompt: "be terse",
             messages: &messages,
             tools: &tools,
@@ -700,7 +916,7 @@ mod tests {
             json!({ "role": "user", "content": [{ "type": "text", "text": "hi" }] })
         );
         let blocks = wire[1]["content"].as_array().unwrap();
-        assert_eq!(blocks.len(), 2, "thinking is not replayed");
+        assert_eq!(blocks.len(), 2, "unsigned thinking is not replayed");
         assert_eq!(blocks[0], json!({ "type": "text", "text": "reading" }));
         assert_eq!(blocks[1]["type"], json!("tool_use"));
         assert_eq!(blocks[1]["input"], json!({ "path": "a.rs" }));
@@ -708,12 +924,187 @@ mod tests {
         assert_eq!(wire[2]["content"][0]["type"], json!("tool_result"));
         assert_eq!(wire[2]["content"][0]["tool_use_id"], json!("tu_1"));
 
-        // No thinking when the model is not a reasoning one.
+        // No thinking when it is off.
         let plain = provider.build_body(&Request {
-            model: &model(false),
+            thinking: ThinkingLevel::Off,
             ..request.clone()
         });
         assert!(plain.get("thinking").is_none());
+    }
+
+    #[test]
+    fn each_family_offers_the_levels_its_api_accepts() {
+        use ThinkingLevel::{High, Low, Max, Medium, Minimal, Off, XHigh};
+        let provider = AnthropicProvider::new("anthropic");
+        let levels = |id: &str| provider.thinking_levels(id);
+        assert_eq!(
+            levels("claude-opus-5-5"),
+            vec![Low, Medium, High, XHigh, Max]
+        );
+        assert_eq!(
+            levels("claude-fable-5-1"),
+            vec![Low, Medium, High, XHigh, Max]
+        );
+        assert_eq!(
+            levels("claude-sonnet-5-5"),
+            vec![Off, Low, Medium, High, XHigh, Max]
+        );
+        assert_eq!(
+            levels("claude-opus-5"),
+            vec![Off, Low, Medium, High, XHigh, Max]
+        );
+        assert_eq!(levels("claude-opus-4-6"), vec![Off, Low, Medium, High, Max]);
+        assert_eq!(
+            levels("claude-haiku-4-5"),
+            vec![Off, Minimal, Low, Medium, High]
+        );
+        assert_eq!(
+            levels("claude-sonnet-4-5@20250929"),
+            vec![Off, Minimal, Low, Medium, High]
+        );
+        // A gateway's own model takes the budget.
+        assert_eq!(levels("glm-4.6"), vec![Off, Minimal, Low, Medium, High]);
+        // A Bedrock id, and a Claude newer than the table.
+        assert_eq!(
+            levels("us.anthropic.claude-opus-4-8"),
+            vec![Off, Low, Medium, High, XHigh, Max]
+        );
+        assert_eq!(levels("claude-opus-7"), vec![Low, Medium, High, XHigh, Max]);
+    }
+
+    #[test]
+    fn an_adaptive_model_gets_its_effort_and_a_readable_summary() {
+        let provider = AnthropicProvider::new("anthropic");
+        let messages = vec![Message::User(UserMessage::text("hi"))];
+        let body = |id: &str, thinking| {
+            provider.build_body(&Request {
+                model: &model(id),
+                system_prompt: "",
+                messages: &messages,
+                tools: &[],
+                thinking,
+            })
+        };
+
+        let on = body("claude-opus-5-5", ThinkingLevel::XHigh);
+        assert_eq!(
+            on["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert_eq!(on["output_config"], json!({ "effort": "xhigh" }));
+
+        // Opus 5.5 cannot stop thinking: off is its lowest effort.
+        let off = body("claude-opus-5-5", ThinkingLevel::Off);
+        assert_eq!(off["output_config"], json!({ "effort": "low" }));
+
+        // Sonnet 5.5 stops between tools; others disable.
+        let off = body("claude-sonnet-5-5", ThinkingLevel::Off);
+        assert_eq!(off["thinking"], json!({ "type": "between_tools" }));
+        assert!(off.get("output_config").is_none());
+        let off = body("claude-opus-4-8", ThinkingLevel::Off);
+        assert_eq!(off["thinking"], json!({ "type": "disabled" }));
+
+        // 4.6 has no xhigh and summarizes on its own.
+        let on = body("claude-sonnet-4-6", ThinkingLevel::XHigh);
+        assert_eq!(on["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(on["output_config"], json!({ "effort": "high" }));
+    }
+
+    #[test]
+    fn signed_reasoning_goes_back_only_within_the_current_turn() {
+        let provider = AnthropicProvider::new("anthropic");
+        let call = ToolCall {
+            id: "tu_1".into(),
+            name: "read".into(),
+            arguments: json!({}),
+            extra_content: None,
+        };
+        let id = "claude-opus-5-5";
+        let messages = vec![
+            Message::User(UserMessage::text("first")),
+            assistant(
+                id,
+                vec![
+                    signed("earlier", "s0"),
+                    AssistantContent::Text {
+                        text: "done".into(),
+                    },
+                ],
+            ),
+            Message::User(UserMessage::text("second")),
+            assistant(
+                id,
+                vec![
+                    signed("now", "s1"),
+                    AssistantContent::ToolCall(call.clone()),
+                ],
+            ),
+            Message::ToolResult(ToolResultMessage::text(&call, "contents")),
+            assistant(
+                "claude-opus-5",
+                vec![
+                    AssistantContent::Thinking {
+                        text: String::new(),
+                        signature: Some("opaque".into()),
+                        redacted: true,
+                    },
+                    AssistantContent::ToolCall(call.clone()),
+                ],
+            ),
+        ];
+        let request = Request {
+            model: &model(id),
+            system_prompt: "",
+            messages: &messages,
+            tools: &[],
+            thinking: ThinkingLevel::High,
+        };
+        let body = provider.build_body(&request);
+        let wire = body["messages"].as_array().unwrap();
+        assert_eq!(
+            wire[1]["content"].as_array().unwrap().len(),
+            1,
+            "earlier turn"
+        );
+        assert_eq!(
+            wire[3]["content"][0],
+            json!({ "type": "thinking", "thinking": "now", "signature": "s1" })
+        );
+        // Another model's block is not this one's to read.
+        assert_eq!(wire[5]["content"][0]["type"], json!("tool_use"));
+
+        let stripped = provider.body(&request, false);
+        assert_eq!(
+            stripped["messages"][3]["content"][0]["type"],
+            json!("tool_use")
+        );
+        assert!(is_signature_rejection(
+            "HTTP 400: messages.3.content.0: Invalid `signature` in `thinking` block."
+        ));
+        assert!(!is_signature_rejection("HTTP 429: slow down"));
+    }
+
+    #[test]
+    fn the_stream_keeps_a_blocks_signature_and_redacted_reasoning() {
+        let events = vec![
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "signature_delta", "signature": "abc" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "redacted_thinking", "data": "xyz" } }),
+            json!({ "type": "content_block_stop", "index": 1 }),
+        ];
+        let (message, _) = feed_all(&events);
+        assert_eq!(
+            message.content,
+            vec![
+                signed("", "abc"),
+                AssistantContent::Thinking {
+                    text: String::new(),
+                    signature: Some("xyz".into()),
+                    redacted: true,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -766,7 +1157,7 @@ mod tests {
             Message::ToolResult(ToolResultMessage::text(&a, "one")),
             Message::ToolResult(ToolResultMessage::text(&b, "two")),
         ];
-        let wire = convert_messages(&messages);
+        let wire = convert_messages(&messages, None);
         assert_eq!(wire.len(), 1);
         assert_eq!(wire[0]["role"], json!("user"));
         assert_eq!(wire[0]["content"].as_array().unwrap().len(), 2);

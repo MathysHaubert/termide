@@ -11,12 +11,13 @@ show_blame = false
 
 [ai]
 connection = "local"
-prefer_reasoning = true
+reasoning = "high"
 
 [ai.connections.local]
 provider = "openai_compatible"
 base_url = "http://127.0.0.1:10000/v1"
 model = "qwen3-coder-30b-a3b"
+reasoning_param = "enable_thinking"
 
 [ai.permissions]
 mode = "configured"

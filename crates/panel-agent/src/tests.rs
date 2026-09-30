@@ -9,7 +9,7 @@ use ratatui::text::Line;
 use termide_agent_core::{
     permission_channel, question_channel, Agent, AgentEvent, AssistantContent, AssistantMessage,
     CancelToken, Message, PermissionAnswer, PermissionPrompter, QuestionAnswer, QuestionReply,
-    Request, StopReason, StreamEvent, Timing, ToolCall, ToolContext, ToolDecision,
+    Request, StopReason, StreamEvent, ThinkingLevel, Timing, ToolCall, ToolContext, ToolDecision,
     ToolResultMessage, ToolUpdate, Usage, UserMessage,
 };
 use termide_core::{ConfirmAction, PanelConfig, SegmentKind};
@@ -28,6 +28,9 @@ struct Scripted {
     replies: Mutex<Vec<AssistantMessage>>,
     models: Result<Vec<ModelInfo>, String>,
     seen_models: Mutex<Vec<String>>,
+    /// The reasoning levels offered, and those each call asked for.
+    levels: Vec<ThinkingLevel>,
+    seen_thinking: Mutex<Vec<ThinkingLevel>>,
 }
 
 impl Scripted {
@@ -45,6 +48,13 @@ impl Scripted {
                 },
             ]),
             seen_models: Mutex::new(Vec::new()),
+            levels: vec![
+                ThinkingLevel::Off,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ],
+            seen_thinking: Mutex::new(Vec::new()),
         }
     }
 }
@@ -63,6 +73,7 @@ impl Provider for Scripted {
             .lock()
             .unwrap()
             .push(request.model.id.clone());
+        self.seen_thinking.lock().unwrap().push(request.thinking);
         let mut replies = self.replies.lock().unwrap();
         if replies.is_empty() {
             return AssistantMessage::failed("scripted", "m", StopReason::Error, "exhausted");
@@ -78,16 +89,16 @@ impl Provider for Scripted {
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
         self.models.clone()
     }
+    fn thinking_levels(&self, _model: &str) -> Vec<ThinkingLevel> {
+        self.levels.clone()
+    }
 }
 
 fn reply_thinking(text: &str, thinking: &str) -> AssistantMessage {
     let mut message = reply(text);
-    message.content.insert(
-        0,
-        AssistantContent::Thinking {
-            text: thinking.into(),
-        },
-    );
+    message
+        .content
+        .insert(0, AssistantContent::thinking(thinking));
     message
 }
 
@@ -207,7 +218,7 @@ fn setup_with(provider: Arc<Scripted>) -> AgentPanelSetup {
             id: "m".into(),
             context_window: 1000,
             max_tokens: Some(100),
-            reasoning: false,
+            thinking: ThinkingLevel::Off,
         },
         tools: ToolRegistry::new(),
         rules: PermissionRules::default(),
@@ -1199,22 +1210,81 @@ fn the_session_records_the_provider_kind() {
 }
 
 #[test]
-fn reasoning_toggles_from_the_chip_and_persists_in_the_session() {
+fn the_reasoning_level_is_picked_from_the_chip_and_persists_in_the_session() {
     let dir = tempfile::tempdir().unwrap();
+    let provider = Arc::new(Scripted::new(vec![reply("ok")]));
     let mut panel = AgentPanel::new(AgentPanelSetup {
         session_dir: Some(dir.path().to_path_buf()),
-        ..setup(vec![reply("ok")])
+        ..setup_with(Arc::clone(&provider))
     });
-    assert!(!panel.model.reasoning);
+    assert_eq!(chip(&panel, REASONING_ACTION), "off");
     let path = panel.session.as_ref().unwrap().path().to_path_buf();
 
-    panel.handle_status_action(REASONING_ACTION);
-    assert!(panel.model.reasoning, "the chip turns reasoning on");
+    let events = panel.handle_status_action(REASONING_ACTION);
+    let PanelEvent::ShowSelect { options, .. } = &events[0] else {
+        panic!("a level picker: {events:?}");
+    };
+    assert_eq!(options, &["● off", "  low", "  medium", "  high"]);
+    select(&mut panel, &events[0], 3);
+    assert_eq!(chip(&panel, REASONING_ACTION), "high");
+
+    // The next request asks for it.
+    type_text(&mut panel, "hi");
+    panel.handle_key(chord(KeyCode::Enter, KeyModifiers::NONE));
+    settle(&mut panel);
+    assert_eq!(
+        *provider.seen_thinking.lock().unwrap(),
+        [ThinkingLevel::High]
+    );
 
     // The choice is written to the session, so a resume brings it back.
     let reopened = Session::open(&path).unwrap();
-    assert_eq!(reopened.current_reasoning(), Some(true));
-    assert!(session_model(&panel.configured_model, Some(&reopened)).reasoning);
+    assert_eq!(reopened.current_thinking(), Some(ThinkingLevel::High));
+    assert_eq!(
+        session_model(&panel.configured_model, Some(&reopened)).thinking,
+        ThinkingLevel::High
+    );
+}
+
+#[test]
+fn a_level_the_model_lacks_shows_as_the_nearest_it_has() {
+    let provider = Scripted {
+        levels: vec![ThinkingLevel::Low, ThinkingLevel::High],
+        ..Scripted::new(vec![])
+    };
+    let mut setup = setup_with(Arc::new(provider));
+    setup.model.thinking = ThinkingLevel::Max;
+    let panel = AgentPanel::new(setup);
+    assert_eq!(chip(&panel, REASONING_ACTION), "high");
+}
+
+#[test]
+fn an_on_off_model_flips_from_the_chip() {
+    let provider = Scripted {
+        levels: vec![ThinkingLevel::Off, ThinkingLevel::High],
+        ..Scripted::new(vec![])
+    };
+    let mut panel = AgentPanel::new(setup_with(Arc::new(provider)));
+    assert_eq!(chip(&panel, REASONING_ACTION), "off");
+    panel.handle_status_action(REASONING_ACTION);
+    assert_eq!(chip(&panel, REASONING_ACTION), "on");
+    assert_eq!(panel.model.thinking, ThinkingLevel::High);
+    panel.handle_status_action(REASONING_ACTION);
+    assert_eq!(chip(&panel, REASONING_ACTION), "off");
+}
+
+#[test]
+fn a_model_that_cannot_be_asked_to_reason_has_no_chip() {
+    let provider = Scripted {
+        levels: Vec::new(),
+        ..Scripted::new(vec![])
+    };
+    let mut panel = AgentPanel::new(setup_with(Arc::new(provider)));
+    assert!(!panel
+        .status_segments()
+        .iter()
+        .any(|s| s.action == Some(REASONING_ACTION)));
+    assert!(panel.handle_status_action(REASONING_ACTION).is_empty());
 }
 
 #[test]
@@ -1443,9 +1513,7 @@ fn a_resumed_session_keeps_its_timing() {
     };
     let mut turn = reply("");
     turn.content = vec![
-        AssistantContent::Thinking {
-            text: "let me look".into(),
-        },
+        AssistantContent::thinking("let me look"),
         AssistantContent::ToolCall(tool_call.clone()),
     ];
     session

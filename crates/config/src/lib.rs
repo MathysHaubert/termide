@@ -31,9 +31,11 @@ pub use settings::{
     AiSettings, Config, Connection, CustomLanguage, DatabaseSettings, EditorSettings,
     FileManagerSettings, FoldBlocks, GeneralSettings, GitDiffSettings, GitLogSettings,
     GitStatusSettings, HighlightSettings, IconMode, LegacyConfig, LinkOpen, LoggingSettings,
-    LspServerSettings, LspSettings, TerminalSettings, VfsSettings, ViewerSettings, WebSettings,
-    DEFAULT_CONTEXT_WINDOW_FALLBACK,
+    LspServerSettings, LspSettings, ReasoningParam, TerminalSettings, VfsSettings, ViewerSettings,
+    WebSettings, DEFAULT_CONTEXT_WINDOW_FALLBACK,
 };
+/// The type of `[ai] reasoning`.
+pub use termide_agent_core::ThinkingLevel;
 pub use xdg::{get_config_dir, get_data_dir};
 
 use anyhow::Result;

@@ -55,7 +55,7 @@ fn main() {
         id: model_id,
         context_window,
         max_tokens: Some(2048),
-        reasoning: true,
+        thinking: termide_agent_core::ThinkingLevel::High,
     };
     let provider = Arc::new(
         OpenAiCompatProvider::new("local", url).with_api_key(std::env::var("OPENAI_API_KEY").ok()),

@@ -92,9 +92,33 @@ pub struct ToolCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantContent {
-    Text { text: String },
-    Thinking { text: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+        /// The provider's seal over the reasoning (Anthropic's `signature`),
+        /// which it needs to accept the block back in a later request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+        /// Reasoning the provider returned encrypted: `signature` holds the
+        /// opaque data and `text` is empty.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        redacted: bool,
+    },
     ToolCall(ToolCall),
+}
+
+impl AssistantContent {
+    /// A thinking block with no signature, as most providers return it.
+    #[must_use]
+    pub fn thinking(text: impl Into<String>) -> Self {
+        Self::Thinking {
+            text: text.into(),
+            signature: None,
+            redacted: false,
+        }
+    }
 }
 
 /// A block inside a tool result.
@@ -226,7 +250,7 @@ impl AssistantMessage {
         self.content
             .iter()
             .filter_map(|block| match block {
-                AssistantContent::Thinking { text } => Some(text.as_str()),
+                AssistantContent::Thinking { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect()
@@ -304,9 +328,7 @@ mod tests {
     fn message_round_trips_through_json_with_role_tag() {
         let assistant = AssistantMessage {
             content: vec![
-                AssistantContent::Thinking {
-                    text: "plan".into(),
-                },
+                AssistantContent::thinking("plan"),
                 AssistantContent::Text {
                     text: "hello".into(),
                 },

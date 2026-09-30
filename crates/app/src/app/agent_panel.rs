@@ -12,11 +12,11 @@ use termide_agent_core::{
     build_system_prompt, discover_context_files, ensure_global_layout, AcpConfig, AcpFlavor, Agent,
     AgentDirs, AgentEvent, AutoDenyPrompter, CancelToken, CompactionPolicy, Decision, Message,
     ModelSpec, PermissionHooks, PermissionRules, PersistScope, PromptOptions, Provider, Session,
-    ToolRegistry, UserMessage, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
+    ThinkingLevel, ToolRegistry, UserMessage, DEFAULT_AGENT, GLOBAL_AGENT_DIR, SESSIONS_DIR,
 };
 use termide_agent_hooks::CommandHooks;
 use termide_agent_mcp::Connections;
-use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider};
+use termide_agent_providers::{AnthropicProvider, Compat, OpenAiCompatProvider, ReasoningParam};
 use termide_agent_tools::{builtin_tools, QuestionTool, SkillTool, SubagentRun, TaskTool};
 use termide_agent_web::{web_tools, Web, WebConfig};
 use termide_config::{AiSettings, Connection, WebSettings};
@@ -448,11 +448,7 @@ impl ConnectionCatalog for AiConnections {
         Some(ConnectionChoice {
             name: name.to_string(),
             kind: connection.provider.clone(),
-            provider: build_provider(
-                connection,
-                settings.prefer_reasoning,
-                api_key_of(connection),
-            ),
+            provider: build_provider(connection, api_key_of(connection)),
             model: connection.model.clone(),
             context_window: connection.effective_context_window(),
             backend: cli_provider_backend(&connection.provider, agent),
@@ -543,7 +539,7 @@ struct Subagents {
     /// unless its definition names its own.
     mode: termide_agent_core::ModeHandle,
     max_tokens: Option<u64>,
-    reasoning: bool,
+    reasoning: ThinkingLevel,
     compaction: CompactionPolicy,
 }
 
@@ -594,7 +590,7 @@ impl Subagents {
             id,
             context_window: active.context_window,
             max_tokens: self.max_tokens,
-            reasoning: self.reasoning,
+            thinking: self.reasoning,
         };
         let mut rules = self.rules.clone();
         rules.mode = definition.spec.mode.unwrap_or_else(|| self.mode.get());
@@ -685,11 +681,7 @@ fn agent_setup(
     let (connection_name, connection) =
         session_connection(settings, session.as_ref()).unwrap_or_default();
     let provider_kind = connection.provider.clone();
-    let provider: Arc<dyn Provider> = build_provider(
-        &connection,
-        settings.prefer_reasoning,
-        api_key_of(&connection),
-    );
+    let provider: Arc<dyn Provider> = build_provider(&connection, api_key_of(&connection));
 
     let mut catalog = FsCatalog::new(&cwd, project_root);
     let web = shared_web(&settings.web, &catalog.dirs);
@@ -710,7 +702,7 @@ fn agent_setup(
         rules: settings.permissions.clone(),
         mode: termide_agent_core::ModeHandle::new(settings.permissions.mode),
         max_tokens: settings.output_limit(),
-        reasoning: settings.prefer_reasoning,
+        reasoning: settings.reasoning,
         compaction: settings.compaction,
     }));
     let compaction_prompts = catalog.dirs.compaction_prompts();
@@ -742,7 +734,7 @@ fn agent_setup(
         id: profile.model.unwrap_or_else(|| connection.model.clone()),
         context_window: connection.effective_context_window(),
         max_tokens: settings.output_limit(),
-        reasoning: settings.prefer_reasoning,
+        thinking: settings.reasoning,
     };
     let mut rules = settings.permissions.clone();
     if let Some(mode) = profile.mode {
@@ -857,7 +849,7 @@ pub(crate) fn spawn_settings_model_fetch(
     if connection.is_cli() {
         return None;
     }
-    let provider = build_provider(connection, false, api_key_of(connection));
+    let provider = build_provider(connection, api_key_of(connection));
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(provider.list_models());
@@ -866,14 +858,9 @@ pub(crate) fn spawn_settings_model_fetch(
 }
 
 /// The provider `connection` names: the Anthropic Messages API, or the
-/// OpenAI-compatible endpoint for everything else (asking it for reasoning
-/// effort when `reasoning`). An unknown name falls back to OpenAI-compatible
-/// with a warning.
-fn build_provider(
-    connection: &Connection,
-    reasoning: bool,
-    api_key: Option<String>,
-) -> Arc<dyn Provider> {
+/// OpenAI-compatible endpoint for everything else. An unknown name falls
+/// back to OpenAI-compatible with a warning.
+fn build_provider(connection: &Connection, api_key: Option<String>) -> Arc<dyn Provider> {
     let settings = connection;
     match settings.provider.trim().to_ascii_lowercase().as_str() {
         // A CLI-adapter provider runs over ACP; the built-in model provider is
@@ -905,11 +892,45 @@ fn build_provider(
                 OpenAiCompatProvider::new("agent", settings.base_url.clone())
                     .with_api_key(api_key)
                     .with_compat(Compat {
-                        reasoning_effort: reasoning,
+                        reasoning: reasoning_param(settings),
                         prefill_progress: settings.prefill_progress,
                         ..Compat::default()
                     }),
             )
+        }
+    }
+}
+
+/// The field an OpenAI-compatible connection takes the reasoning level in.
+/// Left to `auto`, the hosted APIs known to take `reasoning_effort` get it
+/// and any other server nothing: an unknown field may fail its requests.
+fn reasoning_param(connection: &Connection) -> ReasoningParam {
+    match connection.reasoning_param {
+        termide_config::ReasoningParam::ReasoningEffort => ReasoningParam::Effort,
+        termide_config::ReasoningParam::EnableThinking => ReasoningParam::EnableThinking,
+        termide_config::ReasoningParam::None => ReasoningParam::None,
+        termide_config::ReasoningParam::Auto => {
+            let rest = connection
+                .base_url
+                .split_once("://")
+                .map_or(connection.base_url.as_str(), |(_, rest)| rest);
+            let host = rest
+                .split(['/', ':'])
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let hosted = [
+                "api.openai.com",
+                "openrouter.ai",
+                "generativelanguage.googleapis.com",
+            ]
+            .iter()
+            .any(|known| host == *known || host.ends_with(&format!(".{known}")));
+            if hosted {
+                ReasoningParam::Effort
+            } else {
+                ReasoningParam::None
+            }
         }
     }
 }
@@ -1028,11 +1049,57 @@ mod tests {
     }
 
     #[test]
+    fn hosted_apis_take_reasoning_effort_and_local_servers_nothing_unless_told() {
+        let at = |base_url: &str, param| {
+            reasoning_param(&Connection {
+                base_url: base_url.into(),
+                reasoning_param: param,
+                ..Connection::default()
+            })
+        };
+        let auto = termide_config::ReasoningParam::Auto;
+        assert_eq!(
+            at("https://api.openai.com/v1", auto),
+            ReasoningParam::Effort
+        );
+        assert_eq!(
+            at("https://openrouter.ai/api/v1", auto),
+            ReasoningParam::Effort
+        );
+        assert_eq!(
+            at(
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                auto
+            ),
+            ReasoningParam::Effort
+        );
+        assert_eq!(at("http://127.0.0.1:10000/v1", auto), ReasoningParam::None);
+        assert_eq!(
+            at("https://api.openai.com.evil.example/v1", auto),
+            ReasoningParam::None
+        );
+        assert_eq!(
+            at(
+                "http://127.0.0.1:8080/v1",
+                termide_config::ReasoningParam::EnableThinking
+            ),
+            ReasoningParam::EnableThinking
+        );
+        assert_eq!(
+            at(
+                "https://api.openai.com/v1",
+                termide_config::ReasoningParam::None
+            ),
+            ReasoningParam::None
+        );
+    }
+
+    #[test]
     fn connections_build_and_hand_their_provider_to_delegated_tasks() {
         let settings = with_cloud();
         let local = &settings.connections["local"];
         let active: ActiveSlot = Arc::new(std::sync::RwLock::new(Active {
-            provider: build_provider(local, false, None),
+            provider: build_provider(local, None),
             model: local.model.clone(),
             context_window: local.effective_context_window(),
         }));
@@ -1066,7 +1133,7 @@ mod tests {
         let local = &built_with.connections["local"];
         let connections = AiConnections {
             active: Arc::new(std::sync::RwLock::new(Active {
-                provider: build_provider(local, false, None),
+                provider: build_provider(local, None),
                 model: local.model.clone(),
                 context_window: local.effective_context_window(),
             })),
@@ -1245,7 +1312,7 @@ mod tests {
         let local = &settings.connections["local"];
         catalog.subagents = Some(Arc::new(Subagents {
             active: Arc::new(std::sync::RwLock::new(Active {
-                provider: build_provider(local, false, None),
+                provider: build_provider(local, None),
                 model: local.model.clone(),
                 context_window: local.effective_context_window(),
             })),
@@ -1256,7 +1323,7 @@ mod tests {
             rules: settings.permissions.clone(),
             mode: termide_agent_core::ModeHandle::new(settings.permissions.mode),
             max_tokens: settings.output_limit(),
-            reasoning: false,
+            reasoning: ThinkingLevel::Off,
             compaction: settings.compaction,
         }));
 

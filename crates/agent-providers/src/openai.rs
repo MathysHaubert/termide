@@ -18,8 +18,8 @@ pub struct Compat {
     /// Name of the output-limit field: `max_tokens` (most servers) or
     /// `max_completion_tokens` (newer OpenAI models).
     pub max_tokens_field: String,
-    /// Send `reasoning_effort` for thinking levels above `Off`.
-    pub reasoning_effort: bool,
+    /// How the server is asked for reasoning.
+    pub reasoning: ReasoningParam,
     /// Echo previous `reasoning_content` back in assistant messages. Off by
     /// default: DeepSeek rejects it, most servers ignore it.
     pub send_reasoning: bool,
@@ -35,12 +35,25 @@ impl Default for Compat {
     fn default() -> Self {
         Self {
             max_tokens_field: "max_tokens".into(),
-            reasoning_effort: false,
+            reasoning: ReasoningParam::None,
             send_reasoning: false,
             prefill_progress: false,
             extra_body: Map::new(),
         }
     }
+}
+
+/// The request field an OpenAI-compatible server takes a reasoning level in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReasoningParam {
+    /// Nothing: the model reasons as the server has it.
+    #[default]
+    None,
+    /// `reasoning_effort` (OpenAI, OpenRouter, Gemini, gpt-oss servers).
+    Effort,
+    /// `chat_template_kwargs.enable_thinking`, the on/off switch of the
+    /// chat templates of Qwen3, GLM and DeepSeek on vLLM or llama.cpp.
+    EnableThinking,
 }
 
 pub struct OpenAiCompatProvider {
@@ -139,9 +152,25 @@ impl OpenAiCompatProvider {
                 .collect();
             body.insert("tools".into(), Value::Array(tools));
         }
-        if self.compat.reasoning_effort {
-            if let Some(effort) = reasoning_effort(request.thinking) {
-                body.insert("reasoning_effort".into(), json!(effort));
+        let levels = self.thinking_levels(&request.model.id);
+        if !levels.is_empty() {
+            let level = request.thinking.nearest(&levels);
+            match self.compat.reasoning {
+                ReasoningParam::None => {}
+                ReasoningParam::Effort => {
+                    // `Off` is offered only where the API spells it `none`.
+                    let effort = match level {
+                        ThinkingLevel::Off => "none",
+                        level => level.label(),
+                    };
+                    body.insert("reasoning_effort".into(), json!(effort));
+                }
+                ReasoningParam::EnableThinking => {
+                    body.insert(
+                        "chat_template_kwargs".into(),
+                        json!({ "enable_thinking": level != ThinkingLevel::Off }),
+                    );
+                }
             }
         }
         for (key, value) in &self.compat.extra_body {
@@ -196,7 +225,7 @@ impl OpenAiCompatProvider {
                         .content
                         .iter()
                         .filter_map(|block| match block {
-                            AssistantContent::Thinking { text } => Some(text.as_str()),
+                            AssistantContent::Thinking { text, .. } => Some(text.as_str()),
                             _ => None,
                         })
                         .collect();
@@ -321,6 +350,14 @@ impl Provider for OpenAiCompatProvider {
         (!host.is_empty()).then(|| host.to_string())
     }
 
+    fn thinking_levels(&self, model: &str) -> Vec<ThinkingLevel> {
+        match self.compat.reasoning {
+            ReasoningParam::None => Vec::new(),
+            ReasoningParam::Effort => effort_levels(model),
+            ReasoningParam::EnableThinking => vec![ThinkingLevel::Off, ThinkingLevel::High],
+        }
+    }
+
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
         let url = format!("{}/models", self.base_url);
         let mut http = self.agent.get(&url).set("Accept", "application/json");
@@ -381,14 +418,42 @@ fn build_agent(connect: Duration, read: Duration) -> ureq::Agent {
         .build()
 }
 
-fn reasoning_effort(level: ThinkingLevel) -> Option<&'static str> {
-    match level {
-        ThinkingLevel::Off => None,
-        ThinkingLevel::Minimal => Some("minimal"),
-        ThinkingLevel::Low => Some("low"),
-        ThinkingLevel::Medium => Some("medium"),
-        ThinkingLevel::High => Some("high"),
+/// The `reasoning_effort` values `model` takes, as levels: OpenAI's own
+/// models by family (a gateway's `openai/` prefix aside), the three common
+/// ones for anything else.
+fn effort_levels(model: &str) -> Vec<ThinkingLevel> {
+    use ThinkingLevel::{High, Low, Medium, Minimal, Off, XHigh};
+    let id = model.to_ascii_lowercase();
+    let id = id.rsplit('/').next().unwrap_or(&id);
+    let codex = id.contains("codex");
+    if let Some(rest) = id.strip_prefix("gpt-5") {
+        // `gpt-5`, `gpt-5-mini`: the first generation; `gpt-5.N` after it.
+        let minor = rest
+            .strip_prefix('.')
+            .map(|rest| {
+                rest.split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .unwrap_or("")
+            })
+            .and_then(|digits| digits.parse::<u32>().ok());
+        return match minor {
+            None if codex => vec![Low, Medium, High],
+            None => vec![Minimal, Low, Medium, High],
+            Some(1) if codex => vec![Low, Medium, High],
+            Some(1) => vec![Off, Low, Medium, High],
+            Some(_) if codex => vec![Low, Medium, High, XHigh],
+            Some(_) if id.contains("pro") => vec![Medium, High, XHigh],
+            Some(_) => vec![Off, Low, Medium, High, XHigh],
+        };
     }
+    if id.starts_with("gpt-6") {
+        return if id.contains("pro") {
+            vec![Medium, High, XHigh]
+        } else {
+            vec![Off, Low, Medium, High, XHigh]
+        };
+    }
+    vec![Low, Medium, High]
 }
 
 /// Models from a `GET /models` body: OpenAI's `{"data": [{"id": …}]}`, or a
@@ -459,7 +524,7 @@ mod tests {
             id: "qwen".into(),
             context_window: 32_000,
             max_tokens: Some(512),
-            reasoning: true,
+            thinking: ThinkingLevel::Off,
         }
     }
 
@@ -551,7 +616,7 @@ mod tests {
     #[test]
     fn body_has_openai_shape_and_honours_compat() {
         let mut compat = Compat {
-            reasoning_effort: true,
+            reasoning: ReasoningParam::Effort,
             send_reasoning: true,
             prefill_progress: true,
             ..Compat::default()
@@ -568,7 +633,7 @@ mod tests {
             Message::User(UserMessage::text("hi")),
             Message::Assistant(AssistantMessage {
                 content: vec![
-                    AssistantContent::Thinking { text: "hmm".into() },
+                    AssistantContent::thinking("hmm"),
                     AssistantContent::ToolCall(call.clone()),
                 ],
                 stop_reason: StopReason::ToolUse,
@@ -620,6 +685,83 @@ mod tests {
         assert!(plain.get("return_progress").is_none());
         assert!(plain.get("reasoning_effort").is_none());
         assert!(plain["messages"][2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn openai_models_offer_their_own_effort_values() {
+        use ThinkingLevel::{High, Low, Medium, Minimal, Off, XHigh};
+        let provider = OpenAiCompatProvider::new("p", "http://x/v1").with_compat(Compat {
+            reasoning: ReasoningParam::Effort,
+            ..Compat::default()
+        });
+        let levels = |id: &str| provider.thinking_levels(id);
+        assert_eq!(levels("gpt-5-mini"), vec![Minimal, Low, Medium, High]);
+        assert_eq!(levels("gpt-5.1"), vec![Off, Low, Medium, High]);
+        assert_eq!(levels("gpt-5.1-codex"), vec![Low, Medium, High]);
+        assert_eq!(
+            levels("openai/gpt-5.4"),
+            vec![Off, Low, Medium, High, XHigh]
+        );
+        assert_eq!(levels("gpt-5.5-pro"), vec![Medium, High, XHigh]);
+        assert_eq!(levels("gpt-5.2-codex"), vec![Low, Medium, High, XHigh]);
+        assert_eq!(levels("o4-mini"), vec![Low, Medium, High]);
+        assert_eq!(levels("gpt-oss-120b"), vec![Low, Medium, High]);
+
+        let messages = vec![Message::User(UserMessage::text("hi"))];
+        let body = |id: &str, thinking| {
+            provider.build_body(&Request {
+                model: &ModelSpec {
+                    id: id.into(),
+                    ..model()
+                },
+                system_prompt: "",
+                messages: &messages,
+                tools: &[],
+                thinking,
+            })
+        };
+        assert_eq!(
+            body("gpt-5.4", ThinkingLevel::Off)["reasoning_effort"],
+            "none"
+        );
+        // Where off is not a value, the least is sent; max falls to xhigh.
+        assert_eq!(body("o3", ThinkingLevel::Off)["reasoning_effort"], "low");
+        assert_eq!(
+            body("gpt-5.4", ThinkingLevel::Max)["reasoning_effort"],
+            "xhigh"
+        );
+    }
+
+    #[test]
+    fn a_chat_template_switch_turns_reasoning_on_or_off() {
+        let provider = OpenAiCompatProvider::new("p", "http://x/v1").with_compat(Compat {
+            reasoning: ReasoningParam::EnableThinking,
+            ..Compat::default()
+        });
+        assert_eq!(
+            provider.thinking_levels("qwen"),
+            vec![ThinkingLevel::Off, ThinkingLevel::High]
+        );
+        let messages = vec![Message::User(UserMessage::text("hi"))];
+        let body = |thinking| {
+            provider.build_body(&Request {
+                model: &model(),
+                system_prompt: "",
+                messages: &messages,
+                tools: &[],
+                thinking,
+            })
+        };
+        assert_eq!(
+            body(ThinkingLevel::Medium)["chat_template_kwargs"],
+            json!({ "enable_thinking": true })
+        );
+        assert_eq!(
+            body(ThinkingLevel::Off)["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+        let silent = OpenAiCompatProvider::new("p", "http://x/v1");
+        assert!(silent.thinking_levels("qwen").is_empty());
     }
 
     #[test]

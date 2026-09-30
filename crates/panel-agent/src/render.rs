@@ -742,21 +742,26 @@ impl AgentPanel {
                 sep(),
                 StatusSegment::clickable(t.agent_chip_mode(), SegmentKind::Label, MODE_ACTION),
                 StatusSegment::clickable(self.mode.get().label(), SegmentKind::Active, MODE_ACTION),
-                sep(),
-                StatusSegment::clickable(
-                    t.agent_chip_reasoning(),
-                    SegmentKind::Label,
-                    REASONING_ACTION,
-                ),
-                StatusSegment::clickable(
-                    if self.model.reasoning {
-                        t.agent_chip_on()
-                    } else {
-                        t.agent_chip_off()
-                    },
-                    SegmentKind::Active,
-                    REASONING_ACTION,
-                ),
+            ]);
+            // A model that cannot be asked to reason has no level to show.
+            let levels = self.thinking_levels();
+            if !levels.is_empty() {
+                let level = self.effective_thinking(&levels);
+                segments.extend([
+                    sep(),
+                    StatusSegment::clickable(
+                        t.agent_chip_reasoning(),
+                        SegmentKind::Label,
+                        REASONING_ACTION,
+                    ),
+                    StatusSegment::clickable(
+                        Self::thinking_label(level, &levels),
+                        SegmentKind::Active,
+                        REASONING_ACTION,
+                    ),
+                ]);
+            }
+            segments.extend([
                 sep(),
                 StatusSegment::clickable(t.agent_chip_tools(), SegmentKind::Label, TOOLSET_ACTION),
                 StatusSegment::clickable(

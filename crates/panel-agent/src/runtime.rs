@@ -121,10 +121,10 @@ pub(crate) fn session_model(configured: &ModelSpec, session: Option<&Session>) -
         },
         _ => configured.clone(),
     };
-    // A reasoning choice made in this session (the status-bar toggle) outlives
-    // a resume, overriding the configured default.
-    if let Some(reasoning) = session.and_then(Session::current_reasoning) {
-        model.reasoning = reasoning;
+    // A reasoning level picked in this session (the status-bar chip)
+    // outlives a resume, overriding the configured default.
+    if let Some(level) = session.and_then(Session::current_thinking) {
+        model.thinking = level;
     }
     model
 }

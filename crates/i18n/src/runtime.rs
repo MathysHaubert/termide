@@ -467,6 +467,7 @@ impl Translation for RuntimeTranslation {
         agent_not_configured,
         agent_change_model,
         agent_change_mode,
+        agent_change_reasoning,
         agent_model_prompt,
         agent_model_other,
         agent_models_loading,
@@ -543,8 +544,6 @@ impl Translation for RuntimeTranslation {
         agent_notice_clipboard_failed,
         agent_notice_goal_reached,
         agent_notice_looping,
-        agent_notice_reasoning_on,
-        agent_notice_reasoning_off,
         agent_change_agent,
         agent_prompts,
         agent_no_prompts,
@@ -602,6 +601,7 @@ impl Translation for RuntimeTranslation {
         settings_ai_connection_name,
         settings_ai_connection_default,
         settings_ai_connection_prefill_progress,
+        settings_ai_connection_reasoning_param,
         settings_ai_connection_name_taken,
         settings_web_backend,
         menu_ai_show_browser,
@@ -1022,6 +1022,10 @@ impl Translation for RuntimeTranslation {
             "agent_notice_cannot_change_reasoning_fmt",
             &[("error", error)],
         )
+    }
+
+    fn agent_notice_reasoning_fmt(&self, level: &str) -> String {
+        self.format("agent_notice_reasoning_fmt", &[("level", level)])
     }
 
     fn agent_notice_model_fmt(&self, id: &str) -> String {

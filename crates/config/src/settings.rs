@@ -106,10 +106,15 @@ pub struct AiSettings {
     #[serde(default = "agent_defaults::max_tokens")]
     pub max_tokens_per_turn: i64,
 
-    /// Prefer reasoning: request `reasoning_effort` / extended thinking from
-    /// models that support it (ignored by models that do not).
-    #[serde(default = "agent_defaults::reasoning")]
-    pub prefer_reasoning: bool,
+    /// The reasoning level new sessions ask for (`off` through `max`); a
+    /// model that lacks it gets the nearest one it has. The older
+    /// `prefer_reasoning = true | false` reads as `high` or `off`.
+    #[serde(
+        default = "agent_defaults::reasoning",
+        alias = "prefer_reasoning",
+        deserialize_with = "reasoning_level"
+    )]
+    pub reasoning: termide_agent_core::ThinkingLevel,
 
     /// Permission rules: a mode (`configured` unless the file names another)
     /// plus one `pattern = decision` table per tool.
@@ -174,6 +179,69 @@ pub struct Connection {
     /// default: servers that do not know the field may reject the request.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prefill_progress: bool,
+    /// The field an `openai_compatible` server takes the reasoning level in.
+    #[serde(default, skip_serializing_if = "ReasoningParam::is_auto")]
+    pub reasoning_param: ReasoningParam,
+}
+
+/// `reasoning_param` of an `openai_compatible` connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningParam {
+    /// `reasoning_effort` for the hosted APIs known to take it (OpenAI,
+    /// OpenRouter, Gemini), nothing elsewhere.
+    #[default]
+    Auto,
+    /// `reasoning_effort`, the OpenAI field.
+    ReasoningEffort,
+    /// `chat_template_kwargs.enable_thinking`, the on/off switch of the chat
+    /// templates of Qwen3, GLM and DeepSeek on vLLM or llama.cpp.
+    EnableThinking,
+    /// Nothing: the server decides.
+    None,
+}
+
+impl ReasoningParam {
+    pub const ALL: [Self; 4] = [
+        Self::Auto,
+        Self::ReasoningEffort,
+        Self::EnableThinking,
+        Self::None,
+    ];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::ReasoningEffort => "reasoning_effort",
+            Self::EnableThinking => "enable_thinking",
+            Self::None => "none",
+        }
+    }
+
+    #[must_use]
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
+}
+
+/// A reasoning level, or the on/off switch it replaced.
+fn reasoning_level<'de, D>(deserializer: D) -> Result<termide_agent_core::ThinkingLevel, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use termide_agent_core::ThinkingLevel;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum LevelOrSwitch {
+        Switch(bool),
+        Level(ThinkingLevel),
+    }
+    Ok(match LevelOrSwitch::deserialize(deserializer)? {
+        LevelOrSwitch::Switch(true) => ThinkingLevel::High,
+        LevelOrSwitch::Switch(false) => ThinkingLevel::Off,
+        LevelOrSwitch::Level(level) => level,
+    })
 }
 
 impl Default for Connection {
@@ -185,6 +253,7 @@ impl Default for Connection {
             api_key_env: String::new(),
             context_window_fallback: None,
             prefill_progress: false,
+            reasoning_param: ReasoningParam::Auto,
         }
     }
 }
@@ -357,7 +426,7 @@ impl Default for AiSettings {
             connection: String::new(),
             connections: std::collections::BTreeMap::new(),
             max_tokens_per_turn: agent_defaults::max_tokens(),
-            prefer_reasoning: agent_defaults::reasoning(),
+            reasoning: agent_defaults::reasoning(),
             permissions: termide_agent_core::PermissionRules::default(),
             compaction: termide_agent_core::CompactionPolicy::default(),
             fold_blocks: FoldBlocks::default(),
@@ -733,8 +802,8 @@ mod agent_defaults {
         // No bound: the model decides how long to answer.
         0
     }
-    pub fn reasoning() -> bool {
-        true
+    pub fn reasoning() -> termide_agent_core::ThinkingLevel {
+        termide_agent_core::ThinkingLevel::High
     }
     pub fn bell_on_attention() -> bool {
         true
@@ -1120,7 +1189,7 @@ mod ai_settings_tests {
     #[test]
     fn new_sessions_reason_and_follow_the_configured_rules() {
         let defaults = AiSettings::default();
-        assert!(defaults.prefer_reasoning);
+        assert_eq!(defaults.reasoning, termide_agent_core::ThinkingLevel::High);
         assert!(defaults.bell_on_attention);
         assert_eq!(
             defaults.permissions.mode,
@@ -1140,7 +1209,25 @@ mod ai_settings_tests {
         let parsed: AiSettings =
             toml::from_str("prefer_reasoning = false\n[permissions]\nmode = \"auto\"\n").unwrap();
         assert_eq!(parsed.permissions.mode, termide_agent_core::Mode::All);
-        assert!(!parsed.prefer_reasoning);
+        assert_eq!(parsed.reasoning, termide_agent_core::ThinkingLevel::Off);
+        let parsed: AiSettings = toml::from_str("prefer_reasoning = true\n").unwrap();
+        assert_eq!(parsed.reasoning, termide_agent_core::ThinkingLevel::High);
+        let parsed: AiSettings = toml::from_str("reasoning = \"xhigh\"\n").unwrap();
+        assert_eq!(parsed.reasoning, termide_agent_core::ThinkingLevel::XHigh);
+        assert!(toml::from_str::<AiSettings>("reasoning = \"extreme\"\n").is_err());
+    }
+
+    #[test]
+    fn a_connection_names_its_reasoning_param_only_when_set() {
+        let mut local = Connection::default();
+        assert!(!toml::to_string(&local).unwrap().contains("reasoning_param"));
+        local.reasoning_param = ReasoningParam::EnableThinking;
+        let text = toml::to_string(&local).unwrap();
+        assert!(
+            text.contains("reasoning_param = \"enable_thinking\""),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<Connection>(&text).unwrap(), local);
     }
 
     #[test]

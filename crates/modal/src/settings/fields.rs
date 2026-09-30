@@ -198,7 +198,7 @@ pub(super) fn fields_for_tab(tab: SettingsTab) -> Vec<FieldDescriptor> {
             },
             FieldDescriptor {
                 label: t.settings_agent_reasoning(),
-                field_type: FieldType::Bool,
+                field_type: FieldType::Enum,
             },
             FieldDescriptor {
                 label: t.settings_agent_autofold(),
@@ -301,7 +301,7 @@ pub(super) fn get_field_value(config: &Config, tab: SettingsTab, index: usize) -
                 || i18n::t().settings_value_no_limit().to_string(),
                 |n| n.to_string(),
             ),
-            1 => bool_str(config.ai.prefer_reasoning),
+            1 => config.ai.reasoning.label().to_string(),
             2 => fold_blocks_label(config.ai.fold_blocks),
             3 => config.ai.web.backend.clone(),
             4 => config.ai.web.engine.clone(),
@@ -395,11 +395,6 @@ pub(super) fn toggle_field(config: &mut Config, tab: SettingsTab, index: usize) 
                     !config.file_manager.dir_size_in_wide_view;
             }
         }
-        SettingsTab::Ai => {
-            if index == 1 {
-                config.ai.prefer_reasoning = !config.ai.prefer_reasoning;
-            }
-        }
         _ => {}
     }
 }
@@ -452,6 +447,17 @@ pub(super) fn enum_options(config: &Config, tab: SettingsTab, index: usize) -> O
                 .map(|s| s.to_string())
                 .collect();
             (values.clone(), values, config.logging.min_level.clone())
+        }
+        (SettingsTab::Ai, 1) => {
+            let values: Vec<String> = termide_config::ThinkingLevel::ALL
+                .iter()
+                .map(|level| level.label().to_string())
+                .collect();
+            (
+                values.clone(),
+                values,
+                config.ai.reasoning.label().to_string(),
+            )
         }
         (SettingsTab::Ai, 2) => {
             let values: Vec<String> = termide_config::FoldBlocks::ALL
@@ -509,6 +515,11 @@ pub(super) fn apply_enum_value(config: &mut Config, tab: SettingsTab, index: usi
             }
         }
         (SettingsTab::Logging, 1) => config.logging.min_level = value.to_string(),
+        (SettingsTab::Ai, 1) => {
+            if let Some(level) = termide_config::ThinkingLevel::parse(value) {
+                config.ai.reasoning = level;
+            }
+        }
         (SettingsTab::Ai, 2) => {
             if let Some(fold) = termide_config::FoldBlocks::ALL
                 .into_iter()
@@ -595,6 +606,21 @@ pub(super) fn step_value(value: &mut String, options: &[String], forward: bool) 
     *value = options[next].clone();
 }
 
+/// Step the reasoning level new sessions ask for, wrapping.
+fn cycle_reasoning(config: &mut Config, forward: bool) {
+    let all = termide_config::ThinkingLevel::ALL;
+    let pos = all
+        .iter()
+        .position(|level| *level == config.ai.reasoning)
+        .unwrap_or(0);
+    let len = all.len();
+    config.ai.reasoning = all[if forward {
+        (pos + 1) % len
+    } else {
+        (pos + len - 1) % len
+    }];
+}
+
 /// Cycle one of the AI tab's web enum fields (3 to 5).
 fn cycle_web_field(config: &mut Config, index: usize, forward: bool) {
     let Some(options) = enum_options(config, SettingsTab::Ai, index) else {
@@ -653,6 +679,7 @@ pub(super) fn cycle_enum_forward(config: &mut Config, tab: SettingsTab, index: u
             }
         }
         SettingsTab::Ai => match index {
+            1 => cycle_reasoning(config, true),
             2 => cycle_fold_blocks(config, true),
             3..=5 => cycle_web_field(config, index, true),
             AI_PERMISSION_MODE_FIELD => cycle_permission_mode(config, true),
@@ -703,6 +730,7 @@ pub(super) fn cycle_enum_backward(config: &mut Config, tab: SettingsTab, index: 
             }
         }
         SettingsTab::Ai => match index {
+            1 => cycle_reasoning(config, false),
             2 => cycle_fold_blocks(config, false),
             3..=5 => cycle_web_field(config, index, false),
             AI_PERMISSION_MODE_FIELD => cycle_permission_mode(config, false),

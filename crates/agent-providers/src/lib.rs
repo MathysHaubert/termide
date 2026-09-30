@@ -15,5 +15,5 @@ mod retry;
 mod sse;
 
 pub use anthropic::AnthropicProvider;
-pub use openai::{Compat, OpenAiCompatProvider};
+pub use openai::{Compat, OpenAiCompatProvider, ReasoningParam};
 pub use retry::RetryPolicy;

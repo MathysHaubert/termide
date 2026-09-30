@@ -801,7 +801,7 @@ crate: the surface used is small, and the crate would bring tokio.
 One wire format first: OpenAI-compatible streaming chat completions
 (`crates/agent-providers`), which covers llama.cpp, Ollama, vLLM, omlx,
 OpenRouter and most gateways. Vendor differences are data in `Compat`
-(`max_tokens_field`, `reasoning_effort`, `send_reasoning`, `prefill_progress`,
+(`max_tokens_field`, `reasoning`, `send_reasoning`, `prefill_progress`,
 `extra_body`), the
 way pi's per-model `compat` table works, instead of one code path per vendor.
 
@@ -809,11 +809,22 @@ Reasoning between turns: Anthropic requires thinking blocks to be echoed with
 their signature; DeepSeek rejects an echoed `reasoning_content`; vLLM and Qwen
 accept it for the current turn. Decision: keep thinking in the transcript for
 the UI and the session, do not send it back by default; `send_reasoning` opts
-in for OpenAI, and the Anthropic provider drops prior thinking blocks rather
-than replay them, since the transcript does not keep the block signature the
-API demands. Extended thinking for the current turn is requested with a
-`thinking` budget derived from the thinking level and capped below
-`max_tokens`.
+in for OpenAI. The Anthropic provider keeps each block's signature and hands
+back only the model's own blocks of the turn in progress (after the last user
+message), which a tool round needs: dropping the earlier ones is removing a
+leading run, which the API allows, so a compacted history or a rebuilt system
+prompt does not void them. Should the API still refuse a signature, the
+request is sent once more without reasoning, the documented recovery.
+
+Reasoning levels: providers expose different controls — Anthropic an effort
+(`low` to `max`) with adaptive thinking on Claude 4.6 and later, a token
+budget before; OpenAI a `reasoning_effort` whose values differ by model
+(`minimal` on GPT-5, `none` from 5.1, `xhigh` from 5.2); chat templates an
+on/off switch. Decision: one provider-neutral `ThinkingLevel` (`off` to
+`max`) on the model spec, and `Provider::thinking_levels` for what a model
+accepts; the provider maps the level to its field and falls back to the
+nearest level offered, so a choice survives a model switch. The level the
+user picked, not the fallback, is what the session records.
 
 Retries: pi retries at the session level (3 attempts, 2 s base), Claude Code and
 Codex inside the client. Decision: inside the provider, only while no content

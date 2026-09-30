@@ -156,9 +156,7 @@ impl Accumulator {
     ) -> AssistantMessage {
         let mut content = Vec::new();
         if !self.reasoning.is_empty() {
-            content.push(AssistantContent::Thinking {
-                text: self.reasoning,
-            });
+            content.push(AssistantContent::thinking(self.reasoning));
         }
         if !self.text.is_empty() {
             content.push(AssistantContent::Text { text: self.text });
@@ -279,7 +277,7 @@ data: [DONE]
         assert_eq!(message.stop_reason, StopReason::ToolUse);
         assert_eq!(message.content.len(), 3);
         assert!(
-            matches!(&message.content[0], AssistantContent::Thinking { text } if text.contains("README.md"))
+            matches!(&message.content[0], AssistantContent::Thinking { text, .. } if text.contains("README.md"))
         );
         assert!(matches!(&message.content[1], AssistantContent::Text { text } if text == "\n\n"));
         let call = message.tool_calls().next().unwrap();

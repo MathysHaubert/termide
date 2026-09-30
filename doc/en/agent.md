@@ -20,7 +20,7 @@ the panel refuses to open and says so.
 [ai]
 connection = "local"               # the one new sessions start on; else the first by name
 max_tokens_per_turn = 0            # default: no limit, the model decides
-prefer_reasoning = true            # default; send reasoning_effort to models that support it
+reasoning = "high"                 # default; off | minimal | low | medium | high | xhigh | max
 fold_blocks = "immediately"        # immediately (default) | on-finish | never
 bell_on_attention = true           # default; ring the bell when a panel out of sight waits for you
 
@@ -31,6 +31,7 @@ model = "Qwen3.8-Flash-Next-oQ4e-mtp"  # left out: the provider's first model
 # api_key_env = "OPENAI_API_KEY"   # name of the variable, never the key itself
 # context_window_fallback = 32000  # used only when the server does not report a window
 # prefill_progress = true          # ask a llama.cpp server for its prompt-processing progress
+# reasoning_param = "enable_thinking"  # auto (default) | reasoning_effort | enable_thinking | none
 
 [ai.connections.cloud]
 provider = "anthropic_compatible"
@@ -42,20 +43,40 @@ provider = "codex"                 # a CLI agent needs nothing else
 ```
 
 A connection carries `provider`, `base_url`, `model`, `api_key_env`,
-`context_window_fallback` and, for `openai_compatible`, `prefill_progress`;
-what it leaves out takes that field's default. `prefill_progress` sends
-`return_progress` with each request, which llama.cpp answers with its
-prompt-processing progress; it is off by default because servers that do not
-know the field (OpenAI's own API among them) may reject the request.
-Everything else in `[ai]` — the output limit, reasoning, permissions,
-compaction and the rest — applies whichever connection a session runs on.
+`context_window_fallback` and, for `openai_compatible`, `prefill_progress`
+and `reasoning_param`; what it leaves out takes that field's default.
+`prefill_progress` sends `return_progress` with each request, which llama.cpp
+answers with its prompt-processing progress; it is off by default because
+servers that do not know the field (OpenAI's own API among them) may reject
+the request. Everything else in `[ai]` — the output limit, reasoning,
+permissions, compaction and the rest — applies whichever connection a session
+runs on.
+
+`reasoning` is the level new sessions ask for: `off`, `minimal`, `low`,
+`medium`, `high` (the default), `xhigh` or `max`. Each model offers the levels
+its API accepts, and a level it lacks falls to the nearest one it has: Claude
+Opus 5.5 and Fable cannot stop thinking, so `off` gets their lowest effort,
+and `max` on a model that tops out at `high` gets `high`. On the Messages API
+the model decides the form: adaptive thinking with its effort on Claude 4.6
+and later (asking for the reasoning's summary, which the newer models
+otherwise leave out), a thinking budget on Claude 4.5 and older and on a
+gateway's own models. An OpenAI-compatible connection sends the level in the
+field its `reasoning_param` names: `reasoning_effort` (OpenAI's models offer
+their own set of values, other models `low`, `medium` and `high`),
+`enable_thinking` — `chat_template_kwargs.enable_thinking`, the on/off switch
+of the Qwen3, GLM and DeepSeek chat templates on vLLM or llama.cpp — or
+`none`. The default, `auto`, sends `reasoning_effort` to OpenAI, OpenRouter and
+the Gemini API and nothing to other servers, which may reject a field they do
+not know; a model that is sent nothing reasons as its server has it and shows
+no **Reasoning** chip. The older `prefer_reasoning = true | false` still
+reads, as `high` or `off`.
 
 The settings modal (the gear, or the command palette) has all of it under
 **AI**. **Connections** comes first: each row names a connection with its
 provider and model, the one new sessions start on marked `●`. `Enter` or a
 click opens a connection on a page of its own — name, provider, base URL, API
-key variable, model, context window, **Prefill progress (llama.cpp)** (for an
-OpenAI-compatible one) and **Use by default** (new sessions start
+key variable, model, context window, **Prefill progress (llama.cpp)** and
+**Reasoning parameter** (for an OpenAI-compatible one) and **Use by default** (new sessions start
 on it) — and **[ Back to list ]**, `Esc` or `Backspace` returns to the list;
 **+ Add connection** adds an OpenAI-compatible one, and
 **[ Delete connection ]** on the page, or `Del` on its row, removes one.
@@ -108,7 +129,7 @@ A tool call a model signs — Gemini's thought signature, in the call's
 the endpoint requires. For an Anthropic
 subscription set `provider = "anthropic_compatible"`, drop `base_url` (the API root is
 built in; set it only for a gateway) and point `api_key_env` at your
-`ANTHROPIC_API_KEY`; `prefer_reasoning = true` then turns on extended thinking. The
+`ANTHROPIC_API_KEY`; the reasoning level then asks the model to think. The
 **Model** chip lists the endpoint's models for each.
 
 `provider = "claude_code"`, `provider = "codex"` and `provider = "gemini_cli"`
@@ -393,8 +414,8 @@ the result summary. The full, untouched log is still
 written to a file whose path the tool reports, and you still see the raw
 stream live in the panel.
 
-The status chips run, left to right: the agent, the permission mode, a
-**Reasoning** toggle (`on`/`off`), the connection with its protocol
+The status chips run, left to right: the agent, the permission mode, the
+**Reasoning** level (none for a model that cannot be asked), the connection with its protocol
 (`local · OpenAI Compatible`) and the model. The session's token totals and
 the context window sit flush right; on a narrow terminal the chips on the left
 are cut, never these. The totals are `↑` the prompt tokens billed in full (the
@@ -403,9 +424,11 @@ served, shown once there are any, and `↓` the output: `↑2.1k ↻48k ↓900`.
 window is the tokens used of it with a fill bar, `35k/262k ▰▰▱▱▱▱▱▱`; for
 Claude Code, Codex and Gemini CLI both come from what the agent reports, and the window
 shows once it has.
-Agent, mode, reasoning, connection and model are buttons. Clicking **Reasoning** asks the model to reason (extended thinking
-/ `reasoning_effort`) from the next request; the choice is remembered in the
-session, so a resume comes back with it. What the agent is doing right now is
+Agent, mode, reasoning, connection and model are buttons. Clicking **Reasoning** lists
+the levels the model offers (an on/off model just flips) and applies the one
+picked from the next request; the choice is remembered in the session, so a
+resume comes back with it, and stays when the model changes, falling to the
+nearest level the new one has. What the agent is doing right now is
 not repeated in the status bar: each chat block carries it in its byline.
 
 Typing `/` opens a list of the matching prompt templates above the input;

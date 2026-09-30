@@ -454,6 +454,7 @@ pub trait Translation: Send + Sync {
     fn agent_change_model(&self) -> &str;
     /// Agent panel: open the permission-mode picker
     fn agent_change_mode(&self) -> &str;
+    fn agent_change_reasoning(&self) -> &str;
     /// Prompt asking for a model id by hand
     fn agent_model_prompt(&self) -> &str;
     /// Model picker: last entry, type an id instead
@@ -677,8 +678,6 @@ pub trait Translation: Send + Sync {
     fn agent_notice_clipboard_failed(&self) -> &str;
     fn agent_notice_goal_reached(&self) -> &str;
     fn agent_notice_looping(&self) -> &str;
-    fn agent_notice_reasoning_on(&self) -> &str;
-    fn agent_notice_reasoning_off(&self) -> &str;
 
     // Agent panel — transient notices (with values)
     fn agent_notice_cannot_continue_fmt(&self, error: &str) -> String;
@@ -724,6 +723,7 @@ pub trait Translation: Send + Sync {
     fn agent_notice_cannot_switch_agent_fmt(&self, error: &str) -> String;
     fn agent_notice_cannot_switch_model_fmt(&self, error: &str) -> String;
     fn agent_notice_cannot_change_reasoning_fmt(&self, error: &str) -> String;
+    fn agent_notice_reasoning_fmt(&self, level: &str) -> String;
     fn agent_notice_model_fmt(&self, id: &str) -> String;
     fn agent_notice_cannot_open_session_fmt(&self, error: &str) -> String;
     fn agent_notice_cannot_open_block_fmt(&self, error: &str) -> String;
@@ -846,6 +846,7 @@ pub trait Translation: Send + Sync {
     /// Settings modal: the switch that asks an OpenAI-compatible server for
     /// its prompt-processing progress.
     fn settings_ai_connection_prefill_progress(&self) -> &str;
+    fn settings_ai_connection_reasoning_param(&self) -> &str;
     /// Settings modal: a connection left without a name, or with another's.
     fn settings_ai_connection_name_taken(&self) -> &str;
     /// Settings modal: the permission mode new agent sessions start in.

@@ -12,7 +12,7 @@ TermIDE 内置了一个编码代理：在这个面板里，你用自然语言描
 [ai]
 connection = "local"               # 新会话使用的连接；未设置时按名称取第一个
 max_tokens_per_turn = 0            # 默认：不限制，由模型决定
-prefer_reasoning = true            # 默认；向支持的模型发送 reasoning_effort
+reasoning = "high"                 # 默认；off | minimal | low | medium | high | xhigh | max
 fold_blocks = "immediately"        # immediately（默认）| on-finish | never
 bell_on_attention = true           # 默认；不在视线内的面板等待你时响铃
 
@@ -23,6 +23,7 @@ model = "Qwen3.8-Flash-Next-oQ4e-mtp"  # 省略时：提供方列出的第一个
 # api_key_env = "OPENAI_API_KEY"   # 变量名，绝不是密钥本身
 # context_window_fallback = 32000  # 仅在服务器未报告窗口大小时使用
 # prefill_progress = true          # 向 llama.cpp 服务器请求提示词处理进度
+# reasoning_param = "enable_thinking"  # auto（默认）| reasoning_effort | enable_thinking | none
 
 [ai.connections.cloud]
 provider = "anthropic_compatible"
@@ -33,9 +34,11 @@ api_key_env = "ANTHROPIC_API_KEY"
 provider = "codex"                 # CLI 代理无需其他设置
 ```
 
-连接包含 `provider`、`base_url`、`model`、`api_key_env`、`context_window_fallback`，以及 `openai_compatible` 专用的 `prefill_progress`；省略的字段取其默认值。`prefill_progress` 会在每个请求中发送 `return_progress`，llama.cpp 以其提示词处理进度作答；它默认关闭，因为不认识该字段的服务器（包括 OpenAI 自己的 API）可能拒绝请求。`[ai]` 中的其他设置——输出上限、推理、权限、压缩等——无论会话使用哪个连接都生效。
+连接包含 `provider`、`base_url`、`model`、`api_key_env`、`context_window_fallback`，以及 `openai_compatible` 专用的 `prefill_progress` 和 `reasoning_param`；省略的字段取其默认值。`prefill_progress` 会在每个请求中发送 `return_progress`，llama.cpp 以其提示词处理进度作答；它默认关闭，因为不认识该字段的服务器（包括 OpenAI 自己的 API）可能拒绝请求。`[ai]` 中的其他设置——输出上限、推理、权限、压缩等——无论会话使用哪个连接都生效。
 
-设置模态窗口（齿轮按钮或命令面板）在 **AI** 下包含全部设置。最前面是**连接**：每一行显示一个连接的名称、提供方和模型，新会话使用的那个标有 `●`。`Enter` 或单击会在独立页面中打开该连接——名称、提供方、基础 URL、API 密钥变量、模型、上下文窗口、**预填充进度（llama.cpp）**（仅 OpenAI 兼容连接）以及**默认使用**（新会话使用它）——**[ 返回列表 ]**、`Esc` 或 `Backspace` 返回列表；**+ 添加连接** 添加一个 OpenAI 兼容连接，页面上的 **[ 删除连接 ]** 或其行上的 `Del` 删除连接。始终恰好有一个默认连接：第一个添加的连接即为默认，之后的连接只有在你打开其开关时才会接替；关闭开关（或删除默认连接）会把默认身份交给按名称排序的第一个其他连接。新连接在你命名之前以其提供方命名。模型是一个下拉列表：最前面是**自动（由提供方决定）**，然后是该连接的模型（页面打开时在后台获取），最后是“输入模型 ID…”，用于端点无法列出模型时手动输入。自动（即连接的模型留空）会使用提供方列出的第一个模型（CLI 代理则使用其自身的默认模型）；在列表返回之前发送的请求会带着提示停留在输入框中等待。文本字段的编辑方式与 termide 中所有输入框相同：光标按字符和单词移动，`Shift` 或鼠标拖动进行选择，`Ctrl+C`/`Ctrl+X`/`Ctrl+V`、`Ctrl+A` 和撤销均可用。
+`reasoning` 是新会话请求的推理级别：`off`、`minimal`、`low`、`medium`、`high`（默认）、`xhigh` 或 `max`。每个模型只提供其 API 接受的级别，缺少的级别会落到它拥有的最接近的级别：Claude Opus 5.5 和 Fable 无法停止思考，因此 `off` 得到它们的最低努力程度；在上限为 `high` 的模型上，`max` 变为 `high`。在 Messages API 上由模型决定形式：Claude 4.6 及更新版本使用自适应思考及其努力程度（并请求推理摘要，否则较新的模型不会返回），Claude 4.5 及更早版本以及网关自己的模型使用思考预算。OpenAI 兼容连接把级别放在其 `reasoning_param` 指定的字段中：`reasoning_effort`（OpenAI 的模型有各自的取值集合，其他模型为 `low`、`medium` 和 `high`）、`enable_thinking`——即 `chat_template_kwargs.enable_thinking`，vLLM 或 llama.cpp 上 Qwen3、GLM 和 DeepSeek 聊天模板的开关——或 `none`。默认值 `auto` 向 OpenAI、OpenRouter 和 Gemini API 发送 `reasoning_effort`，对其他服务器不发送任何内容，因为它们可能拒绝不认识的字段；不被发送任何内容的模型按其服务器的设置进行推理，也没有 **Reasoning** 标签。旧的 `prefer_reasoning = true | false` 仍然可读，分别读作 `high` 或 `off`。
+
+设置模态窗口（齿轮按钮或命令面板）在 **AI** 下包含全部设置。最前面是**连接**：每一行显示一个连接的名称、提供方和模型，新会话使用的那个标有 `●`。`Enter` 或单击会在独立页面中打开该连接——名称、提供方、基础 URL、API 密钥变量、模型、上下文窗口、**预填充进度（llama.cpp）**和**推理参数**（仅 OpenAI 兼容连接）以及**默认使用**（新会话使用它）——**[ 返回列表 ]**、`Esc` 或 `Backspace` 返回列表；**+ 添加连接** 添加一个 OpenAI 兼容连接，页面上的 **[ 删除连接 ]** 或其行上的 `Del` 删除连接。始终恰好有一个默认连接：第一个添加的连接即为默认，之后的连接只有在你打开其开关时才会接替；关闭开关（或删除默认连接）会把默认身份交给按名称排序的第一个其他连接。新连接在你命名之前以其提供方命名。模型是一个下拉列表：最前面是**自动（由提供方决定）**，然后是该连接的模型（页面打开时在后台获取），最后是“输入模型 ID…”，用于端点无法列出模型时手动输入。自动（即连接的模型留空）会使用提供方列出的第一个模型（CLI 代理则使用其自身的默认模型）；在列表返回之前发送的请求会带着提示停留在输入框中等待。文本字段的编辑方式与 termide 中所有输入框相同：光标按字符和单词移动，`Shift` 或鼠标拖动进行选择，`Ctrl+C`/`Ctrl+X`/`Ctrl+V`、`Ctrl+A` 和撤销均可用。
 
 API 密钥从 `api_key_env` 指定的环境变量中读取，因此配置文件从不保存机密。本地服务器通常根本不需要密钥；不设置该变量即可。`fold_blocks` 决定推理和工具调用何时折叠为一行标题：`immediately` 在它们仍在运行时就折叠（运行中的推理块显示其最新一行），`on-finish` 在完成前完整显示，`never` 让所有块保持展开；无论哪种方式，选中的块都可以用 `Enter` 或再次单击展开。设置模态窗口中该项为**折叠区块**。旧的 `autofold = false` 读作 `never`，`true` 读作 `on-finish`。当 `max_tokens_per_turn` 为零或负数时，不发送输出上限，由模型决定回复长度；Anthropic API 要求必须提供上限，因此在那里它会变为宽裕的 32000。
 
@@ -43,7 +46,7 @@ API 密钥从 `api_key_env` 指定的环境变量中读取，因此配置文件�
 
 横幅中的 `connection` 行和状态栏的 **Connection** 标签可将会话切换到另一个连接：其端点和模型替换当前使用的，代理在同一日志上重启并延续对话，委派的任务也随之切换。CLI 代理（`claude_code`、`codex`、`gemini_cli`）不会接管已有对话，因此切换到它或从它切换只能在首次请求之前进行。会话日志记录连接，因此重新打开的会话在该连接仍存在于配置中时会重新连接到它，否则连接到新会话使用的那个。
 
-对于托管的 OpenAI 兼容端点，保持 `provider = "openai_compatible"`，并将连接的 `base_url` 和 `api_key_env` 指向它，例如 OpenAI 本身（`https://api.openai.com/v1`、`OPENAI_API_KEY`）、OpenRouter（`https://openrouter.ai/api/v1`、`OPENROUTER_API_KEY`）或 Gemini API（`https://generativelanguage.googleapis.com/v1beta/openai`、`GEMINI_API_KEY`）。模型为工具调用附加的签名（Gemini 的 thought signature，位于调用的 `extra_content` 中）会保存在会话日志里，并按端点的要求随该调用一并发回。对于 Anthropic 订阅，设置 `provider = "anthropic_compatible"`，去掉 `base_url`（API 根地址已内置；仅在使用网关时设置），并将 `api_key_env` 指向你的 `ANTHROPIC_API_KEY`；此时 `prefer_reasoning = true` 会开启扩展思考。**Model** 标签会列出各端点的模型。
+对于托管的 OpenAI 兼容端点，保持 `provider = "openai_compatible"`，并将连接的 `base_url` 和 `api_key_env` 指向它，例如 OpenAI 本身（`https://api.openai.com/v1`、`OPENAI_API_KEY`）、OpenRouter（`https://openrouter.ai/api/v1`、`OPENROUTER_API_KEY`）或 Gemini API（`https://generativelanguage.googleapis.com/v1beta/openai`、`GEMINI_API_KEY`）。模型为工具调用附加的签名（Gemini 的 thought signature，位于调用的 `extra_content` 中）会保存在会话日志里，并按端点的要求随该调用一并发回。对于 Anthropic 订阅，设置 `provider = "anthropic_compatible"`，去掉 `base_url`（API 根地址已内置；仅在使用网关时设置），并将 `api_key_env` 指向你的 `ANTHROPIC_API_KEY`；此时推理级别会让模型进行思考。**Model** 标签会列出各端点的模型。
 
 `provider = "claude_code"`、`provider = "codex"` 和 `provider = "gemini_cli"` 在性质上不同：面板不是用内置循环与模型端点对话，而是通过 ACP 把该工具自己的 CLI 作为[外部代理](#外部代理)来驱动（`@agentclientprotocol/claude-agent-acp` / `@agentclientprotocol/codex-acp` / `@google/gemini-cli --acp`，最新版本，通过 `npx` 运行）。端点和登录由 CLI 负责——使用它自己的订阅或 API 密钥——因此连接的 `base_url`、`api_key_env` 和上下文窗口不适用；设置模态窗口会为这些提供方隐藏它们，并从文件中清除。`model` 保留：它是代理上**预选**的模型——会话启动后通过 ACP 应用——运行时 **Model** 标签会列出并切换该代理自己的模型。必须先安装该工具并登录（`npx` 需在 `PATH` 中）；termide 本身不执行登录，因此请先单独运行一次 Gemini CLI（`npx @google/gemini-cli`）并选择登录方式。
 
@@ -118,7 +121,7 @@ termide 会在这些代理允许的范围内尽量接管它们，使会话无论
 
 代理运行的内容会被干净地提供给模型：颜色和光标转义序列、进度条重绘、旋转指示器帧以及大段几乎相同的构建输出行，在进入上下文前会被去除或合并，因此嘈杂的命令花费的令牌少得多。测试运行——Rust（`cargo test`、`cargo nextest`）、Python（`pytest`）、Go（`go test`）或 JS/TS（`jest`、`vitest`）——会丢弃通过和跳过的测试行，保留失败和结果摘要。完整、未经处理的日志仍会写入一个文件，工具会报告其路径，你在面板中也仍能实时看到原始输出流。
 
-状态标签从左到右依次为：代理、权限模式、**Reasoning** 开关（`on`/`off`）、带协议的连接（`local · OpenAI Compatible`）以及模型。会话的令牌总数和上下文窗口靠右对齐；在窄终端上被截断的是左侧的标签，而不是这些。总数中，`↑` 是按全价计费的提示令牌（未缓存的输入和写入提示缓存的部分），`↻` 是缓存提供的令牌（有了才显示），`↓` 是输出：`↑2.1k ↻48k ↓900`。窗口显示已用令牌数和填充条，`35k/262k ▰▰▱▱▱▱▱▱`；对于 Claude Code、Codex 和 Gemini CLI，两者都来自代理的报告，窗口在代理报告后显示。代理、模式、推理、连接和模型都是按钮。单击 **Reasoning** 会从下一个请求起让模型进行推理（扩展思考 / `reasoning_effort`）；该选择记录在会话中，因此恢复会话时会一并恢复。代理此刻在做什么不会在状态栏中重复：每个对话块都在其署名行中显示。
+状态标签从左到右依次为：代理、权限模式、**Reasoning** 级别（无法请求推理的模型没有该标签）、带协议的连接（`local · OpenAI Compatible`）以及模型。会话的令牌总数和上下文窗口靠右对齐；在窄终端上被截断的是左侧的标签，而不是这些。总数中，`↑` 是按全价计费的提示令牌（未缓存的输入和写入提示缓存的部分），`↻` 是缓存提供的令牌（有了才显示），`↓` 是输出：`↑2.1k ↻48k ↓900`。窗口显示已用令牌数和填充条，`35k/262k ▰▰▱▱▱▱▱▱`；对于 Claude Code、Codex 和 Gemini CLI，两者都来自代理的报告，窗口在代理报告后显示。代理、模式、推理、连接和模型都是按钮。单击 **Reasoning** 会列出模型提供的级别（只有开关的模型则直接切换），所选级别从下一个请求起生效；该选择记录在会话中，因此恢复会话时会一并恢复，切换模型时也会保留，并落到新模型最接近的级别。代理此刻在做什么不会在状态栏中重复：每个对话块都在其署名行中显示。
 
 输入 `/` 会在输入框上方打开匹配的提示词模板列表；`↑`/`↓` 在其中移动，`Tab` 或 `Enter` 补全高亮项，在完整输入的名称上按 `Enter` 则直接发送。
 
