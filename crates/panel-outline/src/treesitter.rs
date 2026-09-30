@@ -271,6 +271,28 @@ fn build_queries() -> HashMap<&'static str, QueryEntry> {
         ],
     );
 
+    // Lua: `function f()` / `local function f()`, `function M.f()` and
+    // `function M:f()`
+    register(
+        &mut map,
+        "lua",
+        tree_sitter_lua::LANGUAGE.into(),
+        &[
+            (
+                "(function_declaration name: (identifier) @function)",
+                SymbolKind::Function,
+            ),
+            (
+                "(function_declaration name: (dot_index_expression field: (identifier) @field_function))",
+                SymbolKind::Function,
+            ),
+            (
+                "(function_declaration name: (method_index_expression method: (identifier) @method))",
+                SymbolKind::Method,
+            ),
+        ],
+    );
+
     // Bash
     register(
         &mut map,
@@ -524,6 +546,33 @@ trait Panel {}
         assert!(names.contains(&"Color"), "enums: {names:?}");
         assert!(names.contains(&"speak"), "methods: {names:?}");
         assert!(names.contains(&"topLevel"), "free functions: {names:?}");
+    }
+
+    #[test]
+    fn test_lua_symbols() {
+        let source = "local function helper() end\n\n\
+                      function global() end\n\n\
+                      local M = {}\n\n\
+                      function M.create() end\n\n\
+                      function M:draw() end\n\n\
+                      return M\n";
+        let mut parser = Parser::new();
+        let symbols = extract_symbols_treesitter(source, "lua", &mut parser);
+        let named: Vec<(&str, SymbolKind)> =
+            symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+        assert!(
+            named.contains(&("helper", SymbolKind::Function)),
+            "{named:?}"
+        );
+        assert!(
+            named.contains(&("global", SymbolKind::Function)),
+            "{named:?}"
+        );
+        assert!(
+            named.contains(&("create", SymbolKind::Function)),
+            "{named:?}"
+        );
+        assert!(named.contains(&("draw", SymbolKind::Method)), "{named:?}");
     }
 
     #[test]
