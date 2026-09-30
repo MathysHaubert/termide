@@ -813,3 +813,26 @@ fn the_completion_popup_opens_under_the_drawn_cursor() {
     assert_eq!(rect.y, 1);
     assert!(rect.x <= gutter + 5, "{rect:?}");
 }
+
+/// A diagnostic repeated on a line is drawn once, and the rows the cursor
+/// and blame are shifted by count it once too.
+#[test]
+fn a_repeated_diagnostic_is_counted_as_drawn() {
+    use lsp_types::{Diagnostic, Position, Range};
+
+    let (mut editor, _file) = create_editor_with_content("foo\nbar\n");
+    let diag = Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+        message: "boom".to_string(),
+        ..Default::default()
+    };
+    editor.lsp.diagnostics = vec![diag.clone()];
+    let once = editor.count_virtual_rows_between(0, 1, 40);
+    assert_eq!(once, 1);
+
+    editor.lsp.diagnostics = vec![diag.clone(), diag];
+    assert_eq!(editor.count_virtual_rows_between(0, 1, 40), once);
+    let rows = rendered_text_rows(&mut editor, 40, 4);
+    assert!(rows[1].starts_with("~~~ boom"), "{rows:?}");
+    assert!(rows[2].starts_with("bar"), "{rows:?}");
+}

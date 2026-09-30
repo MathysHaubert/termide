@@ -9,7 +9,7 @@
 use termide_buffer::Cursor;
 use termide_config::Config;
 
-use crate::{git, word_wrap};
+use crate::word_wrap;
 
 use super::Editor;
 
@@ -52,6 +52,13 @@ impl Editor {
     ) -> usize {
         let mut extra_rows = 0;
         let show_git_diff = self.render_cache.config.editor.show_git_diff;
+        // Deduplicated like the drawing, so the rows counted are the rows drawn.
+        let diagnostic_rows = word_wrap::count_diagnostic_rows_by_line(
+            &self.lsp.diagnostics,
+            &self.buffer,
+            content_width,
+            self.config.tab_size,
+        );
 
         for line in start..end {
             // Deletion markers (rendered between text and diagnostics).
@@ -64,23 +71,7 @@ impl Editor {
             }
 
             // Diagnostic rows.
-            for diag in &self.lsp.diagnostics {
-                if diag.range.start.line as usize == line {
-                    let (start_col, underline_len) =
-                        git::diagnostic_span(diag, &self.buffer, self.config.tab_size);
-                    let code = diag.code.as_ref().map(|c| match c {
-                        lsp_types::NumberOrString::Number(n) => n.to_string(),
-                        lsp_types::NumberOrString::String(s) => s.clone(),
-                    });
-                    extra_rows += git::calculate_diagnostic_rows(
-                        start_col,
-                        underline_len,
-                        code.as_deref(),
-                        &diag.message,
-                        content_width,
-                    );
-                }
-            }
+            extra_rows += diagnostic_rows.get(&line).copied().unwrap_or(0);
         }
         extra_rows
     }
@@ -280,6 +271,13 @@ impl Editor {
         tab_size: usize,
     ) {
         let show_git_diff = self.render_cache.config.editor.show_git_diff;
+        // Deduplicated like the drawing, so the rows skipped are the rows drawn.
+        let diagnostic_rows = word_wrap::count_diagnostic_rows_by_line(
+            &self.lsp.diagnostics,
+            &self.buffer,
+            content_width,
+            tab_size,
+        );
 
         while remaining > 0 && self.viewport.top_line < self.buffer.line_count() {
             let line_visual_rows = word_wrap::get_visual_rows_cached(
@@ -312,24 +310,10 @@ impl Editor {
                     }
                 }
             }
-            for diag in &self.lsp.diagnostics {
-                let diag_line = diag.range.start.line as usize;
-                if diag_line == self.viewport.top_line {
-                    let (start_col, underline_len) =
-                        git::diagnostic_span(diag, &self.buffer, self.config.tab_size);
-                    let code = diag.code.as_ref().map(|c| match c {
-                        lsp_types::NumberOrString::Number(n) => n.to_string(),
-                        lsp_types::NumberOrString::String(s) => s.clone(),
-                    });
-                    virtual_after_line += git::calculate_diagnostic_rows(
-                        start_col,
-                        underline_len,
-                        code.as_deref(),
-                        &diag.message,
-                        content_width,
-                    );
-                }
-            }
+            virtual_after_line += diagnostic_rows
+                .get(&self.viewport.top_line)
+                .copied()
+                .unwrap_or(0);
 
             // Consume virtual rows
             if remaining <= virtual_after_line {
