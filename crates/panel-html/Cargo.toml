@@ -15,6 +15,8 @@ url.workspace = true
 # Workspace crates
 termide-core = { path = "../core" }
 termide-html = { path = "../html" }
+termide-html-markdown = { path = "../html-markdown" }
+termide-i18n = { path = "../i18n" }
 termide-richtext = { path = "../richtext" }
 termide-modal = { path = "../modal" }
 termide-ui = { path = "../ui" }

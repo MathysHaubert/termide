@@ -1,4 +1,4 @@
-//! HTML to markdown for the model: the text of a page with its structure
+//! HTML to markdown: the text of a page with its structure
 //! (headings, paragraphs, lists, code, tables, links) and without what only a
 //! browser needs (scripts, styles, forms) or what repeats on every page of a
 //! site (navigation, sidebars, footers).
@@ -14,7 +14,7 @@ use html5ever::tokenizer::{
 };
 use url::Url;
 
-/// A page converted for the model.
+/// A converted page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Converted {
     pub title: String,

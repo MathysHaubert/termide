@@ -74,6 +74,16 @@ The preview has a movable cursor and supports text selection:
 - **Anchor links** (`#section`) jump within the page (to the matching `id`);
   `page#section` navigates to the page and then jumps to the anchor.
 
+## Saving as Markdown
+
+**`Ctrl+S`**, or **Save page as Markdown…** in the panel's `[≡]` menu, saves the
+page as a Markdown file through a Save As dialog. Headings, lists, code blocks,
+tables and links are kept, with relative links made absolute against the page
+URL (or the file for a local page). Like a reader mode, the export keeps a
+page's `<main>` (or its single `<article>`) when it has one, and leaves out
+navigation, sidebars, footers, forms and scripts. The file name defaults to the
+file's name for a local page, else the page `<title>`, else the site's host.
+
 ## Fetching URLs
 
 The **Windows ▸ Open…** menu item opens a universal prompt (a discoverable

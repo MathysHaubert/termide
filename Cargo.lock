@@ -4982,13 +4982,13 @@ name = "termide-agent-web"
 version = "0.36.0"
 dependencies = [
  "base64",
- "html5ever",
  "libc",
  "log",
  "serde",
  "serde_json",
  "termide-agent-core",
  "termide-fetch",
+ "termide-html-markdown",
  "toml",
  "url",
 ]
@@ -5215,6 +5215,14 @@ dependencies = [
  "ratatui",
  "termide-core",
  "termide-richtext",
+]
+
+[[package]]
+name = "termide-html-markdown"
+version = "0.36.0"
+dependencies = [
+ "html5ever",
+ "url",
 ]
 
 [[package]]
@@ -5504,6 +5512,8 @@ dependencies = [
  "ratatui",
  "termide-core",
  "termide-html",
+ "termide-html-markdown",
+ "termide-i18n",
  "termide-modal",
  "termide-richtext",
  "termide-ui",

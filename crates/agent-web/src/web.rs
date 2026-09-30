@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use termide_agent_core::CancelToken;
+use termide_html_markdown::html_to_markdown;
 
 use crate::browser::{find_chrome, Browser, Display, Page};
 use crate::engine::{Engine, SearchResult};
-use crate::markdown::html_to_markdown;
 
 /// The browser quits after this long without a call.
 const IDLE_SHUTDOWN: Duration = Duration::from_secs(5 * 60);

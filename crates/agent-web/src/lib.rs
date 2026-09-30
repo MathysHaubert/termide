@@ -6,7 +6,6 @@
 mod browser;
 mod cdp;
 mod engine;
-mod markdown;
 mod tools;
 mod web;
 
@@ -16,7 +15,6 @@ use termide_agent_core::Tool;
 
 pub use browser::{find_chrome, Browser, Display, Page};
 pub use engine::{Engine, SearchResult};
-pub use markdown::{html_to_markdown, Converted};
 pub use tools::{FetchTool, WebSearchTool};
 pub use web::{Backend, FetchedPage, Web, WebConfig};
 

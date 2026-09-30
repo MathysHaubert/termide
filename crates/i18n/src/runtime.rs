@@ -382,6 +382,7 @@ impl Translation for RuntimeTranslation {
         menu_copy_diagram,
         menu_save_diagram_as,
         menu_view_as_diagram,
+        menu_save_page_as_markdown,
         status_no_diagram_symbols,
         command_params_title,
         command_params_run,

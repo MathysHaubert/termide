@@ -132,6 +132,7 @@ termide/
 │   ├── git/                  # Git integration (status, diff, log)
 │   ├── highlight/            # Syntax highlighting (tree-sitter)
 │   ├── html/                 # HTML to terminal pseudographics renderer
+│   ├── html-markdown/        # HTML to Markdown (agent fetch, HTML viewer export)
 │   ├── i18n/                 # Internationalization (15 languages)
 │   ├── keyboard/             # Keyboard handling and layout translation
 │   ├── layout/               # Panel groups, split layout, fullscreen preset

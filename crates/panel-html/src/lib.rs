@@ -200,6 +200,67 @@ impl HtmlPanel {
         }
         self.layout_width = 0; // force re-layout
     }
+
+    /// Request a "Save As" dialog to export the page as Markdown. Links resolve
+    /// against the page URL, or the file for a local page. The default name
+    /// follows the file, else the page `<title>`, else the URL host.
+    fn save_markdown_event(&self) -> Vec<PanelEvent> {
+        if self.error.is_some() {
+            return vec![];
+        }
+        let base = match &self.source_url {
+            Some(url) => url.clone(),
+            None => url::Url::from_file_path(&self.file_path)
+                .map(String::from)
+                .unwrap_or_default(),
+        };
+        let converted = termide_html_markdown::html_to_markdown(&self.source, &base);
+        let file_stem = match self.source_url {
+            None => self.file_path.file_stem().and_then(|s| s.to_str()),
+            Some(_) => None,
+        };
+        let host = self
+            .source_url
+            .as_deref()
+            .and_then(|u| url::Url::parse(u).ok())
+            .and_then(|u| u.host_str().map(str::to_string));
+        let stem = [file_stem, Some(converted.title.as_str()), host.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(file_name_part)
+            .find(|s| !s.is_empty())
+            .unwrap_or_else(|| "page".to_string());
+        let mut content = converted.markdown;
+        content.push('\n');
+        vec![PanelEvent::SaveContentAs {
+            content,
+            default_name: format!("{stem}.md"),
+        }]
+    }
+}
+
+/// `text` made safe as a file name: path separators, reserved and control
+/// characters become spaces, runs of whitespace collapse, at most 80 chars.
+fn file_name_part(text: &str) -> String {
+    let cleaned: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let joined = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    joined
+        .trim_matches('.')
+        .trim()
+        .chars()
+        .take(80)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 impl Panel for HtmlPanel {
@@ -428,6 +489,10 @@ impl Panel for HtmlPanel {
             }
             return vec![PanelEvent::CopyToClipboard(text)];
         }
+        // Ctrl+S: export the page as Markdown to a chosen file (Save As).
+        if ctrl && key.code == KeyCode::Char('s') {
+            return self.save_markdown_event();
+        }
 
         match key.code {
             // History back/forward in a navigated view.
@@ -577,8 +642,17 @@ impl Panel for HtmlPanel {
     fn handle_status_action(&mut self, action: &str) -> Vec<PanelEvent> {
         match action {
             "edit_source" => vec![PanelEvent::SwapActiveToText(self.file_path.clone())],
+            "save_markdown" => self.save_markdown_event(),
             _ => vec![],
         }
+    }
+
+    fn context_menu_items(&self) -> Vec<(String, &'static str)> {
+        if self.error.is_some() {
+            return vec![];
+        }
+        let t = termide_i18n::t();
+        vec![(t.menu_save_page_as_markdown().to_string(), "save_markdown")]
     }
 
     fn reload(&mut self) -> anyhow::Result<()> {
@@ -852,5 +926,60 @@ mod tests {
         let p = panel_from("<p><a href=\"https://ex.com\">docs</a></p>");
         assert_eq!(p.doc.links.len(), 1, "{:?}", p.doc.links);
         assert_eq!(p.doc.links[0].url, "https://ex.com");
+    }
+
+    fn saved(evs: &[PanelEvent]) -> (&str, &str) {
+        match evs {
+            [PanelEvent::SaveContentAs {
+                content,
+                default_name,
+            }] => (content, default_name),
+            other => panic!("expected SaveContentAs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_file_page_saves_as_markdown_next_to_its_name() {
+        let mut p = panel_from(r#"<h1>Title</h1><p>See <a href="b.html">b</a>.</p>"#);
+        assert_eq!(
+            p.context_menu_items()
+                .iter()
+                .map(|(_, id)| *id)
+                .collect::<Vec<_>>(),
+            ["save_markdown"]
+        );
+        let evs = p.handle_status_action("save_markdown");
+        let (content, name) = saved(&evs);
+        assert_eq!(content, "# Title\n\nSee [b](file:///x/b.html).\n");
+        assert_eq!(name, "page.md");
+    }
+
+    #[test]
+    fn a_fetched_page_is_named_after_its_title_else_its_host() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let src = r#"<head><title> A/B: "c" </title></head><p><a href="/d">d</a></p>"#;
+        let mut p = HtmlPanel::from_source("t".into(), src.into(), Some("https://ex.com/p".into()));
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        let evs = p.handle_key(KeyChord {
+            raw: ctrl_s,
+            canonical: ctrl_s,
+        });
+        let (content, name) = saved(&evs);
+        assert_eq!(content, "[d](https://ex.com/d)\n");
+        assert_eq!(name, "A B c.md");
+
+        let p = HtmlPanel::from_source(
+            "t".into(),
+            "<p>x</p>".into(),
+            Some("https://ex.com/".into()),
+        );
+        assert_eq!(saved(&p.save_markdown_event()).1, "ex.com.md");
+    }
+
+    #[test]
+    fn an_unreadable_file_offers_no_export() {
+        let mut p = HtmlPanel::new(PathBuf::from("/nonexistent/x.html")).unwrap();
+        assert!(p.context_menu_items().is_empty());
+        assert!(p.handle_status_action("save_markdown").is_empty());
     }
 }

@@ -128,6 +128,7 @@ termide/
 │   ├── git/                  # Git 集成（状态、diff、日志）
 │   ├── highlight/            # 语法高亮（tree-sitter）
 │   ├── html/                 # HTML 到终端伪图形的渲染器
+│   ├── html-markdown/        # HTML 转 Markdown（智能体 fetch、HTML 查看器导出）
 │   ├── i18n/                 # 国际化（15 种语言）
 │   ├── keyboard/             # 键盘处理与布局转换
 │   ├── layout/               # 面板组、分屏布局、全屏预设

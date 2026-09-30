@@ -1,0 +1,12 @@
+[package]
+name = "termide-html-markdown"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTML to Markdown conversion for termide (the agent's fetch and the HTML viewer's export)"
+
+[dependencies]
+html5ever.workspace = true
+url.workspace = true

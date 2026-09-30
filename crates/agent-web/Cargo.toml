@@ -9,7 +9,6 @@ description = "Web tools of the termide coding agent: fetch and web_search, over
 
 [dependencies]
 base64.workspace = true
-html5ever.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,6 +17,7 @@ url.workspace = true
 
 termide-agent-core = { path = "../agent-core" }
 termide-fetch = { path = "../fetch" }
+termide-html-markdown = { path = "../html-markdown" }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

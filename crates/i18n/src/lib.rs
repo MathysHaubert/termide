@@ -404,6 +404,9 @@ pub trait Translation: Send + Sync {
     fn status_no_diagram_symbols(&self) -> &str;
     fn status_diagram_copied(&self, lines: usize) -> String;
 
+    // HTML viewer menu
+    fn menu_save_page_as_markdown(&self) -> &str;
+
     // Bookmarks submenu
     fn bookmarks_add_bookmark(&self) -> &str;
     fn bookmarks_no_bookmarks(&self) -> &str;
