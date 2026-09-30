@@ -97,6 +97,11 @@ pub fn prepare_matched_line(
 /// Non-spacing marks (Mn) like ु (U+0941) have wcwidth=0 and are truly
 /// zero-width. CJK wide characters (e.g. 漢) return 2 as expected.
 /// Falls back to 1 for clusters that consist entirely of zero-width codepoints.
+///
+/// This is the measure of single-line widgets (menus, dropdowns) drawn with
+/// [`render_text_cells`]. The editor measures with
+/// `termide_buffer::grapheme_columns` instead, which expands tabs to tab
+/// stops and keeps zero-width clusters at zero.
 pub fn grapheme_display_width(g: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
     let w = g.width();
