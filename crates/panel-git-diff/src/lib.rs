@@ -60,6 +60,8 @@ pub struct GitDiffPanel {
     status_message: Option<String>,
     /// Cached vim_mode setting for keyboard handling
     vim_mode: bool,
+    /// Cached editor tab size: diff lines are drawn with their tabs expanded.
+    tab_size: usize,
     /// Hotkey table for configurable keyboard shortcuts
     hotkeys: HotkeyTable,
     /// Pointer of the last Arc<Config> used to build hotkeys (skip rebuild when unchanged)
@@ -136,6 +138,7 @@ impl GitDiffPanel {
             visible_height: 0,
             status_message: None,
             vim_mode: false,
+            tab_size: termide_config::defaults::TAB_SIZE,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
             is_stash,
@@ -292,6 +295,7 @@ impl Panel for GitDiffPanel {
     fn prepare_render(&mut self, theme: &Theme, config: &std::sync::Arc<Config>) {
         self.cached_theme = ThemeColors::from(theme);
         self.vim_mode = config.general.vim_mode;
+        self.tab_size = config.editor.tab_size;
         let config_ptr = std::sync::Arc::as_ptr(config) as usize;
         if self.last_config_ptr != config_ptr {
             self.last_config_ptr = config_ptr;
@@ -589,5 +593,38 @@ mod tests {
         assert!(panel.poll_refresh());
         assert!(!panel.is_loading, "a dead worker must not leave it loading");
         assert!(panel.refresh_rx.is_none());
+    }
+
+    /// A tab-indented diff line keeps its indentation: `set_string` would
+    /// drop the tab, so the line is drawn with tabs expanded.
+    #[test]
+    fn a_tab_indented_line_keeps_its_indentation() {
+        use ratatui::{buffer::Buffer, layout::Rect};
+
+        let dir = not_a_repo();
+        let mut panel = GitDiffPanel::new(dir.path().to_path_buf());
+        wait_for_result(&mut panel);
+        deliver(&mut panel, Some("main"), &["a.lua"]);
+        panel.tab_size = 4;
+        panel.diffs[0].hunks = vec![DiffHunk {
+            header: "@@ -1 +1 @@".to_string(),
+            lines: vec![DiffLine {
+                kind: LineKind::Added,
+                content: "\tname = 1".to_string(),
+                old_line: None,
+                new_line: Some(1),
+            }],
+        }];
+
+        let area = Rect::new(0, 0, 60, 8);
+        let mut buf = Buffer::empty(area);
+        panel.render_content(area, &mut buf, true, None);
+        let text: Vec<String> = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+        assert!(
+            text.iter().any(|row| row.contains("+    name = 1")),
+            "{text:#?}"
+        );
     }
 }

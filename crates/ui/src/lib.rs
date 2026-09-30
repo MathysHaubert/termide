@@ -30,7 +30,7 @@ pub use completion_list::{CompletionAction, CompletionItem, CompletionList};
 pub use diff_style::{blend_colors, diff_line_bg};
 pub use field_edit::{edit_text_area, edit_text_input, FieldEdit};
 pub use grapheme_utils::{
-    cell_symbol, grapheme_display_width, render_text_cells, str_display_width,
+    cell_symbol, expand_tabs, grapheme_display_width, render_text_cells, str_display_width,
 };
 pub use input_bar::{Control, Focus, InputBar, InputBarAction};
 pub use path_utils::expand_tilde;

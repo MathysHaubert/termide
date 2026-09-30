@@ -124,6 +124,35 @@ pub fn cell_symbol(g: &str) -> &str {
     }
 }
 
+/// `text` with every TAB expanded to blanks up to the next multiple of
+/// `tab_size`, columns counted from the start of `text` in display widths.
+///
+/// For views that draw text through `Buffer::set_string` or a `Span`: those
+/// drop control characters, so a tab-indented line would lose its
+/// indentation. The tab stop rule is the editor's
+/// (`termide_buffer::grapheme_columns`); `tab_size` 0 is treated as 1.
+/// Borrows `text` when it holds no tab.
+pub fn expand_tabs(text: &str, tab_size: usize) -> std::borrow::Cow<'_, str> {
+    use unicode_width::UnicodeWidthStr;
+    if !text.contains('\t') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let tab_size = tab_size.max(1);
+    let mut out = String::with_capacity(text.len() + tab_size);
+    let mut col = 0;
+    for g in text.graphemes(true) {
+        if g == "\t" {
+            let n = tab_size - col % tab_size;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push_str(g);
+            col += g.width();
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Display width of a string, counting each grapheme cluster via `grapheme_display_width`.
 pub fn str_display_width(s: &str) -> usize {
     s.graphemes(true).map(grapheme_display_width).sum()
@@ -236,5 +265,17 @@ mod tests {
         assert_eq!(cols, 5);
         let row: String = (0..5).map(|x| buf[(x, 0)].symbol()).collect();
         assert_eq!(row, "a b c");
+    }
+
+    #[test]
+    fn tabs_expand_to_the_next_tab_stop() {
+        assert_eq!(expand_tabs("\tx", 4), "    x");
+        assert_eq!(expand_tabs("ab\tx", 4), "ab  x");
+        assert_eq!(expand_tabs("漢\tx", 4), "漢  x");
+        assert_eq!(expand_tabs("a\t\tb", 8), format!("a{}b", " ".repeat(15)));
+        assert!(matches!(
+            expand_tabs("no tabs", 4),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 }

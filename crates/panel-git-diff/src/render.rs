@@ -198,13 +198,15 @@ impl GitDiffPanel {
                         buf.set_string(x, y, prefix, style);
                         x += 1;
 
-                        // Content
+                        // Content. `set_string` drops control characters,
+                        // so tabs are expanded first or indentation vanishes.
                         let remaining_width =
                             (content_area.x + content_area.width).saturating_sub(x) as usize;
-                        let content = if line.content.width() > remaining_width {
-                            git::truncate_to_width(&line.content, remaining_width)
+                        let expanded = termide_ui::expand_tabs(&line.content, self.tab_size);
+                        let content = if expanded.width() > remaining_width {
+                            git::truncate_to_width(&expanded, remaining_width)
                         } else {
-                            line.content.clone()
+                            expanded.into_owned()
                         };
                         buf.set_string(x, y, &content, style);
 
