@@ -238,7 +238,7 @@ impl HighlightCache {
         // too. The highlighter is `'static`, so the borrowed configs outlive the
         // pass. Unknown injection languages simply stay unhighlighted.
         let highlighter_ref = self.syntax_highlighter;
-        let events = match highlighter.highlight(config, source, None, |name| {
+        let events = match highlighter.highlight(config, source, None, None, |name| {
             highlighter_ref.get_config(injection_language_alias(name))
         }) {
             Ok(events) => events,
@@ -343,7 +343,7 @@ impl HighlightCache {
         let mut highlighter = Highlighter::new();
         let source = line_text.as_bytes();
 
-        let highlights = match highlighter.highlight(config, source, None, |_| None) {
+        let highlights = match highlighter.highlight(config, source, None, None, |_| None) {
             Ok(h) => h,
             Err(_) => return vec![(Cow::Owned(line_text.to_string()), default_style)],
         };

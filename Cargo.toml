@@ -27,8 +27,8 @@ arboard = "3.4"
 unicode-segmentation = "1.11"
 unicode-width = "0.2"
 # Infra dependencies
-tree-sitter = "0.24"
-tree-sitter-highlight = "0.24"
+tree-sitter = "0.27"
+tree-sitter-highlight = "0.27"
 lsp-types = "0.97"
 regex = "1.12"
 notify = { version = "6.1", default-features = false, features = ["macos_fsevent"] }

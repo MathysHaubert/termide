@@ -399,7 +399,7 @@ pub(crate) fn extract_symbols_treesitter(
     let mut symbols = Vec::new();
 
     while let Some(m) = matches.next() {
-        for capture in m.captures {
+        for capture in m.captures() {
             let node = capture.node;
             let kind = capture_kinds
                 .get(capture.index as usize)

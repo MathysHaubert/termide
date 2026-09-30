@@ -27,9 +27,10 @@ tree-sitter-java = "0.23"
 # highlighter hand-writes one — see KOTLIN_HIGHLIGHTS).
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-ruby = "0.23"
-# Pinned to 0.23: 0.24 ships grammars built with tree-sitter ABI 15, which the
-# workspace's tree-sitter 0.24 (max ABI 14) rejects, silently disabling PHP.
-tree-sitter-php = "0.23"
+# Grammar ABI must fall within the workspace tree-sitter's supported range
+# (13-15 for 0.27); an out-of-range grammar builds fine but fails to load at
+# runtime, which silently disables its highlighting.
+tree-sitter-php = "0.24"
 tree-sitter-haskell = "0.23"
 tree-sitter-nix = "0.3"
 
