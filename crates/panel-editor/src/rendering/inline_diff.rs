@@ -68,40 +68,6 @@ pub fn apply_diff_style(
     }
 }
 
-/// Convert buffer column to visual column.
-///
-/// Accounts for deleted text that appears before the given buffer position.
-/// Deleted text is rendered but doesn't exist in the buffer.
-pub fn buffer_to_visual_col(buffer_col: usize, inline_changes: &[InlineChange]) -> usize {
-    use unicode_width::UnicodeWidthStr;
-
-    let mut visual_col = 0;
-    let mut buffer_pos = 0;
-
-    for change in inline_changes {
-        let text_width = change.text.width();
-
-        match change.change_type {
-            InlineChangeType::Deleted => {
-                // Deleted text adds to visual but not buffer
-                visual_col += text_width;
-            }
-            InlineChangeType::Unchanged | InlineChangeType::Inserted => {
-                // Check if target is within this segment
-                if buffer_pos + text_width > buffer_col {
-                    // Target is in this segment
-                    visual_col += buffer_col - buffer_pos;
-                    return visual_col;
-                }
-                buffer_pos += text_width;
-                visual_col += text_width;
-            }
-        }
-    }
-
-    visual_col
-}
-
 /// Convert a visual (screen) column to a grapheme index in the buffer line.
 ///
 /// Walks the line as it is drawn, deleted text included and tabs expanded, so
@@ -158,23 +124,6 @@ mod tests {
         assert_eq!(segments[0].text, "Hello ");
         assert_eq!(segments[1].text, "world");
         assert_eq!(segments[2].text, "beautiful world");
-    }
-
-    #[test]
-    fn test_buffer_to_visual_col() {
-        // "Hello " -> "Hello beautiful "
-        // Changes: "Hello "(unchanged) + ""(deleted) + "beautiful "(inserted)
-        let changes = vec![
-            make_change("Hello ", InlineChangeType::Unchanged),
-            make_change("old", InlineChangeType::Deleted), // 3 chars deleted
-            make_change("new", InlineChangeType::Inserted),
-        ];
-
-        // Buffer col 0 -> visual col 0 (at "H")
-        assert_eq!(buffer_to_visual_col(0, &changes), 0);
-
-        // Buffer col 6 -> visual col 9 (after "Hello " and "old" deleted)
-        assert_eq!(buffer_to_visual_col(6, &changes), 9);
     }
 
     #[test]
