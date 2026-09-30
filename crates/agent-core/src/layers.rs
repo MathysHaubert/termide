@@ -48,8 +48,8 @@ pub const SKILL_FILE: &str = "SKILL.md";
 /// Prompt templates under an `ai` directory: `prompts/<name>.md`, typed as
 /// `/<name>` in the panel.
 pub const PROMPTS_DIR: &str = "prompts";
-/// termide's own prompts under an `ai` directory: `system/compact.md` and
-/// `system/compacted.md` so far.
+/// termide's own prompts under an `ai` directory: `system/compact.md`,
+/// `system/plan.md` and the like. Only the configuration level is honoured.
 pub const SYSTEM_DIR: &str = "system";
 /// Command shims: executables named after a command that shadow it on the
 /// built-in agent's `PATH`, so a shell command runs a token-saving wrapper.
@@ -526,10 +526,15 @@ impl AgentDirs {
         })
     }
 
-    /// `system/<name>` from the first level that has a non-empty one, else
-    /// `seed`.
+    /// `system/<name>` from the configuration level when it is non-empty,
+    /// else `seed`. A project's `system/` is never read: these prompts steer
+    /// termide's own machinery (compaction, plan mode, judges), so a checked
+    /// out repository must not be able to rewrite them.
     fn system_file(&self, name: &str, seed: &str) -> String {
-        self.find_file(Path::new(SYSTEM_DIR).join(name))
+        self.global
+            .as_ref()
+            .map(|global| global.join(SYSTEM_DIR).join(name))
+            .filter(|path| path.is_file())
             .and_then(|path| match std::fs::read_to_string(&path) {
                 Ok(text) if !text.trim().is_empty() => Some(text),
                 Ok(_) => None,
@@ -756,8 +761,10 @@ impl AgentDirs {
     }
 
     /// The system prompt template of `agent`: its own `agents/<name>/SOUL.md`
-    /// when a root has one, else the root `AGENTS.md` of the highest root
-    /// that has it (which is all the default agent has). A file that exists
+    /// when a root has one, else the configuration level's root `AGENTS.md`
+    /// (which is all the default agent has). The root template is the
+    /// fallback for every agent, so a project cannot replace it: only an
+    /// agent the user picks brings a template of its own. A file that exists
     /// is the template even when empty: an empty one means no system prompt,
     /// not the shipped one.
     #[must_use]
@@ -765,7 +772,13 @@ impl AgentDirs {
         let own = (agent != DEFAULT_AGENT)
             .then(|| self.find_file(Path::new("agents").join(agent).join(SOUL_FILE)))
             .flatten();
-        let path = own.or_else(|| self.find_file(ROOT_SOUL_FILE))?;
+        let root = || {
+            self.global
+                .as_ref()
+                .map(|global| global.join(ROOT_SOUL_FILE))
+                .filter(|path| path.is_file())
+        };
+        let path = own.or_else(root)?;
         match std::fs::read_to_string(&path) {
             Ok(text) => Some(text),
             Err(error) => {
@@ -812,10 +825,13 @@ mod tests {
 
         let dirs = AgentDirs::new(&cwd, Some(&project), Some(&global));
         assert_eq!(dirs.roots().len(), 3);
-        assert_eq!(dirs.soul(DEFAULT_AGENT).as_deref(), Some("sub soul"));
+        // The root template is the configuration level's; a project's
+        // `AGENTS.md` under its `ai` directory is ignored.
+        assert_eq!(dirs.soul(DEFAULT_AGENT).as_deref(), Some("global soul"));
+        // A picked agent brings its own, from any level.
         assert_eq!(dirs.soul("review").as_deref(), Some("review"));
         // An agent without a SOUL.md speaks with the root template.
-        assert_eq!(dirs.soul("bare").as_deref(), Some("sub soul"));
+        assert_eq!(dirs.soul("bare").as_deref(), Some("global soul"));
         assert_eq!(
             AgentDirs::new(&project, None, None).soul(DEFAULT_AGENT),
             None
@@ -931,12 +947,15 @@ mod tests {
             std::fs::read_to_string(global.join("system/compact.md")).unwrap(),
             SEED_COMPACT
         );
-        // The compaction prompts follow the files, a project level first.
+        // The compaction prompts follow the configuration level's files; a
+        // project's `system/` is ignored.
         let dirs = AgentDirs::new(tmp.path(), None, Some(&global));
         assert_eq!(dirs.compaction_prompts(), CompactionPrompts::default());
         let project = tmp.path().join(".termide/ai/system");
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(project.join("compacted.md"), "Recap: {{summary}}").unwrap();
+        std::fs::write(project.join("compacted.md"), "Planted: {{summary}}").unwrap();
+        assert_eq!(dirs.compaction_prompts(), CompactionPrompts::default());
+        std::fs::write(global.join("system/compacted.md"), "Recap: {{summary}}").unwrap();
         assert_eq!(dirs.compaction_prompts().wrapper, "Recap: {{summary}}");
         assert_eq!(
             dirs.compaction_prompts().request,
@@ -950,6 +969,12 @@ mod tests {
         assert_eq!(dirs.plan_prompt(), PlanPrompt::default());
         std::fs::write(
             project.join("plan.md"),
+            "---\nrequest: Push.\n---\nAnything goes.",
+        )
+        .unwrap();
+        assert_eq!(dirs.plan_prompt(), PlanPrompt::default());
+        std::fs::write(
+            global.join("system/plan.md"),
             "---\nrequest: Go.\n---\nPlan first.",
         )
         .unwrap();

@@ -522,7 +522,10 @@ The prompt is a template with `{{tools}}`, `{{guidelines}}`,
 directory's root `AGENTS.md` for the default agent (the user's decision — the
 root file of the directory is the default prompt, and a global instruction
 file would only duplicate what one can write into it), `agents/<name>/SOUL.md`
-for a custom agent, which falls back to the root file when it has none. No
+for a custom agent, which falls back to the root file when it has none. The
+root file is read from the configuration level only: as every agent's
+fallback it must not be replaceable by a checked-out project, only by an agent
+the user picks; a custom agent's `SOUL.md` may live at any level. No
 prompt text is code: the seed is the data file
 `crates/agent-core/assets/AGENTS.md` (the former fixed prompt, base
 guidelines included), copied to the configuration on first use; code only
@@ -610,9 +613,10 @@ OpenCode compiles a `summarize.txt` in, pi lets an extension replace the whole
 step. Decision: the same rule as for the system prompt — `ai/system/compact.md`
 (instructions plus the closing `request:` in front matter, `{{focus}}` for
 `/compact`'s words) and `ai/system/compacted.md` (the wrapper with
-`{{summary}}`), seeded from `assets/system/` on first use and read through the
-three levels; `CompactionPrompts` carries them, and a reopened session words
-its old summaries with the current file. `system/` rather than `prompts/`
+`{{summary}}`), seeded from `assets/system/` on first use and read from the
+configuration level only — a project cannot rewrite termide's own machinery,
+the same rule as for `shims/`; `CompactionPrompts` carries them, and a
+reopened session words its old summaries with the current file. `system/` rather than `prompts/`
 because a slash template is something the user sends and a service prompt is
 not, and rather than `tools/` because compaction is the panel's operation, not
 a tool the model calls; `tools/` stays free for overriding built-in tool

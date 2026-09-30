@@ -905,9 +905,12 @@ The prompt the model receives is assembled from files: the template
 `ai/AGENTS.md` with placeholders the agent fills in. No prompt text is
 built into TermIDE; the template below ships as a data file
 (`crates/agent-core/assets/AGENTS.md`) and is written to the
-configuration level on first use, and from then on the file is what counts. A
-project or the panel's directory may carry its own `.termide/ai/AGENTS.md`,
-which then replaces it:
+configuration level on first use, and from then on the file is what counts.
+Only the configuration level's `ai/AGENTS.md` is read: it is the fallback of
+every agent, so a project's `.termide/ai/AGENTS.md` is ignored, and the
+template changes only when you pick an agent with a `SOUL.md` of its own. A
+project's own conventions go into its `AGENTS.md`, which the template takes in
+as project instructions (see below):
 
 ```markdown
 You are a coding agent working inside termide, an all-in-one terminal workspace (editor, file manager, terminal, git). You help with software tasks in the current project: you read code, make targeted edits, run commands and report what you did and what you found.
@@ -959,8 +962,10 @@ can see exactly what the model gets.
 
 ### Service prompts
 
-TermIDE's own prompts are files too, under `system/`, at any of the three
-levels and seeded on first use like `AGENTS.md`. Compaction, the summary that
+TermIDE's own prompts are files too, under `system/`, seeded on first use like
+`AGENTS.md`. Only the configuration level's `system/` is read: a project's is
+ignored, so a checked-out repository cannot rewrite how termide summarises,
+plans or judges. Compaction, the summary that
 replaces the older part of a long session, uses two: `compact.md` is the
 system prompt of the summarising call, with the closing user turn in its
 front matter (`request:`) and `{{focus}}` where the words given to `/compact`
