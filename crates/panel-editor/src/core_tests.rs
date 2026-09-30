@@ -508,3 +508,44 @@ fn a_buffer_with_unsaved_work_keeps_it_and_flags_the_conflict() {
     assert!(editor.buffer().text().starts_with("xa\nb\n"));
     assert!(editor.buffer().is_modified());
 }
+
+/// A TAB (or any control character) in a line must not reach a cell: the
+/// host terminal would move its cursor to the next tab stop and every cell
+/// written after it would land off by the difference (#55). The control
+/// character keeps its one column as a blank, so the text after it stays
+/// where the cursor arithmetic puts it.
+#[test]
+fn control_characters_never_reach_the_frame() {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    for word_wrap in [false, true] {
+        let (mut editor, _file) = create_editor_with_content("\tname = 1,\r\nx\u{1b}y\r\n");
+        editor.config.word_wrap = word_wrap;
+        let theme = *termide_theme::Theme::get_by_name("github-light");
+        let config = termide_config::Config::default();
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        editor.render_content(area, &mut buf, &theme, &config, true, None);
+
+        let row = |y: u16| -> String { (0..area.width).map(|x| buf[(x, y)].symbol()).collect() };
+        for y in 0..area.height {
+            assert!(
+                !row(y).contains(char::is_control),
+                "word_wrap={word_wrap}: row {y} carries a control character: {:?}",
+                row(y)
+            );
+        }
+        let first = row(0);
+        let name_col = first.find("name").expect("line text rendered");
+        assert_eq!(
+            &first[name_col - 1..name_col],
+            " ",
+            "word_wrap={word_wrap}: the TAB keeps one blank column: {first:?}"
+        );
+        assert!(
+            row(1).contains("x y"),
+            "word_wrap={word_wrap}: ESC becomes a blank: {:?}",
+            row(1)
+        );
+    }
+}

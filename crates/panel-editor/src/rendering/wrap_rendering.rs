@@ -416,7 +416,7 @@ fn render_visual_line<H: LineHighlighter>(
                 if x < area.x + area.width && y < area.y + area.height {
                     if let Some(cell) = buf.cell_mut((x, y)) {
                         // Use set_symbol for proper grapheme cluster handling
-                        cell.set_symbol(grapheme);
+                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
 
                         let final_style = highlight_renderer::determine_cell_style(
                             line_idx,

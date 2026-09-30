@@ -339,6 +339,9 @@ impl StatusBar {
                 if current_x >= area.right() {
                     break;
                 }
+                // A control character would move the host cursor off the
+                // bottom row (see `termide_ui::cell_symbol`).
+                let ch = if ch.is_control() { ' ' } else { ch };
                 buf[(current_x, y)].set_char(ch).set_style(span.style);
                 current_x += 1;
             }

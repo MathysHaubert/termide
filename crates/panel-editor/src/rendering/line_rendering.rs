@@ -303,7 +303,7 @@ fn render_line_regular<H: LineHighlighter>(
                 if x < area.x + area.width && y < area.y + area.height {
                     if let Some(cell) = buf.cell_mut((x, y)) {
                         // Use set_symbol for proper grapheme cluster handling
-                        cell.set_symbol(grapheme);
+                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
 
                         // Determine final style using highlight renderer
                         let final_style = highlight_renderer::determine_cell_style(
@@ -408,7 +408,7 @@ fn render_line_with_inline_diff<H: LineHighlighter>(
 
                 if x < area.x + area.width && y < area.y + area.height {
                     if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_symbol(grapheme);
+                        cell.set_symbol(termide_ui::cell_symbol(grapheme));
 
                         // Get base style from syntax highlighting (for non-deleted text)
                         let base_style = if change_type == InlineChangeType::Deleted {
