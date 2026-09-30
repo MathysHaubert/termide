@@ -69,7 +69,7 @@ impl Editor {
         }
 
         // Render with custom highlighter
-        rendering::render_editor_content(
+        let cursor_screen_pos = rendering::render_editor_content(
             buf,
             area,
             &self.buffer,
@@ -90,6 +90,7 @@ impl Editor {
             content_width,
             content_height,
         );
+        self.render_cache.cursor_screen_pos = cursor_screen_pos;
 
         // Blame annotation overlay on the cursor line
         self.render_blame_annotation(
@@ -322,7 +323,7 @@ impl Editor {
         }
 
         // Delegate to rendering orchestrator
-        rendering::render_editor_content(
+        let cursor_screen_pos = rendering::render_editor_content(
             buf,
             area,
             &self.buffer,
@@ -343,6 +344,7 @@ impl Editor {
             content_width,
             content_height,
         );
+        self.render_cache.cursor_screen_pos = cursor_screen_pos;
 
         // Blame annotation overlay on the cursor line
         self.render_blame_annotation(
@@ -372,67 +374,24 @@ impl Editor {
             self.scrollbars.vertical = bar;
         }
 
+        // Completion and code-action popups open at the cursor, where it was
+        // drawn: that cell already accounts for wrapping, virtual rows,
+        // horizontal scroll and tabs. Off screen, they are not drawn.
+        let anchor = self.render_cache.cursor_screen_pos;
+
         // Render completion popup if active
-        if let Some(ref popup) = self.lsp.completion_popup {
-            // Only render if cursor is in visible area
-            if self.cursor.line >= self.viewport.top_line
-                && self.cursor.line < self.viewport.top_line + content_height
-            {
-                // Calculate cursor screen position
-                let line_number_width =
-                    rendering::line_number_width(self.buffer.line_count()) as u16;
-                let content_x = area.x + 1 + line_number_width; // +1 for border
-
-                // Calculate cursor X position within the line
-                // Calculate display width up to cursor column
-                let cursor_screen_col: usize = self
-                    .buffer
-                    .line(self.cursor.line)
-                    .map(|line| {
-                        termide_buffer::display_column(
-                            line.trim_end_matches('\n'),
-                            self.cursor.column,
-                            self.config.tab_size,
-                        )
-                    })
-                    .unwrap_or(0);
-
-                let cursor_x = content_x + cursor_screen_col as u16;
-                let cursor_y = area.y + 1 + (self.cursor.line - self.viewport.top_line) as u16;
-
-                // Render popup within editor area only and store rect for mouse hit testing
-                self.lsp.popup_rect = popup.render(buf, area, cursor_x, cursor_y, theme);
-            } else {
-                self.lsp.popup_rect = None;
+        self.lsp.popup_rect = match (&self.lsp.completion_popup, anchor) {
+            // Render popup within editor area only and store rect for mouse hit testing
+            (Some(popup), Some((cursor_x, cursor_y))) => {
+                popup.render(buf, area, cursor_x, cursor_y, theme)
             }
-        } else {
-            self.lsp.popup_rect = None;
-        }
+            _ => None,
+        };
 
         // Render code-action popup if active (anchored at the cursor like
         // completion).
-        if let Some(ref popup) = self.lsp.code_action_popup {
-            if self.cursor.line >= self.viewport.top_line
-                && self.cursor.line < self.viewport.top_line + content_height
-            {
-                let line_number_width =
-                    rendering::line_number_width(self.buffer.line_count()) as u16;
-                let content_x = area.x + 1 + line_number_width;
-                let cursor_screen_col: usize = self
-                    .buffer
-                    .line(self.cursor.line)
-                    .map(|line| {
-                        termide_buffer::display_column(
-                            line.trim_end_matches('\n'),
-                            self.cursor.column,
-                            self.config.tab_size,
-                        )
-                    })
-                    .unwrap_or(0);
-                let cursor_x = content_x + cursor_screen_col as u16;
-                let cursor_y = area.y + 1 + (self.cursor.line - self.viewport.top_line) as u16;
-                popup.render(buf, area, cursor_x, cursor_y, theme);
-            }
+        if let (Some(popup), Some((cursor_x, cursor_y))) = (&self.lsp.code_action_popup, anchor) {
+            popup.render(buf, area, cursor_x, cursor_y, theme);
         }
 
         // Render hover popup if active

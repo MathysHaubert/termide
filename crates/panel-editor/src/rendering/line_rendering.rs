@@ -742,7 +742,7 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
     show_git_diff: bool,
     syntax_highlighting_enabled: bool,
     highlight_cache: &mut H,
-    render_context: &RenderContext,
+    render_context: &mut RenderContext,
     diagnostics_by_line: &std::collections::HashMap<usize, Vec<git::DiagnosticInfo>>,
     theme: &Theme,
     is_focused: bool,
@@ -865,8 +865,11 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
             let viewport_col = cursor_display_col - left_display_col;
             let cursor_x = area.x + line_number_width + viewport_col as u16;
             let cursor_y = area.y + viewport_row as u16;
-            if viewport_col < content_width && is_focused {
-                super::cursor_renderer::render_cursor_at(buf, cursor_x, cursor_y, area, theme);
+            if viewport_col < content_width {
+                render_context.cursor_viewport_pos = Some((viewport_row, viewport_col));
+                if is_focused {
+                    super::cursor_renderer::render_cursor_at(buf, cursor_x, cursor_y, area, theme);
+                }
             }
         }
     }

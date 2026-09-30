@@ -34,6 +34,9 @@ pub(crate) struct RenderingCache {
     pub content_width: usize,
     /// Cached content height from last render.
     pub content_height: usize,
+    /// Screen cell the cursor was drawn at in the last render, when on screen.
+    /// Popups that open at the cursor anchor here.
+    pub cursor_screen_pos: Option<(u16, u16)>,
     /// Cached smart wrap setting from last render.
     pub use_smart_wrap: bool,
     /// Tab stop interval the wrap cache was computed with. Entries are not
@@ -74,6 +77,7 @@ impl RenderingCache {
             virtual_line_count: 0,
             content_width: 0,
             content_height: 0,
+            cursor_screen_pos: None,
             use_smart_wrap: false,
             tab_size: 0,
             wrap_cache: HashMap::new(),

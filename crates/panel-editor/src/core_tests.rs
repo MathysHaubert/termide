@@ -783,3 +783,33 @@ fn a_diagnostic_underline_follows_tabs_and_wide_text() {
         );
     }
 }
+
+/// The completion popup opens on the row under the cursor, starting at the
+/// cursor's column, as drawn: after tabs and with the view scrolled sideways.
+#[test]
+fn the_completion_popup_opens_under_the_drawn_cursor() {
+    use lsp_types::{CompletionItem, CompletionResponse};
+
+    let (mut editor, _file) = create_editor_with_content("\t\tfoo\nbar\n");
+    editor.config.word_wrap = false;
+    editor.config.tab_size = 4;
+    editor.cursor = termide_buffer::Cursor::at(0, 3); // on "o", column 9
+    editor.lsp.completion_popup = Some(crate::completion_popup::CompletionPopup::from_response(
+        CompletionResponse::Array(vec![CompletionItem::new_simple(
+            "food".into(),
+            String::new(),
+        )]),
+    ));
+    let gutter = crate::rendering::line_number_width(editor.buffer.line_count()) as u16;
+
+    rendered_text_rows(&mut editor, 40, 10);
+    let rect = editor.lsp.popup_rect.expect("popup drawn");
+    assert_eq!((rect.x, rect.y), (gutter + 9, 1));
+
+    // Six content columns: the view scrolls so column 9 is the last one.
+    rendered_text_rows(&mut editor, gutter + 6, 10);
+    assert_eq!(editor.viewport().left_column, 4);
+    let rect = editor.lsp.popup_rect.expect("popup drawn");
+    assert_eq!(rect.y, 1);
+    assert!(rect.x <= gutter + 5, "{rect:?}");
+}

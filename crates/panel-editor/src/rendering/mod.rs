@@ -111,6 +111,8 @@ pub fn calculate_content_dimensions(
 /// - Prepares rendering context (search matches, selection, diagnostics)
 /// - Selects appropriate rendering mode (word wrap vs no wrap)
 /// - Delegates to specialized rendering functions
+///
+/// Returns the screen cell of the cursor when it is on screen.
 #[allow(clippy::too_many_arguments)]
 pub fn render_editor_content<H: LineHighlighter>(
     buf: &mut Buffer,
@@ -132,7 +134,7 @@ pub fn render_editor_content<H: LineHighlighter>(
     tab_size: usize,
     content_width: usize,
     content_height: usize,
-) {
+) -> Option<(u16, u16)> {
     let line_number_width = line_number_width(buffer.line_count()) as u16;
 
     // Create rendering styles from theme
@@ -229,7 +231,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             show_git_diff,
             syntax_highlighting_enabled,
             highlight_cache,
-            &render_context,
+            &mut render_context,
             &diagnostics_by_line,
             theme,
             is_focused,
@@ -243,6 +245,13 @@ pub fn render_editor_content<H: LineHighlighter>(
             selection_style,
         );
     }
+
+    // Where the cursor was drawn (or would be, unfocused): the anchor for
+    // popups that open at the cursor.
+    render_context.cursor_viewport_pos.and_then(|(row, col)| {
+        (row < content_height && col < content_width)
+            .then(|| (area.x + line_number_width + col as u16, area.y + row as u16))
+    })
 }
 
 #[cfg(test)]
