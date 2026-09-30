@@ -110,6 +110,15 @@ impl MarkdownPanel {
         self.move_cursor((line, col), extend);
     }
 
+    /// Select the whole document, leaving the view where it is.
+    pub(crate) fn select_all(&mut self) {
+        let Some(last) = self.line_count().checked_sub(1) else {
+            return;
+        };
+        self.anchor = Some((0, 0));
+        self.cursor = (last, self.line_len(last));
+    }
+
     /// Normalized selection range `(start, end)` with `start <= end`.
     pub(crate) fn selection(&self) -> Option<(Pos, Pos)> {
         let a = self.anchor?;

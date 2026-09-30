@@ -482,6 +482,10 @@ impl Panel for HtmlPanel {
             self.open_find();
             return vec![PanelEvent::NeedsRedraw];
         }
+        if ctrl && key.code == KeyCode::Char('a') {
+            self.select_all();
+            return vec![PanelEvent::NeedsRedraw];
+        }
         if ctrl && key.code == KeyCode::Char('c') {
             let text = self.selected_text();
             if text.is_empty() {
@@ -981,5 +985,31 @@ mod tests {
         let mut p = HtmlPanel::new(PathBuf::from("/nonexistent/x.html")).unwrap();
         assert!(p.context_menu_items().is_empty());
         assert!(p.handle_status_action("save_markdown").is_empty());
+    }
+
+    #[test]
+    fn ctrl_a_selects_the_whole_page_for_ctrl_c() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut p = panel_from("<h1>Top</h1><p>middle</p><p>end</p>");
+        let press = |p: &mut _, c| {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+            Panel::handle_key(
+                p,
+                KeyChord {
+                    raw: key,
+                    canonical: key,
+                },
+            )
+        };
+        let whole: Vec<String> = (0..p.line_count()).map(|i| p.line_text(i)).collect();
+        press(&mut p, 'a');
+        assert_eq!(p.top, 0, "the view stays where it was");
+        let evs = press(&mut p, 'c');
+        assert!(
+            matches!(evs.as_slice(), [PanelEvent::CopyToClipboard(t)] if *t == whole.join("\n")),
+            "{evs:?}"
+        );
+        assert!(whole.iter().any(|l| l.contains("Top")));
+        assert!(whole.iter().any(|l| l.contains("end")));
     }
 }

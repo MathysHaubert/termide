@@ -53,6 +53,7 @@ The preview has a movable cursor and supports text selection:
 - `PageUp`/`PageDown` (or `Space`) — page up/down; `Home`/`End` — line ends;
   `g`/`G` — document start/end.
 - Hold **`Shift`** with movement, or **drag with the mouse**, to select text.
+- **`Ctrl+A`** selects the whole document.
 - **`Ctrl+C`** copies the selection (or the cursor's line when nothing is
   selected) to the clipboard.
 - **`Ctrl+F`** opens incremental search; **`Ctrl+R`** reloads the file from disk.
