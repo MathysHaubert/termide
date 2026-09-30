@@ -332,19 +332,23 @@ impl StatusBar {
         let x = area.left();
         let y = area.top();
 
+        // Cells in display columns, as the layout above measured them: a wide
+        // character drawn into one cell would push the rest of the bottom row
+        // past its right edge on the host terminal, and a control character
+        // would move its cursor off the row.
         let mut current_x = x;
         for span in line.spans {
-            // Use span.content directly without allocating String
-            for ch in span.content.chars() {
-                if current_x >= area.right() {
-                    break;
-                }
-                // A control character would move the host cursor off the
-                // bottom row (see `termide_ui::cell_symbol`).
-                let ch = if ch.is_control() { ' ' } else { ch };
-                buf[(current_x, y)].set_char(ch).set_style(span.style);
-                current_x += 1;
+            if current_x >= area.right() {
+                break;
             }
+            current_x += termide_ui::render_text_cells(
+                buf,
+                current_x,
+                y,
+                &span.content,
+                area.right() - current_x,
+                span.style,
+            );
         }
     }
 
@@ -759,5 +763,49 @@ mod tests {
             };
             assert_eq!(text, expected);
         }
+    }
+
+    /// Wide characters take two cells and the row ends at its right edge:
+    /// the right-aligned segment's last character lands in the last column.
+    #[test]
+    fn wide_text_is_drawn_by_display_width() {
+        use ratatui::{buffer::Buffer, layout::Rect};
+
+        let theme = Theme::default();
+        let params = StatusBarParams {
+            theme: &theme,
+            status_message: None,
+            terminal_width: 20,
+            terminal_height: 5,
+            recommended_layout: "",
+            background_ops: None,
+            disk_selected: false,
+        };
+        let segs = vec![
+            StatusSegment::new("漢字\tx", SegmentKind::Value),
+            StatusSegment::spacer(),
+            StatusSegment::new("end", SegmentKind::Value),
+        ];
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(area);
+        StatusBar::render(
+            &mut buf,
+            area,
+            &params,
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&segs),
+        );
+
+        assert_eq!(buf[(0, 0)].symbol(), "漢");
+        assert_eq!(buf[(2, 0)].symbol(), "字");
+        assert_eq!(buf[(4, 0)].symbol(), " ", "the tab is a blank");
+        assert_eq!(buf[(5, 0)].symbol(), "x");
+        let row: String = (17..20).map(|x| buf[(x, 0)].symbol()).collect();
+        assert_eq!(row, "end");
     }
 }
