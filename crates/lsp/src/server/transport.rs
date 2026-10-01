@@ -57,7 +57,7 @@ impl LspServer {
                 break;
             }
             if let Some(initialize_rx) = initialize_rx.take() {
-                if !Self::await_initialize(&initialize_rx, &status) {
+                if !Self::await_initialize(&initialize_rx, &status, INITIALIZE_TIMEOUT) {
                     break;
                 }
                 let initialized =
@@ -72,11 +72,19 @@ impl LspServer {
         }
     }
 
+    /// Wait for the `initialize` response before letting `initialized` go out.
+    /// `true` means "send `initialized`": the response arrived, the channel
+    /// died, or the wait ran out — the last being the old degraded behaviour,
+    /// preferred to a writer held forever. `false` means shut down instead.
+    ///
+    /// `timeout` is a parameter rather than the constant so the timeout path
+    /// can be tested without costing 30 seconds.
     fn await_initialize(
         initialize_rx: &mpsc::Receiver<Option<InitializeResult>>,
         status: &Arc<Mutex<ServerStatus>>,
+        timeout: Duration,
     ) -> bool {
-        let deadline = Instant::now() + INITIALIZE_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         loop {
             match initialize_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
@@ -429,6 +437,75 @@ mod tests {
                 "{command} must initialize with no options"
             );
         }
+    }
+
+    /// A server that answers `initialize` releases the writer at once, so the
+    /// queued `initialized` and everything behind it flow.
+    #[test]
+    fn await_initialize_returns_as_soon_as_the_response_arrives() {
+        let (tx, rx) = mpsc::channel();
+        let status = Arc::new(Mutex::new(ServerStatus::Indexing));
+        tx.send(None).unwrap();
+
+        let start = Instant::now();
+        assert!(LspServer::await_initialize(
+            &rx,
+            &status,
+            INITIALIZE_TIMEOUT
+        ));
+        assert!(
+            start.elapsed() < INITIALIZE_TIMEOUT / 2,
+            "should not have waited for the deadline"
+        );
+    }
+
+    /// Dropping the sender means the response was consumed or lost; the writer
+    /// must not hang on it.
+    #[test]
+    fn await_initialize_passes_on_a_disconnected_channel() {
+        let (tx, rx) = mpsc::channel::<Option<InitializeResult>>();
+        let status = Arc::new(Mutex::new(ServerStatus::Indexing));
+        drop(tx);
+
+        assert!(LspServer::await_initialize(
+            &rx,
+            &status,
+            INITIALIZE_TIMEOUT
+        ));
+    }
+
+    /// Shutdown during the wait stops it: closing a panel must not have to sit
+    /// through the timeout.
+    #[test]
+    fn await_initialize_stops_on_shutdown() {
+        let (_tx, rx) = mpsc::channel::<Option<InitializeResult>>();
+        let status = Arc::new(Mutex::new(ServerStatus::Indexing));
+        *status.lock().unwrap() = ServerStatus::ShuttingDown;
+
+        let start = Instant::now();
+        assert!(
+            !LspServer::await_initialize(&rx, &status, INITIALIZE_TIMEOUT),
+            "a server going away mid-initialize is not a pass"
+        );
+        assert!(
+            start.elapsed() < INITIALIZE_TIMEOUT / 2,
+            "shutdown was noticed, not the deadline"
+        );
+    }
+
+    /// A server that never answers gives up and sends `initialized` anyway —
+    /// the old degraded behaviour, preferred to a writer held forever. Costs
+    /// the poll interval, not the 30s the writer waits for.
+    #[test]
+    fn await_initialize_passes_when_no_response_arrives() {
+        let (_tx, rx) = mpsc::channel::<Option<InitializeResult>>();
+        let status = Arc::new(Mutex::new(ServerStatus::Indexing));
+
+        assert!(LspServer::await_initialize(
+            &rx,
+            &status,
+            Duration::from_millis(150)
+        ));
     }
 
     #[test]
