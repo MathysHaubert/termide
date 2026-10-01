@@ -26,6 +26,24 @@ use super::{LspServer, PendingRequests, ServerStatus};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// `initializationOptions` a server needs at `initialize` to opt out of
+/// behaviour we do not want on its default. Keyed by the server's command:
+/// the options document is per-server, and most servers accept none, so a
+/// generic payload would break the strict ones — rust-analyzer rejects
+/// unknown options outright.
+pub(super) fn initialization_options(command: &str) -> Option<Value> {
+    match command {
+        // docker-language-server reports to BugSnag with telemetry set to
+        // `all` unless the `initialize` request says otherwise, and
+        // `initialize` is the only place it will hear us: it reads telemetry
+        // from these options and, failing that, from a
+        // `workspace/configuration` round-trip we never start — answering
+        // that falls back to `all` again.
+        "docker-language-server" => Some(serde_json::json!({ "telemetry": "off" })),
+        _ => None,
+    }
+}
+
 impl LspServer {
     pub(super) fn writer_loop(
         mut stdin: ChildStdin,
@@ -383,6 +401,35 @@ impl LspServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docker_server_is_told_to_send_no_telemetry() {
+        // docker-language-server defaults to `all`; without this it posts
+        // crash stacks and path hashes to BugSnag on the user's dime.
+        let options = initialization_options("docker-language-server").expect("options");
+        assert_eq!(options["telemetry"], "off");
+    }
+
+    #[test]
+    fn other_servers_get_no_initialization_options() {
+        // Strict servers reject options they do not own: rust-analyzer
+        // deserializes its own set and errors on an unknown key, which would
+        // lose us the whole initialize response.
+        for command in [
+            "rust-analyzer",
+            "pylsp",
+            "typescript-language-server",
+            "gopls",
+            "terraform-ls",
+            "phpantom_lsp",
+        ] {
+            assert_eq!(
+                initialization_options(command),
+                None,
+                "{command} must initialize with no options"
+            );
+        }
+    }
 
     #[test]
     fn apply_edit_request_forwards_edit_and_acks_applied() {

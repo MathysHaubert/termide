@@ -472,6 +472,8 @@ Built-in server definitions (used automatically when the binary is on `PATH`):
 - **Terraform** (`.tf`, `.tfvars`) - `terraform-ls serve`
 - **Docker** - `docker-language-server start --stdio`, for `Dockerfile`, `Dockerfile.*`, `*.Dockerfile`, `compose.yaml`, `docker-compose.yaml` and their variants such as `compose.override.yaml` or `docker-compose.prod.yml` (detected by file name)
 
+TermIDE asks `docker-language-server` to send no telemetry when it starts; the server collects it by default otherwise.
+
 **Note:** You need to install the language server separately. TermIDE only provides the LSP client integration.
 
 ## Vim Mode

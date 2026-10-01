@@ -159,7 +159,7 @@ impl LspServer {
         };
 
         // Send initialize request
-        let initialize_rx = server.initialize(workspace_root)?;
+        let initialize_rx = server.initialize(workspace_root, &config.command)?;
 
         // Writer thread - sends messages to server
         server.writer_handle = Some({
@@ -177,6 +177,7 @@ impl LspServer {
     fn initialize(
         &mut self,
         workspace_root: PathBuf,
+        command: &str,
     ) -> Result<mpsc::Receiver<Option<InitializeResult>>> {
         let root_uri = path_to_uri(&workspace_root)
             .ok_or_else(|| anyhow::anyhow!("Invalid workspace path"))?;
@@ -241,6 +242,7 @@ impl LspServer {
                 }),
                 ..Default::default()
             },
+            initialization_options: transport::initialization_options(command),
             ..Default::default()
         };
 
