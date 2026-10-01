@@ -5,10 +5,12 @@
 //! `send_notification`.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
+use std::process::ChildStdin;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use lsp_types::{InitializeResult, PublishDiagnosticsParams, ServerCapabilities, WorkspaceEdit};
@@ -22,7 +24,73 @@ use crate::protocol::{
 
 use super::{LspServer, PendingRequests, ServerStatus};
 
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl LspServer {
+    pub(super) fn writer_loop(
+        mut stdin: ChildStdin,
+        writer_rx: mpsc::Receiver<String>,
+        initialize_rx: mpsc::Receiver<Option<InitializeResult>>,
+        status: Arc<Mutex<ServerStatus>>,
+    ) {
+        let mut initialize_rx = Some(initialize_rx);
+        while let Ok(msg) = writer_rx.recv() {
+            if Self::is_shutting_down(&status) || !Self::write_message(&mut stdin, &msg) {
+                break;
+            }
+            if let Some(initialize_rx) = initialize_rx.take() {
+                if !Self::await_initialize(&initialize_rx, &status) {
+                    break;
+                }
+                let initialized =
+                    JsonRpcNotification::new("initialized", Some(serde_json::json!({})));
+                let Ok(initialized) = encode_message(&initialized) else {
+                    break;
+                };
+                if !Self::write_message(&mut stdin, &initialized) {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn await_initialize(
+        initialize_rx: &mpsc::Receiver<Option<InitializeResult>>,
+        status: &Arc<Mutex<ServerStatus>>,
+    ) -> bool {
+        let deadline = Instant::now() + INITIALIZE_TIMEOUT;
+        loop {
+            match initialize_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if Self::is_shutting_down(status) {
+                        return false;
+                    }
+                    if Instant::now() >= deadline {
+                        log::warn!("LSP: no response to initialize, sending initialized anyway");
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_shutting_down(status: &Arc<Mutex<ServerStatus>>) -> bool {
+        *status.lock().unwrap_or_else(|e| e.into_inner()) == ServerStatus::ShuttingDown
+    }
+
+    fn write_message(stdin: &mut ChildStdin, msg: &str) -> bool {
+        if let Err(e) = stdin.write_all(msg.as_bytes()) {
+            log::error!("Failed to write to LSP server: {}", e);
+            return false;
+        }
+        if let Err(e) = stdin.flush() {
+            log::error!("Failed to flush LSP server stdin: {}", e);
+            return false;
+        }
+        true
+    }
+
     /// Reader thread main loop
     #[allow(clippy::too_many_arguments)]
     pub(super) fn reader_loop(
