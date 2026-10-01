@@ -28,9 +28,8 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `initializationOptions` a server needs at `initialize` to opt out of
 /// behaviour we do not want on its default. Keyed by the server's command:
-/// the options document is per-server, and most servers accept none, so a
-/// generic payload would break the strict ones — rust-analyzer rejects
-/// unknown options outright.
+/// this document has no meaning outside the server it was written for, so
+/// each entry states the option its server actually reads.
 pub(super) fn initialization_options(command: &str) -> Option<Value> {
     match command {
         // docker-language-server reports to BugSnag with telemetry set to
@@ -420,9 +419,8 @@ mod tests {
 
     #[test]
     fn other_servers_get_no_initialization_options() {
-        // Strict servers reject options they do not own: rust-analyzer
-        // deserializes its own set and errors on an unknown key, which would
-        // lose us the whole initialize response.
+        // None of these read a `telemetry` option; sending them a document
+        // written for another server is at best noise we did not justify.
         for command in [
             "rust-analyzer",
             "pylsp",
