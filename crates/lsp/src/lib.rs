@@ -87,7 +87,16 @@ impl LspManager {
     /// Detect language from file name or extension
     pub fn detect_language(path: &Path) -> Option<String> {
         let name = path.file_name()?.to_str()?;
-        if name == "Dockerfile" || name.starts_with("Dockerfile.") || name.ends_with(".Dockerfile")
+        // Dockerfile and Compose files carry no distinctive extension, so
+        // they are recognized by name, case-insensitively: `DOCKERFILE` and
+        // `COMPOSE.yaml` are ordinary names on a case-insensitive filesystem,
+        // and lowercase `dockerfile` is common on Linux. Every pattern here is
+        // lowercase, so comparing against the lowered name is enough.
+        // Extensions below keep matching exactly as they did before.
+        let lower = name.to_lowercase();
+        if lower == "dockerfile"
+            || lower.starts_with("dockerfile.")
+            || lower.ends_with(".dockerfile")
         {
             return Some("dockerfile".to_string());
         }
@@ -107,7 +116,7 @@ impl LspManager {
             .filter_map(|pattern| glob::Pattern::new(pattern).ok())
             .collect()
         });
-        if compose_patterns.iter().any(|pattern| pattern.matches(name)) {
+        if compose_patterns.iter().any(|p| p.matches(&lower)) {
             return Some("dockercompose".to_string());
         }
 
@@ -467,6 +476,14 @@ mod tests {
             ("docker-composer.yml", "yaml"),
             ("config.yaml", "yaml"),
             (".github/workflows/ci.yml", "yaml"),
+            // Case variants: the name match is case-insensitive, so these
+            // resolve the same way on a case-insensitive filesystem and on a
+            // case-sensitive one.
+            ("DOCKERFILE", "dockerfile"),
+            ("App.Dockerfile", "dockerfile"),
+            ("Compose.yaml", "dockercompose"),
+            ("DOCKER-COMPOSE.PROD.yml", "dockercompose"),
+            ("composer.yml", "yaml"),
         ];
         for (path, lang) in cases {
             assert_eq!(
