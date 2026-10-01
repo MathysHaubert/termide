@@ -1401,25 +1401,50 @@ mod lsp_default_tests {
     #[test]
     fn built_in_servers_cover_php_terraform_and_docker() {
         let servers = default_lsp_servers();
-        let expected = [
-            ("php", "phpantom_lsp", &[][..]),
-            ("terraform", "terraform-ls", &["serve"][..]),
-            ("terraform-vars", "terraform-ls", &["serve"][..]),
+        let expected: [(&str, &str, &[&str], &[&str]); 5] = [
+            ("php", "phpantom_lsp", &[], &["composer.json"]),
+            (
+                "terraform",
+                "terraform-ls",
+                &["serve"],
+                &[".terraform.lock.hcl", ".terraform"],
+            ),
+            (
+                "terraform-vars",
+                "terraform-ls",
+                &["serve"],
+                &[".terraform.lock.hcl", ".terraform"],
+            ),
             (
                 "dockerfile",
                 "docker-language-server",
-                &["start", "--stdio"][..],
+                &["start", "--stdio"],
+                &[
+                    "compose.yaml",
+                    "compose.yml",
+                    "docker-compose.yaml",
+                    "docker-compose.yml",
+                ],
             ),
             (
                 "dockercompose",
                 "docker-language-server",
-                &["start", "--stdio"][..],
+                &["start", "--stdio"],
+                &[
+                    "compose.yaml",
+                    "compose.yml",
+                    "docker-compose.yaml",
+                    "docker-compose.yml",
+                ],
             ),
         ];
-        for (lang, command, args) in expected {
+        for (lang, command, args, root_markers) in expected {
             let server = servers.get(lang).unwrap_or_else(|| panic!("{lang}"));
             assert_eq!(server.command, command, "{lang}");
             assert_eq!(server.args, args, "{lang}");
+            // The root the server runs in decides what it can resolve, so the
+            // markers are as much of the definition as the command is.
+            assert_eq!(server.root_markers, root_markers, "{lang}");
         }
     }
 }
