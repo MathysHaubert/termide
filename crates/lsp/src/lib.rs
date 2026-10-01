@@ -22,7 +22,7 @@ pub use server::{LspServer, LspServerConfig, ServerStatus};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, OnceLock};
 
 use anyhow::{Context, Result};
 use lsp_types::{
@@ -84,8 +84,33 @@ impl LspManager {
         }
     }
 
-    /// Detect language from file extension
+    /// Detect language from file name or extension
     pub fn detect_language(path: &Path) -> Option<String> {
+        let name = path.file_name()?.to_str()?;
+        if name == "Dockerfile" || name.starts_with("Dockerfile.") || name.ends_with(".Dockerfile")
+        {
+            return Some("dockerfile".to_string());
+        }
+        static COMPOSE_PATTERNS: OnceLock<Vec<glob::Pattern>> = OnceLock::new();
+        let compose_patterns = COMPOSE_PATTERNS.get_or_init(|| {
+            [
+                "compose.yaml",
+                "compose.yml",
+                "compose.*.yaml",
+                "compose.*.yml",
+                "docker-compose.yaml",
+                "docker-compose.yml",
+                "docker-compose.*.yaml",
+                "docker-compose.*.yml",
+            ]
+            .iter()
+            .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+            .collect()
+        });
+        if compose_patterns.iter().any(|pattern| pattern.matches(name)) {
+            return Some("dockercompose".to_string());
+        }
+
         let ext = path.extension()?.to_str()?;
         let lang = match ext {
             "rs" => "rust",
@@ -109,6 +134,8 @@ impl LspManager {
             "yaml" | "yml" => "yaml",
             "sh" | "bash" => "shellscript",
             "md" => "markdown",
+            "tf" => "terraform",
+            "tfvars" => "terraform-vars",
             _ => return None,
         };
         Some(lang.to_string())
@@ -420,6 +447,34 @@ mod tests {
             Some("typescriptreact".to_string())
         );
         assert_eq!(LspManager::detect_language(Path::new("unknown.xyz")), None);
+
+        let cases = [
+            ("index.php", "php"),
+            ("main.tf", "terraform"),
+            ("prod.tfvars", "terraform-vars"),
+            ("Dockerfile", "dockerfile"),
+            ("Dockerfile.dev", "dockerfile"),
+            ("app.Dockerfile", "dockerfile"),
+            ("docker/Dockerfile", "dockerfile"),
+            ("compose.yaml", "dockercompose"),
+            ("compose.yml", "dockercompose"),
+            ("docker-compose.yaml", "dockercompose"),
+            ("docker-compose.yml", "dockercompose"),
+            ("compose.override.yaml", "dockercompose"),
+            ("docker-compose.override.yml", "dockercompose"),
+            ("docker-compose.prod.yaml", "dockercompose"),
+            ("composer.yaml", "yaml"),
+            ("docker-composer.yml", "yaml"),
+            ("config.yaml", "yaml"),
+            (".github/workflows/ci.yml", "yaml"),
+        ];
+        for (path, lang) in cases {
+            assert_eq!(
+                LspManager::detect_language(Path::new(path)),
+                Some(lang.to_string()),
+                "{path}"
+            );
+        }
     }
 
     #[test]

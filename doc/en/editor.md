@@ -463,6 +463,15 @@ LSP works with any language server that implements the LSP protocol. Common exam
 - **Go** - gopls
 - **C/C++** - clangd
 
+Built-in server definitions (used automatically when the binary is on `PATH`):
+- **Rust** - `rust-analyzer`
+- **Python** - `pylsp`
+- **TypeScript/JavaScript** - `typescript-language-server --stdio`
+- **Go** - `gopls`
+- **PHP** - `phpantom_lsp`
+- **Terraform** (`.tf`, `.tfvars`) - `terraform-ls serve`
+- **Docker** - `docker-language-server start --stdio`, for `Dockerfile`, `Dockerfile.*`, `*.Dockerfile`, `compose.yaml`, `docker-compose.yaml` and their variants such as `compose.override.yaml` or `docker-compose.prod.yml` (detected by file name)
+
 **Note:** You need to install the language server separately. TermIDE only provides the LSP client integration.
 
 ## Vim Mode
